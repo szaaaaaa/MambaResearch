@@ -19,4 +19,7 @@ dependencies = [
     "requests>=2.31.0",
     "pyyaml>=6.0",
     "numpy>=1.24.0",
+    "duckduckgo-search>=6.0.0",
+    "trafilatura>=1.6.0",
+    "beautifulsoup4>=4.12.0",
 ]

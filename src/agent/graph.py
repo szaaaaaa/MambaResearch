@@ -4,27 +4,27 @@ Graph topology
 ==============
 
     ┌─────────────────┐
-    │  plan_research   │ ◄─────────────────────────┐
-    └────────┬────────┘                             │
-             ▼                                      │
-    ┌─────────────────┐                             │
-    │  fetch_papers    │                             │
-    └────────┬────────┘                             │
-             ▼                                      │
-    ┌─────────────────┐                             │
-    │  index_papers    │                             │
-    └────────┬────────┘                             │
-             ▼                                      │
-    ┌─────────────────┐                             │
-    │ analyze_papers   │                             │
-    └────────┬────────┘                             │
-             ▼                                      │
-    ┌─────────────────┐                             │
-    │   synthesize     │                             │
-    └────────┬────────┘                             │
-             ▼                                      │
-    ┌──────────────────┐   should_continue=True     │
-    │evaluate_progress  │ ──────────────────────────┘
+    │  plan_research   │ ◄──────────────────────────┐
+    └────────┬────────┘                              │
+             ▼                                       │
+    ┌─────────────────┐                              │
+    │  fetch_sources   │  arXiv + S2 + Web           │
+    └────────┬────────┘                              │
+             ▼                                       │
+    ┌─────────────────┐                              │
+    │  index_sources   │  PDFs + web text → Chroma   │
+    └────────┬────────┘                              │
+             ▼                                       │
+    ┌──────────────────┐                             │
+    │ analyze_sources   │  papers + web pages         │
+    └────────┬─────────┘                             │
+             ▼                                       │
+    ┌─────────────────┐                              │
+    │   synthesize     │                              │
+    └────────┬────────┘                              │
+             ▼                                       │
+    ┌──────────────────┐   should_continue=True      │
+    │evaluate_progress  │ ───────────────────────────┘
     └────────┬─────────┘
              │ should_continue=False
              ▼
@@ -43,11 +43,11 @@ from typing import Any, Dict
 from langgraph.graph import END, StateGraph
 
 from src.agent.nodes import (
-    analyze_papers,
+    analyze_sources,
     evaluate_progress,
-    fetch_papers,
+    fetch_sources,
     generate_report,
-    index_papers,
+    index_sources,
     plan_research,
     synthesize,
 )
@@ -69,9 +69,9 @@ def build_graph() -> StateGraph:
 
     # ── Add nodes ────────────────────────────────────────────────────
     graph.add_node("plan_research", plan_research)
-    graph.add_node("fetch_papers", fetch_papers)
-    graph.add_node("index_papers", index_papers)
-    graph.add_node("analyze_papers", analyze_papers)
+    graph.add_node("fetch_sources", fetch_sources)
+    graph.add_node("index_sources", index_sources)
+    graph.add_node("analyze_sources", analyze_sources)
     graph.add_node("synthesize", synthesize)
     graph.add_node("evaluate_progress", evaluate_progress)
     graph.add_node("generate_report", generate_report)
@@ -79,10 +79,10 @@ def build_graph() -> StateGraph:
     # ── Edges ────────────────────────────────────────────────────────
     graph.set_entry_point("plan_research")
 
-    graph.add_edge("plan_research", "fetch_papers")
-    graph.add_edge("fetch_papers", "index_papers")
-    graph.add_edge("index_papers", "analyze_papers")
-    graph.add_edge("analyze_papers", "synthesize")
+    graph.add_edge("plan_research", "fetch_sources")
+    graph.add_edge("fetch_sources", "index_sources")
+    graph.add_edge("index_sources", "analyze_sources")
+    graph.add_edge("analyze_sources", "synthesize")
     graph.add_edge("synthesize", "evaluate_progress")
 
     graph.add_conditional_edges(
@@ -132,6 +132,8 @@ def run_research(
         "search_queries": [],
         "papers": [],
         "indexed_paper_ids": [],
+        "web_sources": [],
+        "indexed_web_ids": [],
         "analyses": [],
         "findings": [],
         "gaps": [],
@@ -149,6 +151,11 @@ def run_research(
 
     logger.info("Starting autonomous research on: %s", topic)
     logger.info("Max iterations: %d", max_iterations)
+
+    # Log which sources are enabled
+    sources = cfg.get("sources", {})
+    enabled = [k for k, v in sources.items() if v.get("enabled", True)]
+    logger.info("Enabled sources: %s", ", ".join(enabled) if enabled else "arxiv (default)")
 
     final_state = app.invoke(initial_state)
     return final_state

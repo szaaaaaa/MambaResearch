@@ -40,14 +40,18 @@ class ResearchState(TypedDict, total=False):
 
     # ── Planning ─────────────────────────────────────────────────────
     research_questions: List[str]   # sub-questions decomposed from topic
-    search_queries: List[str]       # arXiv queries to execute
+    search_queries: List[str]       # search queries to execute
 
-    # ── Data collection ──────────────────────────────────────────────
+    # ── Data collection (papers: arXiv + Semantic Scholar) ───────────
     papers: Annotated[List[Dict[str, Any]], operator.add]   # accumulated paper records
     indexed_paper_ids: Annotated[List[str], operator.add]   # UIDs already indexed
 
+    # ── Data collection (web sources) ────────────────────────────────
+    web_sources: Annotated[List[Dict[str, Any]], operator.add]   # web search results
+    indexed_web_ids: Annotated[List[str], operator.add]          # web UIDs already indexed
+
     # ── Analysis ─────────────────────────────────────────────────────
-    analyses: Annotated[List[Dict[str, Any]], operator.add] # per-paper analysis dicts
+    analyses: Annotated[List[Dict[str, Any]], operator.add] # per-source analysis dicts
     findings: Annotated[List[str], operator.add]            # key findings so far
     gaps: List[str]                                         # identified knowledge gaps
 

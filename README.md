@@ -1,6 +1,6 @@
 # ResearchAgent
 
-ResearchAgent is an **autonomous research agent** that can plan, search, analyze, and synthesize academic literature. It combines a Traditional RAG pipeline with a LangGraph-powered agentic loop that iteratively deepens its research.
+ResearchAgent is an **autonomous research agent** that searches the entire web — academic papers, blogs, documentation, news — analyzes everything with LLM, and produces comprehensive research reports. Built on LangGraph.
 
 ## Architecture Overview
 
@@ -10,22 +10,27 @@ User provides topic
        ▼
 ┌─────────────────┐
 │  plan_research   │ ◄───────────────────────────┐
+│ (academic + web  │                              │
+│  query planning) │                              │
 └────────┬────────┘                               │
          ▼                                        │
 ┌─────────────────┐                               │
-│  fetch_papers    │  (arXiv API)                  │
+│  fetch_sources   │                               │
+│  ├─ arXiv API    │                               │
+│  ├─ Semantic S.  │                               │
+│  └─ DuckDuckGo   │                               │
 └────────┬────────┘                               │
          ▼                                        │
 ┌─────────────────┐                               │
-│  index_papers    │  (Chroma + embeddings)        │
+│  index_sources   │  PDFs + web text → Chroma     │
 └────────┬────────┘                               │
          ▼                                        │
-┌─────────────────┐                               │
-│ analyze_papers   │  (RAG + LLM)                  │
-└────────┬────────┘                               │
+┌──────────────────┐                              │
+│ analyze_sources   │  papers (RAG) + web (LLM)    │
+└────────┬─────────┘                              │
          ▼                                        │
 ┌─────────────────┐                               │
-│   synthesize     │  (LLM)                        │
+│   synthesize     │                               │
 └────────┬────────┘                               │
          ▼                                        │
 ┌──────────────────┐  should_continue=True         │
@@ -38,10 +43,15 @@ User provides topic
 └─────────────────┘
 ```
 
-## Stages
+## Data Sources
 
-- **Stage 1 (done):** Traditional RAG MVP — arXiv fetch → PDF parse → chunk → Chroma index → retrieve → cited answer
-- **Stage 2 (done):** Autonomous Research Agent — LangGraph-based iterative research loop
+| Source | Type | API Key Required | What it provides |
+|--------|------|-----------------|------------------|
+| **arXiv** | Academic papers | No | Full PDF download + metadata |
+| **Semantic Scholar** | Academic papers | No | Metadata + abstracts (broader coverage than arXiv) |
+| **DuckDuckGo** | General web | No | Blogs, docs, news, tutorials, forums |
+
+All three sources are enabled by default and require **no additional API keys** beyond OpenAI.
 
 ## Tech Stack
 
@@ -53,6 +63,9 @@ User provides topic
 | Embedding | sentence-transformers/all-MiniLM-L6-v2 |
 | Reranker (optional) | SentenceTransformers CrossEncoder |
 | PDF parsing | PyMuPDF (fitz) |
+| Web search | duckduckgo-search |
+| Web scraping | trafilatura + beautifulsoup4 |
+| Academic search | Semantic Scholar API |
 | Metadata store | SQLite |
 | LLM | OpenAI Chat Completions API |
 
@@ -62,7 +75,7 @@ User provides topic
 ResearchAgent/
 ├─ configs/
 │  ├─ rag.yaml              # Traditional RAG config
-│  └─ agent.yaml            # Agent config
+│  └─ agent.yaml            # Agent config (multi-source)
 ├─ scripts/
 │  ├─ run_agent.py           # ★ Autonomous agent entry point
 │  ├─ fetch_arxiv.py
@@ -84,7 +97,8 @@ ResearchAgent/
 │  │  ├─ runtime_utils.py
 │  │  └─ report_utils.py
 │  ├─ ingest/
-│  │  ├─ fetchers.py
+│  │  ├─ fetchers.py         #   arXiv fetcher
+│  │  ├─ web_fetcher.py      # ★ Web search + scraping + Semantic Scholar
 │  │  ├─ pdf_loader.py
 │  │  ├─ chunking.py
 │  │  └─ indexer.py
@@ -123,37 +137,48 @@ pip install -e .
 export OPENAI_API_KEY="your-api-key"
 ```
 
+No other API keys are needed — web search (DuckDuckGo) and academic search (Semantic Scholar) are free.
+
 ## Usage
 
-### Autonomous Research Agent (recommended)
+### Autonomous Research Agent
 
-Run the full autonomous research loop:
+Run the full multi-source autonomous research loop:
 
 ```bash
-# Basic usage
+# Basic — searches arXiv + Semantic Scholar + Web
 python -m scripts.run_agent --topic "retrieval augmented generation"
 
 # With options
 python -m scripts.run_agent \
   --topic "LLM alignment techniques" \
   --max_iter 5 \
-  --papers_per_query 8 \
   --model gpt-4.1-mini \
   --language en \
   -v
 
 # Chinese report
 python -m scripts.run_agent --topic "多模态大模型" --language zh
+
+# Select specific sources
+python -m scripts.run_agent --topic "RAG" --sources arxiv,web
+
+# Academic only (no web)
+python -m scripts.run_agent --topic "attention mechanism" --no-web
+
+# Web search without scraping (faster, snippets only)
+python -m scripts.run_agent --topic "LangGraph tutorial" --no-scrape
 ```
 
 **What happens:**
-1. The agent decomposes your topic into research questions and arXiv search queries
-2. Fetches papers from arXiv and downloads PDFs
-3. Indexes papers into Chroma vector store
-4. Analyzes each paper using RAG retrieval + LLM
-5. Synthesizes findings across all papers
-6. Evaluates whether more research is needed (loops back if yes)
-7. Generates a comprehensive Markdown research report
+1. The agent decomposes your topic into research questions, generating separate queries for academic search and web search
+2. Fetches papers from **arXiv** and **Semantic Scholar**, plus general web results from **DuckDuckGo**
+3. Scrapes full page content from web results using trafilatura
+4. Indexes all content (PDFs + web text) into Chroma vector store
+5. Analyzes each source — papers via RAG retrieval, web pages via direct LLM analysis
+6. Synthesizes findings across ALL sources, distinguishing peer-reviewed vs. informal
+7. Evaluates whether more research is needed (loops back if yes)
+8. Generates a comprehensive Markdown research report with proper citations
 
 **Outputs:**
 - `outputs/research_report_<timestamp>.md` — full research report
@@ -170,6 +195,9 @@ python -m scripts.run_agent --topic "多模态大模型" --language zh
 | `--model` | gpt-4.1-mini | LLM model |
 | `--language` | en | Report language (en/zh) |
 | `--output_dir` | outputs/ | Output directory |
+| `--sources` | all | Comma-separated: `arxiv,semantic_scholar,web` |
+| `--no-web` | off | Disable web search |
+| `--no-scrape` | off | Skip page scraping (snippets only) |
 | `-v` | off | Verbose logging |
 
 ### Traditional RAG (Stage 1)
@@ -205,16 +233,30 @@ llm:
   temperature: 0.3
 
 agent:
-  max_iterations: 3         # research loop iterations
-  papers_per_query: 5       # papers per arXiv search
+  max_iterations: 3
+  papers_per_query: 5
   max_queries_per_iteration: 3
-  top_k_for_analysis: 8     # chunks for per-paper analysis
-  language: "en"            # report language: en / zh
+  top_k_for_analysis: 8
+  language: "en"            # en / zh
+
+# Per-source configuration
+sources:
+  arxiv:
+    enabled: true
+    max_results_per_query: 5
+    download_pdf: true
+
+  web:
+    enabled: true
+    max_results_per_query: 8
+    scrape_pages: true
+    scrape_max_chars: 30000
+    polite_delay_sec: 0.5
+
+  semantic_scholar:
+    enabled: true
+    max_results_per_query: 5
 ```
-
-### RAG Config (`configs/rag.yaml`)
-
-Configuration for the underlying RAG pipeline (paths, fetch settings, retrieval parameters, etc.).
 
 ## LangGraph Agent Design
 
@@ -222,29 +264,29 @@ The agent is built on LangGraph's `StateGraph` with the following nodes:
 
 | Node | Purpose |
 |------|---------|
-| `plan_research` | Decomposes topic into questions and arXiv queries using LLM |
-| `fetch_papers` | Searches arXiv and downloads PDFs |
-| `index_papers` | Parses PDFs, chunks text, indexes into Chroma |
-| `analyze_papers` | Per-paper analysis via RAG retrieval + LLM |
-| `synthesize` | Cross-paper synthesis to identify themes and gaps |
+| `plan_research` | Decomposes topic into questions + generates separate academic and web queries |
+| `fetch_sources` | Searches arXiv, Semantic Scholar, and DuckDuckGo; scrapes web pages |
+| `index_sources` | Parses PDFs + chunks web text, indexes everything into Chroma |
+| `analyze_sources` | Per-source analysis: papers via RAG retrieval, web via direct LLM |
+| `synthesize` | Cross-source synthesis, distinguishing peer-reviewed vs. informal |
 | `evaluate_progress` | Decides whether to continue or generate report |
-| `generate_report` | Produces final Markdown research report |
+| `generate_report` | Produces final Markdown report with proper citations |
 
 The `evaluate_progress` → `plan_research` conditional edge enables iterative deepening: when knowledge gaps are identified, the agent generates new search queries to fill them.
 
-## Evaluation
+### Web Source Handling
 
-The evaluation pipeline from Stage 1 is still available:
+Web sources go through a different analysis pipeline than papers:
 
-```bash
-python -m scripts.evaluate_rag \
-  --dataset path/to/eval.jsonl \
-  --top_k 8 --model gpt-4.1-mini
-```
+- **Papers (arXiv/S2):** PDF download → parse → chunk → Chroma index → RAG retrieval → LLM analysis
+- **Web pages:** DuckDuckGo search → trafilatura scraping → chunk → Chroma index → direct LLM analysis
+
+The web analysis prompt evaluates credibility (`high`/`medium`/`low`) and source type (`blog`/`documentation`/`news`/`tutorial`/`forum`/`academic`), ensuring the final report distinguishes between peer-reviewed and informal sources.
 
 ## Common Issues
 
 - **`ModuleNotFoundError`** — run `pip install -e .` to install all dependencies
 - **`Missing OPENAI_API_KEY`** — set the environment variable
-- **`No PDF found`** — check that papers were downloaded (use `--download` flag or set `fetch.download_pdf: true`)
-- **`Collection not found`** — the agent handles indexing automatically; for manual RAG, run `build_index.py` first
+- **`No PDF found`** — check that papers were downloaded
+- **DuckDuckGo rate limiting** — increase `polite_delay_sec` in config or use `--no-web`
+- **Slow scraping** — use `--no-scrape` for faster runs with snippet-only analysis
