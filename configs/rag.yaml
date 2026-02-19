@@ -1,0 +1,32 @@
+project:
+  data_dir: data
+
+paths:
+  papers_dir: ${project.data_dir}/papers
+  metadata_dir: ${project.data_dir}/metadata
+  indexes_dir: ${project.data_dir}/indexes
+  outputs_dir: outputs
+
+fetch:
+  source: arxiv
+  max_results: 20
+  download_pdf: true
+  polite_delay_sec: 1.0
+  user_agent: "auto-research-agent/0.1"
+
+metadata_store:
+  backend: sqlite
+  sqlite_path: ${paths.metadata_dir}/papers.sqlite
+
+index:
+  backend: chroma
+  persist_dir: ${paths.indexes_dir}/chroma
+
+retrieval:
+  top_k: 10
+  candidate_k: 30
+  reranker_model: ""  # e.g. "BAAI/bge-reranker-base"
+
+openai:
+  model: gpt-4.1-mini
+  temperature: 0.2

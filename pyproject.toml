@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-agent"
+version = "0.1.0"
+description = "Research agent project"
+requires-python = ">=3.10"
+dependencies = [
+    "feedparser>=6.0.0",
+]

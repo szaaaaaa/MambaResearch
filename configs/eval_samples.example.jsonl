@@ -1,0 +1,40 @@
+﻿{"id":"s1","question":"List the paper's main contributions. Cite evidence.","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s2","question":"What problem does this paper target, and why is it important?","gold_doc_ids":["arxiv_1709.03820v1"],"analysis_queries":["What problem does this paper target, and why is it important?","Summarize the main problem and significance addressed in Attention Is All You Need.","What is the core problem in the Transformer paper (arXiv:1709.03820)?","Explain why sequence transduction without recurrence matters."],"analysis_top_ks":[5,8,12],"analysis_candidate_ks":[8,30,60],"analysis_reranker_models":[null,"BAAI/bge-reranker-base"]}
+{"id":"s3","question":"What modalities does the proposed system use for emotion recognition?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s4","question":"How does the paper use situational knowledge to improve emotion recognition?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s5","question":"What explainability issue in deep learning does the paper emphasize?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s6","question":"Describe the modular architecture claimed by the authors.","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s7","question":"What cues are used in the working prototype, and what performance claim is made?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s8","question":"What trade-off is investigated in the contributions section?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s9","question":"How are Adjective-Noun Pairs (ANPs) used in the proposed framework?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s10","question":"Which real-world applications are used to motivate automatic emotion recognition?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s11","question":"According to the paper, why can background context change emotion interpretation?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s12","question":"How does the paper contrast unimodal and multimodal emotion recognition?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s13","question":"What does the related-work section say about prior methods for emotion recognition?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s14","question":"What key reliability and trust concerns are discussed for black-box models?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s15","question":"How is explainable AI connected to this paper's objectives?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s16","question":"What is claimed about energy cost versus performance in multimodal setups?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s17","question":"Summarize the contribution related to constructing situational knowledge.","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s18","question":"What does the paper claim about adding or removing modality modules?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s19","question":"How does the introduction justify the importance of emotion recognition in education?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s20","question":"How does the introduction justify the importance of emotion recognition for driving safety?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s21","question":"What does the paper say about surveillance-related use cases?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s22","question":"What kinds of deep models are mentioned for gait, posture, and face analysis?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s23","question":"What prior explainability techniques are referenced in the paper?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s24","question":"How does context-aware emotion recognition differ from cropped-subject-only inference?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s25","question":"What does the paper claim as its novel method for explainable emotion recognition?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s26","question":"Which section outlines related work, and what is covered there?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s27","question":"What are the paper's stated contributions regarding prototype implementation?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s28","question":"How does multimodal fusion support confidence in emotion prediction according to the text?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s29","question":"What evidence is given that situational cues influence emotional state assessment?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s30","question":"What is the claimed benefit of using place type and average emotion score together?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s31","question":"How does the work position itself relative to prior unimodal approaches?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s32","question":"What is emphasized about interpretability for user trust in AI-based systems?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s33","question":"Why is context from the scene considered essential in this paper?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s34","question":"Summarize the contribution bullets in concise form.","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s35","question":"What motivation is provided for explainable emotion recognition beyond raw accuracy?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s36","question":"Which components are described as independently operable in the architecture?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s37","question":"What kinds of contextual features are incorporated for situational knowledge?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s38","question":"How does the paper describe the relation between multimodal cues and robustness?","gold_doc_ids":["arxiv_2306.08657v1"]}
+{"id":"s39","question":"What are the main claims made in the paper's introduction and contribution sections?","gold_doc_ids":["arxiv:2306.08657v1"]}
+{"id":"s40","question":"Provide a short overview of the proposed EMERSK approach and its goals.","gold_doc_id":"arxiv_2306.08657v1"}

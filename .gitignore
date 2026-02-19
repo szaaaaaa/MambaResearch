@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Envs
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime data
+data/
+outputs/
+logs/
+*.log
+
+# Local DB / index artifacts
+*.sqlite
+*.db
+*.bin
