@@ -1,0 +1,45 @@
+# ── Autonomous Research Agent Configuration ──────────────────────────
+
+project:
+  data_dir: data
+
+paths:
+  papers_dir: ${project.data_dir}/papers
+  metadata_dir: ${project.data_dir}/metadata
+  indexes_dir: ${project.data_dir}/indexes
+  outputs_dir: outputs
+
+fetch:
+  source: arxiv
+  max_results: 10
+  download_pdf: true
+  polite_delay_sec: 1.0
+
+metadata_store:
+  backend: sqlite
+  sqlite_path: ${paths.metadata_dir}/papers.sqlite
+
+index:
+  backend: chroma
+  persist_dir: ${paths.indexes_dir}/chroma
+  collection_name: papers
+  chunk_size: 1200
+  overlap: 200
+
+retrieval:
+  top_k: 10
+  candidate_k: 30
+  reranker_model: ""
+
+# ── LLM settings ────────────────────────────────────────────────────
+llm:
+  model: gpt-4.1-mini
+  temperature: 0.3
+
+# ── Agent-specific settings ─────────────────────────────────────────
+agent:
+  max_iterations: 3           # max plan→fetch→analyze→synthesize loops
+  papers_per_query: 5         # papers to fetch per search query
+  max_queries_per_iteration: 3 # search queries generated per iteration
+  top_k_for_analysis: 8      # chunks retrieved for per-paper analysis
+  language: "en"              # report language: en / zh / auto

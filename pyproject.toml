@@ -4,9 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-agent"
-version = "0.1.0"
-description = "Research agent project"
+version = "0.2.0"
+description = "Autonomous research agent powered by LangGraph"
 requires-python = ">=3.10"
 dependencies = [
     "feedparser>=6.0.0",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
+    "openai>=1.0.0",
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pymupdf>=1.23.0",
+    "requests>=2.31.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
 ]
