@@ -22,7 +22,8 @@ metadata_store:
 index:
   backend: chroma
   persist_dir: ${paths.indexes_dir}/chroma
-  collection_name: papers
+  collection_name: papers            # Chroma collection for paper PDFs
+  web_collection_name: web_sources   # separate collection for web content
   chunk_size: 1200
   overlap: 200
 

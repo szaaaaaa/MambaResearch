@@ -258,8 +258,13 @@ def fetch_sources(state: ResearchState) -> Dict[str, Any]:
 
 
 def index_sources(state: ResearchState) -> Dict[str, Any]:
-    """Index newly fetched PDFs and web content into Chroma."""
-    from src.ingest.chunking import Chunk, chunk_text
+    """Index newly fetched PDFs and web content into **separate** Chroma collections.
+
+    Papers go into ``collection_name`` (default "papers") and web pages
+    go into ``web_collection_name`` (default "web_sources") so that
+    paper-analysis RAG retrieval never pulls in unrelated web chunks.
+    """
+    from src.ingest.chunking import chunk_text
     from src.ingest.indexer import build_chroma_index
     from src.workflows.traditional_rag import index_pdfs
 
@@ -268,14 +273,15 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
     persist_dir = str(
         (root / cfg.get("index", {}).get("persist_dir", "data/indexes/chroma")).resolve()
     )
-    collection_name = cfg.get("index", {}).get("collection_name", "papers")
+    paper_collection = cfg.get("index", {}).get("collection_name", "papers")
+    web_collection = cfg.get("index", {}).get("web_collection_name", "web_sources")
     chunk_size = cfg.get("index", {}).get("chunk_size", 1200)
     overlap = cfg.get("index", {}).get("overlap", 200)
 
     new_paper_ids: List[str] = []
     new_web_ids: List[str] = []
 
-    # ── Index PDFs (arXiv papers with downloaded PDFs) ───────────────
+    # ── Index PDFs → paper_collection ────────────────────────────────
     already_indexed = set(state.get("indexed_paper_ids", []))
     papers = state.get("papers", [])
     to_index = [
@@ -289,7 +295,7 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
         try:
             result = index_pdfs(
                 persist_dir=persist_dir,
-                collection_name=collection_name,
+                collection_name=paper_collection,
                 pdfs=pdf_paths,
                 chunk_size=chunk_size,
                 overlap=overlap,
@@ -298,7 +304,7 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
         except Exception as e:
             logger.error("PDF indexing failed: %s", e)
 
-    # ── Index web content (text chunks) ──────────────────────────────
+    # ── Index web content → web_collection ───────────────────────────
     already_web = set(state.get("indexed_web_ids", []))
     web_sources = state.get("web_sources", [])
     to_index_web = [
@@ -310,7 +316,6 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
         doc_id = w["uid"]
         text = w["body"]
         if len(text.strip()) < 100:
-            # Too short to be useful
             continue
         chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
         if not chunks:
@@ -318,7 +323,7 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
         try:
             build_chroma_index(
                 persist_dir=persist_dir,
-                collection_name=collection_name,
+                collection_name=web_collection,
                 chunks=chunks,
                 doc_id=doc_id,
             )
@@ -329,7 +334,7 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
     return {
         "indexed_paper_ids": new_paper_ids,
         "indexed_web_ids": new_web_ids,
-        "status": f"Indexed {len(new_paper_ids)} PDFs + {len(new_web_ids)} web pages",
+        "status": f"Indexed {len(new_paper_ids)} PDFs → '{paper_collection}', {len(new_web_ids)} web pages → '{web_collection}'",
     }
 
 
@@ -337,7 +342,11 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
 
 
 def analyze_sources(state: ResearchState) -> Dict[str, Any]:
-    """Analyze papers (via RAG) and web sources (via full text)."""
+    """Analyze papers (via RAG) and web sources (via full text).
+
+    Paper RAG retrieval uses the *paper* collection only, so web
+    chunks never leak into paper analysis.
+    """
     cfg = _get_cfg(state)
     root = Path(cfg.get("_root", "."))
     model = cfg.get("llm", {}).get("model", "gpt-4.1-mini")
@@ -345,7 +354,7 @@ def analyze_sources(state: ResearchState) -> Dict[str, Any]:
     persist_dir = str(
         (root / cfg.get("index", {}).get("persist_dir", "data/indexes/chroma")).resolve()
     )
-    collection_name = cfg.get("index", {}).get("collection_name", "papers")
+    paper_collection = cfg.get("index", {}).get("collection_name", "papers")
     top_k = cfg.get("agent", {}).get("top_k_for_analysis", 8)
 
     topic = state["topic"]
@@ -372,7 +381,7 @@ def analyze_sources(state: ResearchState) -> Dict[str, Any]:
                 from src.rag.retriever import retrieve
                 hits = retrieve(
                     persist_dir=persist_dir,
-                    collection_name=collection_name,
+                    collection_name=paper_collection,
                     query=f"{topic} {paper['title']}",
                     top_k=top_k,
                 )
