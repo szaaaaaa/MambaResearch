@@ -1,250 +1,276 @@
 # ResearchAgent
 
-ResearchAgent is an **autonomous research agent** that can plan, search, analyze, and synthesize academic literature. It combines a Traditional RAG pipeline with a LangGraph-powered agentic loop that iteratively deepens its research.
+ResearchAgent is a local-first research system with two runnable modes:
 
-## Architecture Overview
+- Traditional RAG pipeline (fetch -> parse -> chunk -> index -> retrieve -> answer)
+- Autonomous agent loop built with LangGraph (plan -> fetch -> index -> analyze -> synthesize -> iterate -> report)
 
-```
-User provides topic
-       │
-       ▼
-┌─────────────────┐
-│  plan_research   │ ◄───────────────────────────┐
-└────────┬────────┘                               │
-         ▼                                        │
-┌─────────────────┐                               │
-│  fetch_papers    │  (arXiv API)                  │
-└────────┬────────┘                               │
-         ▼                                        │
-┌─────────────────┐                               │
-│  index_papers    │  (Chroma + embeddings)        │
-└────────┬────────┘                               │
-         ▼                                        │
-┌─────────────────┐                               │
-│ analyze_papers   │  (RAG + LLM)                  │
-└────────┬────────┘                               │
-         ▼                                        │
-┌─────────────────┐                               │
-│   synthesize     │  (LLM)                        │
-└────────┬────────┘                               │
-         ▼                                        │
-┌──────────────────┐  should_continue=True         │
-│evaluate_progress  │ ─────────────────────────────┘
-└────────┬─────────┘
-         │ should_continue=false
-         ▼
-┌─────────────────┐
-│ generate_report  │  → Markdown report
-└─────────────────┘
-```
+This README focuses on practical usage and configuration.
 
-## Stages
+## 1. What is implemented
 
-- **Stage 1 (done):** Traditional RAG MVP — arXiv fetch → PDF parse → chunk → Chroma index → retrieve → cited answer
-- **Stage 2 (done):** Autonomous Research Agent — LangGraph-based iterative research loop
+### 1.1 Traditional RAG
 
-## Tech Stack
+- Fetch paper metadata (and optional PDFs) from arXiv
+- Store metadata in SQLite
+- Parse PDFs with PyMuPDF
+- Chunk text with overlap
+- Build Chroma index with chunk metadata (`doc_id`, `chunk_id`, offsets)
+- Retrieve by embedding similarity
+- Optional reranking with a local cross-encoder
+- Generate citation-style answers via OpenAI Chat API
+- Output JSON and Markdown reports
 
-| Component | Technology |
-|-----------|------------|
-| Agent framework | LangGraph (StateGraph) |
-| Language | Python 3.10+ |
-| Vector DB | ChromaDB (PersistentClient) |
-| Embedding | sentence-transformers/all-MiniLM-L6-v2 |
-| Reranker (optional) | SentenceTransformers CrossEncoder |
-| PDF parsing | PyMuPDF (fitz) |
-| Metadata store | SQLite |
-| LLM | OpenAI Chat Completions API |
+### 1.2 Autonomous research agent
 
-## Repository Structure
+- Topic decomposition into research questions and arXiv search queries
+- Iterative paper fetching and indexing
+- Per-paper analysis using RAG + LLM
+- Cross-paper synthesis and gap detection
+- Loop control (`should_continue`) up to max iterations
+- Final report generation in Markdown
+- State export to JSON
+
+### 1.3 Evaluation
+
+- Retrieval hit rate
+- Citation presence and citation index validity
+- Citation semantic alignment (claim vs cited evidence)
+- Optional multi-run answer consistency
+- Focused `s2` error analysis over query / top_k / candidate_k / reranker_model
+
+## 2. Repository layout
 
 ```text
 ResearchAgent/
-├─ configs/
-│  ├─ rag.yaml              # Traditional RAG config
-│  └─ agent.yaml            # Agent config
-├─ scripts/
-│  ├─ run_agent.py           # ★ Autonomous agent entry point
-│  ├─ fetch_arxiv.py
-│  ├─ build_index.py
-│  ├─ demo_query.py
-│  ├─ run_mvp.py
-│  └─ evaluate_rag.py
-├─ src/
-│  ├─ agent/                 # ★ LangGraph agent
-│  │  ├─ state.py            #   State definition
-│  │  ├─ prompts.py          #   Prompt templates
-│  │  ├─ nodes.py            #   Graph node functions
-│  │  └─ graph.py            #   Graph construction & runner
-│  ├─ common/
-│  │  ├─ config_utils.py
-│  │  ├─ rag_config.py
-│  │  ├─ cli_utils.py
-│  │  ├─ arg_utils.py
-│  │  ├─ runtime_utils.py
-│  │  └─ report_utils.py
-│  ├─ ingest/
-│  │  ├─ fetchers.py
-│  │  ├─ pdf_loader.py
-│  │  ├─ chunking.py
-│  │  └─ indexer.py
-│  ├─ rag/
-│  │  ├─ retriever.py
-│  │  ├─ cite_prompt.py
-│  │  └─ answerer.py
-│  └─ workflows/
-│     └─ traditional_rag.py
-├─ data/
-│  ├─ papers/
-│  ├─ metadata/
-│  └─ indexes/
-└─ outputs/
+  configs/
+    rag.yaml
+    agent.yaml
+    eval_samples.example.jsonl
+  scripts/
+    fetch_arxiv.py
+    build_index.py
+    demo_query.py
+    run_mvp.py
+    evaluate_rag.py
+    run_agent.py
+  src/
+    ingest/
+    rag/
+    workflows/
+    agent/
+    common/
+  data/            # local runtime artifacts (usually gitignored)
+  outputs/         # run outputs (usually gitignored)
 ```
 
-## Setup
+## 3. Requirements
 
-### 1. Create Environment
+- Python 3.10+ (3.13 recommended in this repo)
+- OpenAI API key (`OPENAI_API_KEY`)
+- Internet access for:
+  - arXiv API
+  - OpenAI API
+  - first-time model download from Hugging Face (embedding/reranker), unless cached
 
-```bash
+## 4. Installation
+
+### 4.1 Conda (recommended)
+
+```powershell
 conda create -n ResearchAgent python=3.13 -y
 conda activate ResearchAgent
-```
-
-### 2. Install Dependencies
-
-```bash
 pip install -U pip
 pip install -e .
 ```
 
-### 3. Set OpenAI API Key
+### 4.2 API key
 
-```bash
-export OPENAI_API_KEY="your-api-key"
+PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY="your_api_key"
 ```
 
-## Usage
-
-### Autonomous Research Agent (recommended)
-
-Run the full autonomous research loop:
+Bash:
 
 ```bash
-# Basic usage
-python -m scripts.run_agent --topic "retrieval augmented generation"
-
-# With options
-python -m scripts.run_agent \
-  --topic "LLM alignment techniques" \
-  --max_iter 5 \
-  --papers_per_query 8 \
-  --model gpt-4.1-mini \
-  --language en \
-  -v
-
-# Chinese report
-python -m scripts.run_agent --topic "多模态大模型" --language zh
+export OPENAI_API_KEY="your_api_key"
 ```
 
-**What happens:**
-1. The agent decomposes your topic into research questions and arXiv search queries
-2. Fetches papers from arXiv and downloads PDFs
-3. Indexes papers into Chroma vector store
-4. Analyzes each paper using RAG retrieval + LLM
-5. Synthesizes findings across all papers
-6. Evaluates whether more research is needed (loops back if yes)
-7. Generates a comprehensive Markdown research report
+## 5. Configuration
 
-**Outputs:**
-- `outputs/research_report_<timestamp>.md` — full research report
-- `outputs/research_state_<timestamp>.json` — complete agent state with all analyses
+You normally edit:
 
-### Agent CLI Options
+- `configs/rag.yaml` for traditional RAG commands
+- `configs/agent.yaml` for agent mode
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--topic` | (required) | Research topic or question |
-| `--config` | `configs/agent.yaml` | Config file path |
-| `--max_iter` | 3 | Maximum research iterations |
-| `--papers_per_query` | 5 | Papers to fetch per search query |
-| `--model` | gpt-4.1-mini | LLM model |
-| `--language` | en | Report language (en/zh) |
-| `--output_dir` | outputs/ | Output directory |
-| `-v` | off | Verbose logging |
+### 5.1 `configs/rag.yaml`
 
-### Traditional RAG (Stage 1)
+Main fields:
 
-The original step-by-step RAG pipeline is still available:
+- `paths.papers_dir`: local PDF directory
+- `metadata_store.sqlite_path`: SQLite metadata path
+- `index.persist_dir`: Chroma persistence path
+- `fetch.max_results`: default arXiv result count
+- `fetch.download_pdf`: whether to download PDFs
+- `fetch.polite_delay_sec`: delay between PDF downloads
+- `retrieval.top_k`: final retrieved chunk count
+- `retrieval.candidate_k`: pre-rerank candidate count
+- `retrieval.reranker_model`: cross-encoder model name (empty disables rerank)
+- `openai.model`, `openai.temperature`
 
-```bash
-# Fetch papers
+### 5.2 `configs/agent.yaml`
+
+Main fields:
+
+- `llm.model`, `llm.temperature`
+- `agent.max_iterations`
+- `agent.papers_per_query`
+- `agent.max_queries_per_iteration`
+- `agent.top_k_for_analysis`
+- `agent.language` (`en` or `zh`)
+
+Both configs support `${...}` variable expansion via `src/common/config_utils.py`.
+
+## 6. Traditional RAG usage
+
+### 6.1 Fetch papers
+
+```powershell
 python -m scripts.fetch_arxiv --query "retrieval augmented generation" --max_results 5
-
-# Build index
-python -m scripts.build_index --papers_dir data/papers
-
-# Query
-python -m scripts.demo_query --query "List contributions. Cite evidence." --top_k 8
-
-# One-command closed loop
-python -m scripts.run_mvp \
-  --fetch_query "retrieval augmented generation" \
-  --question "List contributions. Cite evidence." \
-  --max_results 3 --download --top_k 8
 ```
 
-## Configuration
+No download mode:
 
-### Agent Config (`configs/agent.yaml`)
-
-Key settings:
-
-```yaml
-llm:
-  model: gpt-4.1-mini
-  temperature: 0.3
-
-agent:
-  max_iterations: 3         # research loop iterations
-  papers_per_query: 5       # papers per arXiv search
-  max_queries_per_iteration: 3
-  top_k_for_analysis: 8     # chunks for per-paper analysis
-  language: "en"            # report language: en / zh
+```powershell
+python -m scripts.fetch_arxiv --query "retrieval augmented generation" --max_results 5 --no-download
 ```
 
-### RAG Config (`configs/rag.yaml`)
+### 6.2 Build / update index
 
-Configuration for the underlying RAG pipeline (paths, fetch settings, retrieval parameters, etc.).
-
-## LangGraph Agent Design
-
-The agent is built on LangGraph's `StateGraph` with the following nodes:
-
-| Node | Purpose |
-|------|---------|
-| `plan_research` | Decomposes topic into questions and arXiv queries using LLM |
-| `fetch_papers` | Searches arXiv and downloads PDFs |
-| `index_papers` | Parses PDFs, chunks text, indexes into Chroma |
-| `analyze_papers` | Per-paper analysis via RAG retrieval + LLM |
-| `synthesize` | Cross-paper synthesis to identify themes and gaps |
-| `evaluate_progress` | Decides whether to continue or generate report |
-| `generate_report` | Produces final Markdown research report |
-
-The `evaluate_progress` → `plan_research` conditional edge enables iterative deepening: when knowledge gaps are identified, the agent generates new search queries to fill them.
-
-## Evaluation
-
-The evaluation pipeline from Stage 1 is still available:
-
-```bash
-python -m scripts.evaluate_rag \
-  --dataset path/to/eval.jsonl \
-  --top_k 8 --model gpt-4.1-mini
+```powershell
+python -m scripts.build_index --papers_dir data/papers --chunk_size 1200 --overlap 200
 ```
 
-## Common Issues
+Single PDF:
 
-- **`ModuleNotFoundError`** — run `pip install -e .` to install all dependencies
-- **`Missing OPENAI_API_KEY`** — set the environment variable
-- **`No PDF found`** — check that papers were downloaded (use `--download` flag or set `fetch.download_pdf: true`)
-- **`Collection not found`** — the agent handles indexing automatically; for manual RAG, run `build_index.py` first
+```powershell
+python -m scripts.build_index --pdf_path data/papers/arxiv_2306.08657v1.pdf --doc_id arxiv:2306.08657v1
+```
+
+### 6.3 Ask a question
+
+```powershell
+python -m scripts.demo_query --query "List the paper's main contributions. Cite evidence." --top_k 8 --model gpt-4.1-mini
+```
+
+With reranker:
+
+```powershell
+python -m scripts.demo_query --query "List the paper's main contributions. Cite evidence." --top_k 8 --candidate_k 30 --reranker_model "BAAI/bge-reranker-base"
+```
+
+### 6.4 One-command MVP
+
+```powershell
+python -m scripts.run_mvp --fetch_query "retrieval augmented generation" --question "List contributions. Cite evidence." --max_results 3 --download --index_from fetched --top_k 8 --candidate_k 30 --reranker_model "BAAI/bge-reranker-base"
+```
+
+## 7. Agent mode usage
+
+Basic:
+
+```powershell
+python -m scripts.run_agent --topic "retrieval augmented generation"
+```
+
+With overrides:
+
+```powershell
+python -m scripts.run_agent --topic "LLM alignment techniques" --max_iter 5 --papers_per_query 8 --model gpt-4.1-mini --language en -v
+```
+
+Chinese report:
+
+```powershell
+python -m scripts.run_agent --topic "multimodal large models" --language zh
+```
+
+## 8. Evaluation usage
+
+Dataset examples are in `configs/eval_samples.example.jsonl`.
+
+### 8.1 Retrieval-only
+
+```powershell
+python -m scripts.evaluate_rag --dataset configs/eval_samples.example.jsonl --skip_generation --top_k 8 --candidate_k 30 --reranker_model "BAAI/bge-reranker-base"
+```
+
+### 8.2 Full evaluation (with LLM generation)
+
+```powershell
+python -m scripts.evaluate_rag --dataset configs/eval_samples.example.jsonl --top_k 8 --candidate_k 30 --reranker_model "BAAI/bge-reranker-base" --model gpt-4.1-mini --temperature 0.2 --consistency_runs 1
+```
+
+### 8.3 Metrics produced
+
+- `retrieval_hit_rate`
+- `citation_presence_rate`
+- `citation_valid_ratio_mean`
+- `citation_semantic_ratio_mean`
+- `answer_consistency_mean` (if `consistency_runs > 1`)
+- `s2_error_analysis` (if sample id `s2` exists in dataset)
+
+## 9. Outputs
+
+Generated files are written under `outputs/`:
+
+- `demo_query_*.json`, `demo_query_*.md`
+- `run_mvp_*.json`, `run_mvp_*.md`
+- `eval_rag_*.json`, `eval_rag_*.md`
+- `research_report_*.md`, `research_state_*.json`
+
+## 10. CLI quick reference
+
+- `scripts/fetch_arxiv.py`: fetch + metadata storage
+- `scripts/build_index.py`: PDF indexing
+- `scripts/demo_query.py`: single query answer
+- `scripts/run_mvp.py`: end-to-end traditional RAG
+- `scripts/evaluate_rag.py`: offline/online evaluation
+- `scripts/run_agent.py`: autonomous iterative research
+
+## 11. Common issues
+
+- `Missing OPENAI_API_KEY`
+  - set environment variable before running commands
+
+- `openai.APIConnectionError` / timeout
+  - check proxy vars (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`)
+  - verify network/firewall access to OpenAI
+
+- `ModuleNotFoundError`
+  - rerun `pip install -e .`
+
+- `Collection not found`
+  - run indexing first (`build_index.py`) or let `run_mvp.py` / `run_agent.py` build it
+
+- `No PDF found under ...`
+  - confirm `fetch.download_pdf=true` and correct `papers_dir`
+
+- Hugging Face model download blocked
+  - run once with internet to cache models, or use local cache/offline mode
+
+## 12. Notes for GitHub publishing
+
+Recommended `.gitignore` entries:
+
+- `data/`
+- `outputs/`
+- `__pycache__/`
+- `*.pyc`
+- `.env*`
+- local DB/index artifacts (`*.sqlite`, `*.db`, `*.bin`)
+
+Never commit API keys or secrets.
+
