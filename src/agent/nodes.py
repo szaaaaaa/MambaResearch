@@ -950,11 +950,11 @@ def index_sources(state: ResearchState) -> Dict[str, Any]:
 
     # Ensure run tracking tables exist and record this run (idempotent)
     if run_id:
-            try:
-                init_run_tracking(sqlite_path)
-                upsert_run_session_record(sqlite_path, run_id=run_id, topic=state.get("topic", ""))
-            except Exception as e:
-                logger.warning("run_session upsert failed: %s", e)
+        try:
+            init_run_tracking(sqlite_path)
+            upsert_run_session_record(sqlite_path, run_id=run_id, topic=state.get("topic", ""))
+        except Exception as e:
+            logger.warning("run_session upsert failed: %s", e)
 
     new_paper_ids: List[str] = []
     new_web_ids: List[str] = []
