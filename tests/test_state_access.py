@@ -36,6 +36,8 @@ class StateAccessTest(unittest.TestCase):
         self.assertEqual(out["research"]["papers"], [{"uid": "p1"}])
         self.assertEqual(out["evidence"]["gaps"], ["g1"])
         self.assertEqual(out["report"]["report"], "body")
+        self.assertEqual(out["papers"], [{"uid": "p1"}])
+        self.assertEqual(out["gaps"], ["g1"])
         self.assertEqual(out["status"], "ok")
 
     def test_to_namespaced_update_merges_existing_namespace_payload(self) -> None:
@@ -45,8 +47,21 @@ class StateAccessTest(unittest.TestCase):
         }
         out = to_namespaced_update(update)
         self.assertEqual(out["research"]["findings"], ["f2"])
+        self.assertEqual(out["findings"], ["f2"])
+
+    def test_to_namespaced_update_mirrors_namespace_payload_for_flat_access(self) -> None:
+        update = {
+            "research": {"papers": [{"uid": "p2"}], "indexed_paper_ids": ["doc-1"]},
+            "planning": {"research_questions": ["rq1"]},
+        }
+        out = to_namespaced_update(update)
+        self.assertEqual(out["research"]["papers"], [{"uid": "p2"}])
+        self.assertEqual(out["research"]["indexed_paper_ids"], ["doc-1"])
+        self.assertEqual(out["planning"]["research_questions"], ["rq1"])
+        self.assertEqual(out["papers"], [{"uid": "p2"}])
+        self.assertEqual(out["indexed_paper_ids"], ["doc-1"])
+        self.assertEqual(out["research_questions"], ["rq1"])
 
 
 if __name__ == "__main__":
     unittest.main()
-

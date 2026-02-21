@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-"""Multi-source web fetcher: Google/Scholar (optional), DuckDuckGo, Semantic Scholar.
+"""Multi-source web fetcher.
 
-Google and Google Scholar are supported via SerpAPI when `SERPAPI_API_KEY`
-is available. Otherwise the pipeline falls back to free sources.
+Supports:
+- Google / Google Scholar via SerpAPI
+- Google CSE
+- Bing Web Search
+- DuckDuckGo
+- Semantic Scholar
+- OpenAlex
+- GitHub Search API
 """
 
 import logging
@@ -27,6 +33,10 @@ _HEADERS = {
 
 _SERPAPI_URL = "https://serpapi.com/search.json"
 _S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
+_OPENALEX_WORKS = "https://api.openalex.org/works"
+_GOOGLE_CSE_URL = "https://www.googleapis.com/customsearch/v1"
+_BING_WEB_SEARCH_URL = "https://api.bing.microsoft.com/v7.0/search"
+_GITHUB_REPO_SEARCH_URL = "https://api.github.com/search/repositories"
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _LIKELY_CN_DOMAINS = {
     "zhihu.com",
@@ -48,7 +58,7 @@ class WebResult:
     title: str
     url: str
     snippet: str
-    source: str  # "web", "google", "semantic_scholar", "google_scholar"
+    source: str  # e.g. "web", "google", "google_cse", "bing", "semantic_scholar", "openalex", "github"
     body: str = ""  # full extracted text (filled by scrape step)
     authors: List[str] = field(default_factory=list)
     year: Optional[int] = None
@@ -222,6 +232,112 @@ def search_google_scholar(
     return out
 
 
+def search_google_cse(
+    query: str,
+    max_results: int = 10,
+    *,
+    hl: str = "en",
+    gl: str = "us",
+) -> List[WebResult]:
+    """Search Google Programmable Search Engine (Custom Search JSON API)."""
+    api_key = os.getenv("GOOGLE_CSE_API_KEY", "").strip()
+    cx = os.getenv("GOOGLE_CSE_CX", "").strip()
+    if not api_key or not cx:
+        return []
+
+    out: List[WebResult] = []
+    start = 1
+    while len(out) < max_results and start <= 91:
+        want = min(10, max_results - len(out))
+        try:
+            resp = requests.get(
+                _GOOGLE_CSE_URL,
+                params={
+                    "key": api_key,
+                    "cx": cx,
+                    "q": query,
+                    "num": want,
+                    "start": start,
+                    "hl": hl,
+                    "gl": gl,
+                },
+                headers=_HEADERS,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            items = (resp.json() or {}).get("items", []) or []
+        except Exception as e:
+            logger.error("Google CSE search failed: %s", e)
+            break
+
+        if not items:
+            break
+        for row in items:
+            url = row.get("link", "")
+            uid = f"web:{_url_to_uid(url)}" if url else f"web:google_cse_{len(out)}"
+            out.append(
+                WebResult(
+                    uid=uid,
+                    title=row.get("title", ""),
+                    url=url,
+                    snippet=row.get("snippet", "") or "",
+                    source="google_cse",
+                )
+            )
+            if len(out) >= max_results:
+                break
+        start += len(items)
+    return out[:max_results]
+
+
+def search_bing(
+    query: str,
+    max_results: int = 10,
+    *,
+    mkt: str = "en-US",
+) -> List[WebResult]:
+    """Search Bing Web Search API."""
+    api_key = os.getenv("BING_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    out: List[WebResult] = []
+    offset = 0
+    while len(out) < max_results:
+        want = min(50, max_results - len(out))
+        try:
+            resp = requests.get(
+                _BING_WEB_SEARCH_URL,
+                params={"q": query, "count": want, "offset": offset, "mkt": mkt},
+                headers={**_HEADERS, "Ocp-Apim-Subscription-Key": api_key},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            rows = (((resp.json() or {}).get("webPages") or {}).get("value") or [])
+        except Exception as e:
+            logger.error("Bing search failed: %s", e)
+            break
+
+        if not rows:
+            break
+        for row in rows:
+            url = row.get("url", "")
+            uid = f"web:{_url_to_uid(url)}" if url else f"web:bing_{len(out)}"
+            out.append(
+                WebResult(
+                    uid=uid,
+                    title=row.get("name", ""),
+                    url=url,
+                    snippet=row.get("snippet", "") or "",
+                    source="bing",
+                )
+            )
+            if len(out) >= max_results:
+                break
+        offset += len(rows)
+    return out[:max_results]
+
+
 def search_duckduckgo(
     query: str,
     max_results: int = 10,
@@ -256,6 +372,74 @@ def search_duckduckgo(
             )
     except Exception as e:
         logger.error("DuckDuckGo search failed: %s", e)
+    return results
+
+
+def search_openalex(
+    query: str,
+    max_results: int = 10,
+) -> List[WebResult]:
+    """Search OpenAlex works API (free)."""
+    results: List[WebResult] = []
+    try:
+        resp = requests.get(
+            _OPENALEX_WORKS,
+            params={
+                "search": query,
+                "per-page": min(max_results, 200),
+                "select": "id,doi,title,display_name,publication_year,abstract_inverted_index,authorships,primary_location,ids",
+            },
+            headers=_HEADERS,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = (resp.json() or {}).get("results", []) or []
+    except Exception as e:
+        logger.error("OpenAlex search failed: %s", e)
+        return results
+
+    for row in data:
+        title = row.get("display_name") or row.get("title") or ""
+        ids = row.get("ids") or {}
+        doi_url = ids.get("doi") or row.get("doi") or ""
+        openalex_id = row.get("id", "")
+        uid = ""
+        if isinstance(doi_url, str) and doi_url:
+            uid = f"doi:{doi_url.replace('https://doi.org/', '').replace('http://doi.org/', '')}"
+        elif isinstance(openalex_id, str) and openalex_id:
+            uid = f"openalex:{openalex_id.rsplit('/', 1)[-1]}"
+        else:
+            uid = f"openalex:{len(results)}"
+
+        authors = []
+        for a in row.get("authorships") or []:
+            nm = ((a.get("author") or {}).get("display_name") or "").strip()
+            if nm:
+                authors.append(nm)
+
+        url = ""
+        primary = row.get("primary_location") or {}
+        landing = primary.get("landing_page_url")
+        if isinstance(landing, str) and landing:
+            url = landing
+        elif isinstance(doi_url, str) and doi_url:
+            url = doi_url
+        elif isinstance(openalex_id, str):
+            url = openalex_id
+
+        results.append(
+            WebResult(
+                uid=uid,
+                title=title,
+                url=url,
+                snippet="",
+                source="openalex",
+                authors=authors,
+                year=row.get("publication_year"),
+            )
+        )
+        if len(results) >= max_results:
+            break
     return results
 
 
@@ -312,6 +496,67 @@ def search_semantic_scholar(
             )
         )
     return results
+
+
+def search_github(
+    query: str,
+    max_results: int = 10,
+    *,
+    sort: str = "stars",
+) -> List[WebResult]:
+    """Search GitHub repositories as web/engineering evidence."""
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    headers = dict(_HEADERS)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    results: List[WebResult] = []
+    page = 1
+    per_page = min(100, max(1, max_results))
+
+    while len(results) < max_results:
+        want = min(per_page, max_results - len(results))
+        try:
+            resp = requests.get(
+                _GITHUB_REPO_SEARCH_URL,
+                params={
+                    "q": query,
+                    "sort": sort,
+                    "order": "desc",
+                    "per_page": want,
+                    "page": page,
+                },
+                headers=headers,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            rows = (resp.json() or {}).get("items", []) or []
+        except Exception as e:
+            logger.error("GitHub search failed: %s", e)
+            break
+
+        if not rows:
+            break
+        for row in rows:
+            url = row.get("html_url", "")
+            full_name = row.get("full_name", "")
+            uid = f"github:{full_name.lower()}" if full_name else f"web:{_url_to_uid(url)}"
+            stars = row.get("stargazers_count", 0)
+            lang = row.get("language") or ""
+            desc = row.get("description") or ""
+            snippet = f"stars={stars}; language={lang}; {desc}".strip()
+            results.append(
+                WebResult(
+                    uid=uid,
+                    title=full_name or row.get("name", ""),
+                    url=url,
+                    snippet=snippet,
+                    source="github",
+                )
+            )
+            if len(results) >= max_results:
+                break
+        page += 1
+    return results[:max_results]
 
 
 def fetch_page_content(

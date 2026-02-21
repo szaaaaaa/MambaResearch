@@ -10,9 +10,13 @@ from src.agent.infra.search.sources import (
     fetch_arxiv_records,
     filter_search_results_by_domain,
     prioritize_search_results,
+    query_bing_web,
     query_duckduckgo_web,
+    query_github_web,
+    query_google_cse_web,
     query_google_scholar,
     query_google_web,
+    query_openalex,
     query_semantic_scholar,
     scrape_search_results,
 )
@@ -29,7 +33,7 @@ def _academic_provider_order(cfg: Dict[str, Any]) -> List[str]:
     order = cfg.get("providers", {}).get("search", {}).get("academic_order")
     if isinstance(order, list) and order:
         return [str(x).strip().lower() for x in order if str(x).strip()]
-    return ["google_scholar", "semantic_scholar"]
+    return ["openalex", "google_scholar", "semantic_scholar"]
 
 
 def _web_provider_order(cfg: Dict[str, Any]) -> List[str]:
@@ -39,8 +43,8 @@ def _web_provider_order(cfg: Dict[str, Any]) -> List[str]:
 
     prefer_google = cfg.get("sources", {}).get("web", {}).get("prefer_google", True)
     if prefer_google:
-        return ["google", "duckduckgo"]
-    return ["duckduckgo", "google"]
+        return ["google_cse", "bing", "duckduckgo", "google", "github"]
+    return ["duckduckgo", "bing", "google_cse", "google", "github"]
 
 
 class DefaultSearchBackend:
@@ -108,22 +112,37 @@ class DefaultSearchBackend:
                 except Exception as e:  # pragma: no cover - network path
                     logger.error("[arXiv] Failed for '%s': %s", q, e)
 
-        if _source_enabled(cfg, "google_scholar") or _source_enabled(cfg, "semantic_scholar"):
+        if (
+            _source_enabled(cfg, "openalex")
+            or _source_enabled(cfg, "google_scholar")
+            or _source_enabled(cfg, "semantic_scholar")
+        ):
             order = _academic_provider_order(cfg)
             query_all = bool(search_provider_cfg.get("query_all_academic", False))
 
             gs_cfg = sources_cfg.get("google_scholar", {})
             s2_cfg = sources_cfg.get("semantic_scholar", {})
+            oa_cfg = sources_cfg.get("openalex", {})
             target_per_query = int(cfg.get("agent", {}).get("papers_per_query", 5))
             gs_per_query = int(gs_cfg.get("max_results_per_query", target_per_query))
             s2_per_query = int(s2_cfg.get("max_results_per_query", target_per_query))
+            oa_per_query = int(oa_cfg.get("max_results_per_query", target_per_query))
 
             for q in academic_queries:
                 merged_results = []
                 for provider in order:
                     unique_now = len(dedupe_search_results(merged_results))
                     need_more = max(0, target_per_query - unique_now)
-                    if provider == "google_scholar" and _source_enabled(cfg, "google_scholar"):
+                    if provider == "openalex" and _source_enabled(cfg, "openalex"):
+                        if need_more == 0 and merged_results and not query_all:
+                            continue
+                        oa_max = max(oa_per_query, need_more)
+                        logger.info("[OpenAlex] Searching: %s (max %d)", q, oa_max)
+                        try:
+                            merged_results.extend(query_openalex(q, max_results=oa_max))
+                        except Exception as e:  # pragma: no cover - network path
+                            logger.error("[OpenAlex] Failed for '%s': %s", q, e)
+                    elif provider == "google_scholar" and _source_enabled(cfg, "google_scholar"):
                         logger.info("[Google Scholar] Searching: %s (max %d)", q, gs_per_query)
                         try:
                             merged_results.extend(query_google_scholar(q, max_results=gs_per_query))
@@ -139,7 +158,7 @@ class DefaultSearchBackend:
                         except Exception as e:  # pragma: no cover - network path
                             logger.error("[Semantic Scholar] Failed for '%s': %s", q, e)
 
-                final_results = dedupe_search_results(merged_results)[: max(target_per_query, gs_per_query, s2_per_query)]
+                final_results = dedupe_search_results(merged_results)[: max(target_per_query, gs_per_query, s2_per_query, oa_per_query)]
                 for r in final_results:
                     if r.uid in seen_papers:
                         continue
@@ -171,6 +190,8 @@ class DefaultSearchBackend:
             ddg_region = str(web_cfg.get("ddg_region", "us-en"))
             google_hl = str(web_cfg.get("google_hl", "en"))
             google_gl = str(web_cfg.get("google_gl", "us"))
+            bing_mkt = str(web_cfg.get("bing_mkt", "en-US"))
+            github_sort = str(web_cfg.get("github_sort", "stars"))
             prefer_english = bool(web_cfg.get("prefer_english", True))
             max_zh_ratio = float(web_cfg.get("max_chinese_ratio", 0.25))
             blocked_domains = web_cfg.get("blocked_domains", [])
@@ -185,10 +206,16 @@ class DefaultSearchBackend:
                         if enough and not query_all:
                             break
 
-                        if provider == "google":
+                        if provider == "google" and _source_enabled(cfg, "web"):
                             merged.extend(query_google_web(q, max_results=raw_n, hl=google_hl, gl=google_gl))
-                        elif provider == "duckduckgo":
+                        elif provider == "google_cse" and _source_enabled(cfg, "google_cse"):
+                            merged.extend(query_google_cse_web(q, max_results=raw_n, hl=google_hl, gl=google_gl))
+                        elif provider == "bing" and _source_enabled(cfg, "bing"):
+                            merged.extend(query_bing_web(q, max_results=raw_n, mkt=bing_mkt))
+                        elif provider == "duckduckgo" and _source_enabled(cfg, "web"):
                             merged.extend(query_duckduckgo_web(q, max_results=raw_n, region=ddg_region))
+                        elif provider == "github" and _source_enabled(cfg, "github"):
+                            merged.extend(query_github_web(q, max_results=raw_n, sort=github_sort))
 
                     results = dedupe_search_results(merged)
                     results = filter_search_results_by_domain(results, blocked_domains=blocked_domains)

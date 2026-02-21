@@ -61,6 +61,8 @@ _STOPWORDS = {
 
 _ACADEMIC_DOMAINS = {
     "arxiv.org",
+    "openalex.org",
+    "api.openalex.org",
     "aclanthology.org",
     "ieeexplore.ieee.org",
     "openreview.net",
@@ -303,7 +305,7 @@ def _source_tier(a: Dict[str, Any]) -> str:
         return "A"
     if domain in _ACADEMIC_DOMAINS:
         return "A"
-    if source in {"arxiv", "semantic_scholar", "google_scholar"}:
+    if source in {"arxiv", "openalex", "semantic_scholar", "google_scholar"}:
         return "A"
     if domain in _ENGINEERING_DOMAINS:
         return "B"
@@ -779,7 +781,7 @@ def _dedupe_and_rank_analyses(analyses: List[Dict[str, Any]], max_items: int) ->
         dedup.values(),
         key=lambda i: (
             float(i.get("relevance_score", 0) or 0),
-            1 if str(i.get("source") or "").lower() in {"arxiv", "google_scholar", "semantic_scholar"} else 0,
+            1 if str(i.get("source") or "").lower() in {"arxiv", "openalex", "google_scholar", "semantic_scholar"} else 0,
         ),
         reverse=True,
     )

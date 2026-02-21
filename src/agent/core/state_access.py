@@ -55,22 +55,37 @@ def with_flattened_legacy_view(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def to_namespaced_update(update: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert flat node updates into namespaced patch format."""
+    """Convert node updates into namespaced patch format with flat mirrors.
+
+    Why both?
+    - Some runtimes may replace nested namespace dicts instead of deep-merging.
+    - Emitting mapped flat aliases keeps downstream nodes backward-compatible
+      even if a namespace payload is partially overwritten.
+    """
     out: Dict[str, Any] = {}
     ns_updates: Dict[str, Dict[str, Any]] = {}
+    flat_updates: Dict[str, Any] = {}
 
     for ns in _NAMESPACES:
         payload = update.get(ns)
         if isinstance(payload, dict):
             ns_updates[ns] = dict(payload)
+            for key, value in payload.items():
+                if _FIELD_NS_MAP.get(key) == ns and key != ns:
+                    flat_updates[key] = value
 
     for key, value in update.items():
         ns = _FIELD_NS_MAP.get(key)
         if key in _NAMESPACES:
             if isinstance(value, dict):
                 ns_updates.setdefault(key, {}).update(value)
+                for sub_key, sub_value in value.items():
+                    if _FIELD_NS_MAP.get(sub_key) == key and sub_key != key:
+                        flat_updates[sub_key] = sub_value
             elif ns:
                 ns_updates.setdefault(ns, {})[key] = value
+                if key != ns:
+                    flat_updates[key] = value
             else:
                 out[key] = value
             continue
@@ -78,8 +93,11 @@ def to_namespaced_update(update: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = value
             continue
         ns_updates.setdefault(ns, {})[key] = value
+        if key != ns:
+            flat_updates[key] = value
 
     for ns, payload in ns_updates.items():
         if payload:
             out[ns] = payload
+    out.update(flat_updates)
     return out

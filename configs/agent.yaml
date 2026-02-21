@@ -44,8 +44,8 @@ providers:
     retry_backoff_sec: 1.0
   search:
     backend: default_search
-    academic_order: [google_scholar, semantic_scholar]
-    web_order: [google, duckduckgo]
+    academic_order: [openalex, semantic_scholar]
+    web_order: [duckduckgo]
     query_all_academic: false
     query_all_web: false
   retrieval:
@@ -123,17 +123,32 @@ sources:
     max_results_per_query: 5
     download_pdf: true
 
-  google_scholar:
-    enabled: true
-    max_results_per_query: 5
-
-  web:
+  openalex:
     enabled: true
     max_results_per_query: 8
+
+  google_scholar:
+    enabled: false
+    max_results_per_query: 5
+
+  google_cse:
+    enabled: false
+
+  bing:
+    enabled: false
+
+  github:
+    enabled: false
+
+  web:
+    enabled: false
+    max_results_per_query: 8
     overfetch_factor: 3           # fetch more, then rerank/filter down
-    prefer_google: true           # use Google (SerpAPI) before DDG when available
+    prefer_google: false          # true: Google-first, false: free/low-cost first
     google_hl: en
     google_gl: us
+    bing_mkt: en-US
+    github_sort: stars
     ddg_region: us-en
     prefer_english: true          # rank English/global sources first
     max_chinese_ratio: 0.25       # Chinese sources are fallback quota

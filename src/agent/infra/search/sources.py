@@ -8,9 +8,13 @@ from src.ingest.web_fetcher import (
     filter_results_by_domain,
     prioritize_results,
     scrape_results,
+    search_bing,
     search_duckduckgo,
+    search_github,
     search_google,
+    search_google_cse,
     search_google_scholar,
+    search_openalex,
     search_semantic_scholar,
 )
 
@@ -42,8 +46,24 @@ def query_semantic_scholar(query: str, *, max_results: int):
     return search_semantic_scholar(query, max_results=max_results)
 
 
+def query_openalex(query: str, *, max_results: int):
+    return search_openalex(query, max_results=max_results)
+
+
 def query_google_web(query: str, *, max_results: int, hl: str, gl: str):
     return search_google(query, max_results=max_results, hl=hl, gl=gl)
+
+
+def query_google_cse_web(query: str, *, max_results: int, hl: str, gl: str):
+    return search_google_cse(query, max_results=max_results, hl=hl, gl=gl)
+
+
+def query_bing_web(query: str, *, max_results: int, mkt: str):
+    return search_bing(query, max_results=max_results, mkt=mkt)
+
+
+def query_github_web(query: str, *, max_results: int, sort: str):
+    return search_github(query, max_results=max_results, sort=sort)
 
 
 def query_duckduckgo_web(query: str, *, max_results: int, region: str):

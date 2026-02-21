@@ -3,9 +3,18 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List
 
-ALL_SOURCES = ("arxiv", "google_scholar", "semantic_scholar", "web")
-DEFAULT_ACADEMIC_ORDER = ["google_scholar", "semantic_scholar"]
-DEFAULT_WEB_ORDER = ["google", "duckduckgo"]
+ALL_SOURCES = (
+    "arxiv",
+    "openalex",
+    "google_scholar",
+    "semantic_scholar",
+    "web",
+    "bing",
+    "google_cse",
+    "github",
+)
+DEFAULT_ACADEMIC_ORDER = ["openalex", "google_scholar", "semantic_scholar"]
+DEFAULT_WEB_ORDER = ["google_cse", "bing", "duckduckgo", "google", "github"]
 DEFAULT_MAX_ITERATIONS = 3
 DEFAULT_PAPERS_PER_QUERY = 5
 DEFAULT_MAX_QUERIES_PER_ITERATION = 3
