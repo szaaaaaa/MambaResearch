@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from src.agent import nodes
@@ -53,10 +54,46 @@ class NodesFlowTest(unittest.TestCase):
         with patch("src.agent.nodes._llm_call", return_value=llm_json):
             out = nodes.plan_research(state)
 
+        year = datetime.now().year
         self.assertEqual(sget(out, "research_questions", []), ["q1"])
-        self.assertEqual(sget(out, "search_queries", []), ["what is rag", "rag benchmark", "extra"])
-        self.assertEqual(sget(out, "_academic_queries", []), ["rag benchmark"])
-        self.assertEqual(sget(out, "_web_queries", []), ["what is rag", "extra", "rag benchmark"])
+        self.assertEqual(
+            sget(out, "search_queries", []),
+            [
+                "what is rag",
+                "rag benchmark",
+                "extra",
+                "q1",
+                '"q1"',
+                f"q1 {year-2} {year-1} {year}",
+                "q1 benchmark evaluation ablation",
+                "q1 survey systematic review",
+            ],
+        )
+        self.assertEqual(
+            sget(out, "_academic_queries", []),
+            [
+                "rag benchmark",
+                "extra",
+                "q1",
+                '"q1"',
+                f"q1 {year-2} {year-1} {year}",
+                "q1 benchmark evaluation ablation",
+                "q1 survey systematic review",
+            ],
+        )
+        self.assertEqual(
+            sget(out, "_web_queries", []),
+            [
+                "q1 benchmark evaluation ablation",
+                "q1 survey systematic review",
+                "what is rag",
+                "extra",
+                "rag benchmark",
+                "q1",
+                '"q1"',
+                f"q1 {year-2} {year-1} {year}",
+            ],
+        )
 
     def test_fetch_sources_filters_by_topic_and_dedupes(self) -> None:
         state = {
