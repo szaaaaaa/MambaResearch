@@ -54,7 +54,7 @@ providers:
 # ── Agent-specific settings ─────────────────────────────────────────
 agent:
   seed: 42
-  max_iterations: 1           # max plan→fetch→analyze→synthesize loops
+  max_iterations: 3          # max plan→fetch→analyze→synthesize loops
   papers_per_query: 5         # papers to fetch per search query (arXiv)
   max_queries_per_iteration: 3 # search queries generated per iteration
   top_k_for_analysis: 8      # chunks retrieved for per-paper analysis
