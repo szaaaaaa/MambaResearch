@@ -3,36 +3,13 @@
 Graph topology
 ==============
 
-    ┌─────────────────┐
-    │  plan_research   │ ◄──────────────────────────┐
-    └────────┬────────┘                              │
-             ▼                                       │
-    ┌─────────────────┐                              │
-    │  fetch_sources   │  arXiv + S2 + Web           │
-    └────────┬────────┘                              │
-             ▼                                       │
-    ┌─────────────────┐                              │
-    │  index_sources   │  PDFs + web text → Chroma   │
-    └────────┬────────┘                              │
-             ▼                                       │
-    ┌──────────────────┐                             │
-    │ analyze_sources   │  papers + web pages         │
-    └────────┬─────────┘                             │
-             ▼                                       │
-    ┌─────────────────┐                              │
-    │   synthesize     │                              │
-    └────────┬────────┘                              │
-             ▼                                       │
-    ┌──────────────────┐   should_continue=True      │
-    │evaluate_progress  │ ───────────────────────────┘
-    └────────┬─────────┘
-             │ should_continue=False
-             ▼
-    ┌─────────────────┐
-    │ generate_report  │
-    └────────┬────────┘
-             ▼
-           [END]
+    plan_research -> fetch_sources -> index_sources -> analyze_sources
+        -> synthesize -> recommend_experiments
+        -> (await_experiment_results=True)  ingest_experiment_results -> END (pause)
+        -> (await_experiment_results=False) evaluate_progress
+        -> ingest_experiment_results --(results_validated)--> evaluate_progress
+        -> evaluate_progress --(loop)--> plan_research
+                           --(done)--> generate_report -> END
 """
 from __future__ import annotations
 
@@ -53,8 +30,10 @@ from src.agent.nodes import (
     evaluate_progress,
     fetch_sources,
     generate_report,
+    ingest_experiment_results,
     index_sources,
     plan_research,
+    recommend_experiments,
     synthesize,
 )
 
@@ -68,6 +47,20 @@ def _route_after_evaluate(state: ResearchState) -> str:
     return "generate_report"
 
 
+def _route_after_recommend_experiments(state: ResearchState) -> str:
+    """Route to HITL result ingest when waiting for external experiment runs."""
+    if bool(sget(state, "await_experiment_results", False)):
+        return "ingest_experiment_results"
+    return "evaluate_progress"
+
+
+def _route_after_ingest_experiment_results(state: ResearchState) -> str:
+    """Pause run when still waiting for valid human experiment results."""
+    if bool(sget(state, "await_experiment_results", False)):
+        return "pause_for_human"
+    return "evaluate_progress"
+
+
 def build_graph() -> StateGraph:
     """Construct and compile the research agent graph."""
     graph = StateGraph(ResearchState)
@@ -78,6 +71,11 @@ def build_graph() -> StateGraph:
     graph.add_node("index_sources", instrument_node("index_sources", index_sources))
     graph.add_node("analyze_sources", instrument_node("analyze_sources", analyze_sources))
     graph.add_node("synthesize", instrument_node("synthesize", synthesize))
+    graph.add_node("recommend_experiments", instrument_node("recommend_experiments", recommend_experiments))
+    graph.add_node(
+        "ingest_experiment_results",
+        instrument_node("ingest_experiment_results", ingest_experiment_results),
+    )
     graph.add_node("evaluate_progress", instrument_node("evaluate_progress", evaluate_progress))
     graph.add_node("generate_report", instrument_node("generate_report", generate_report))
 
@@ -88,7 +86,24 @@ def build_graph() -> StateGraph:
     graph.add_edge("fetch_sources", "index_sources")
     graph.add_edge("index_sources", "analyze_sources")
     graph.add_edge("analyze_sources", "synthesize")
-    graph.add_edge("synthesize", "evaluate_progress")
+    graph.add_edge("synthesize", "recommend_experiments")
+
+    graph.add_conditional_edges(
+        "recommend_experiments",
+        _route_after_recommend_experiments,
+        {
+            "ingest_experiment_results": "ingest_experiment_results",
+            "evaluate_progress": "evaluate_progress",
+        },
+    )
+    graph.add_conditional_edges(
+        "ingest_experiment_results",
+        _route_after_ingest_experiment_results,
+        {
+            "pause_for_human": END,
+            "evaluate_progress": "evaluate_progress",
+        },
+    )
 
     graph.add_conditional_edges(
         "evaluate_progress",
@@ -163,6 +178,8 @@ def run_research(
             "analyses": [],
             "findings": [],
             "synthesis": "",
+            "experiment_plan": {},
+            "experiment_results": {},
         },
         "evidence": {
             "gaps": [],
@@ -178,6 +195,7 @@ def run_research(
         "iteration": 0,
         "max_iterations": max_iterations,
         "should_continue": False,
+        "await_experiment_results": False,
         "_focus_research_questions": [],
         "status": "Starting research",
         "error": None,

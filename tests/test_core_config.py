@@ -20,6 +20,10 @@ class CoreConfigTest(unittest.TestCase):
         self.assertIn("seed", out["agent"])
         self.assertIn("topic_filter", out["agent"])
         self.assertIn("block_terms", out["agent"]["topic_filter"])
+        self.assertIn("experiment_plan", out["agent"])
+        self.assertTrue(out["agent"]["experiment_plan"]["enabled"])
+        self.assertEqual(out["agent"]["experiment_plan"]["max_per_rq"], 2)
+        self.assertTrue(out["agent"]["experiment_plan"]["require_human_results"])
         self.assertIn("budget_guard", out)
         self.assertIn("max_tokens", out["budget_guard"])
         self.assertIn("max_api_calls", out["budget_guard"])
@@ -65,6 +69,22 @@ class CoreConfigTest(unittest.TestCase):
         self.assertEqual(out["budget_guard"]["max_tokens"], 1234)
         self.assertEqual(out["budget_guard"]["max_api_calls"], 56)
         self.assertAlmostEqual(out["budget_guard"]["max_wall_time_sec"], 7.5, places=6)
+
+    def test_experiment_plan_config_normalized(self) -> None:
+        out = normalize_and_validate_config(
+            {
+                "agent": {
+                    "experiment_plan": {
+                        "enabled": "no",
+                        "max_per_rq": "4",
+                        "require_human_results": "0",
+                    }
+                }
+            }
+        )
+        self.assertFalse(out["agent"]["experiment_plan"]["enabled"])
+        self.assertEqual(out["agent"]["experiment_plan"]["max_per_rq"], 4)
+        self.assertFalse(out["agent"]["experiment_plan"]["require_human_results"])
 
 
 if __name__ == "__main__":

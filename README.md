@@ -7,6 +7,24 @@ ResearchAgent is a local-first research workflow with two runnable modes:
 
 This README focuses on project structure, environment setup, usage, and quick start.
 
+## Experimental Blueprint (HITL)
+
+Autonomous mode includes an ML/DL experiment extension:
+
+- For ML/DL/CV/NLP/RL topics, the agent generates an `experiment_plan` chapter.
+- The run pauses at a HITL checkpoint until `experiment_results` are provided by a human.
+- The final report includes `Experimental Blueprint` (plan) and `Experimental Results` (validated runs).
+
+Related config in `configs/agent.yaml`:
+
+```yaml
+agent:
+  experiment_plan:
+    enabled: true
+    max_per_rq: 2
+    require_human_results: true
+```
+
 ## Project Structure
 
 ```text

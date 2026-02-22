@@ -112,6 +112,10 @@ agent:
     - route choice
     - value systems of agents
     - multi-agent deep reinforcement learning with communication
+  experiment_plan:
+    enabled: true
+    max_per_rq: 2
+    require_human_results: true
 sources:
   arxiv:
     enabled: true

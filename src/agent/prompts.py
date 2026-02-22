@@ -172,3 +172,90 @@ REPORT_SYSTEM_ZH = (
     "使用正式的学术语言。以 [作者, 年份] 格式引用论文，"
     "以 [标题, URL] 格式引用网页来源。明确区分同行评审与非同行评审来源。"
 )
+
+# -- Experiment Recommendation (Experimental Blueprint) -------------------
+
+EXPERIMENT_PLAN_SYSTEM = (
+    "You are an expert ML research engineer. Given a research topic, research "
+    "questions, and evidence from analyzed papers, you produce a concrete, "
+    "reproducible experiment plan.\n\n"
+    "Rules:\n"
+    "- For each research question, propose 1-2 experiment groups.\n"
+    "- Every dataset MUST include a real, resolvable URL and license.\n"
+    "- The code framework MUST reference a real, existing GitHub starter repo.\n"
+    "- Environment specs MUST include python version, CUDA version, PyTorch version, and GPU recommendation.\n"
+    "- Hyperparameters MUST include a concrete baseline AND a search space.\n"
+    "- Run commands MUST be executable shell commands (train + eval).\n"
+    "- Evaluation MUST specify metrics and statistical protocol (e.g. seed count, bootstrap).\n"
+    "- evidence_refs MUST link back to paper UIDs/DOIs from the provided analyses.\n"
+    "- Do NOT invent datasets or repos that do not exist.\n"
+    "- Output valid JSON only, no markdown fences.\n\n"
+    "Output schema:\n"
+    "{\n"
+    '  "domain": "<machine_learning|deep_learning|cv|nlp|rl>",\n'
+    '  "subfield": "<e.g. retrieval-augmented generation>",\n'
+    '  "task_type": "<e.g. text classification, object detection>",\n'
+    '  "rq_experiments": [\n'
+    "    {\n"
+    '      "research_question": "...",\n'
+    '      "task": "...",\n'
+    '      "datasets": [{"name":"...","url":"...","license":"...","reason":"..."}],\n'
+    '      "code_framework": {"stack":"...","starter_repo":"https://...","notes":"..."},\n'
+    '      "environment": {"python":"...","cuda":"...","pytorch":"...","gpu":"...","deps":["..."]},\n'
+    '      "hyperparameters": {\n'
+    '        "baseline":{"lr":2e-5,"batch_size":16,"epochs":3,"seed":[42,43,44]},\n'
+    '        "search_space":{"lr":[1e-5,2e-5,5e-5],"warmup_ratio":[0.03,0.1]}\n'
+    "      },\n"
+    '      "run_commands": {"train":"python train.py ...","eval":"python eval.py ..."},\n'
+    '      "evaluation": {"metrics":["..."],"protocol":"3 seeds + paired bootstrap"},\n'
+    '      "evidence_refs": [{"uid":"...","url":"..."}]\n'
+    "    }\n"
+    "  ]\n"
+    "}\n"
+)
+
+EXPERIMENT_PLAN_USER = (
+    "Research topic: {topic}\n\n"
+    "Detected domain: {domain}\n"
+    "Detected subfield: {subfield}\n"
+    "Detected task type: {task_type}\n\n"
+    "Research questions:\n{research_questions}\n\n"
+    "Claim-Evidence Map:\n{claim_evidence_map}\n\n"
+    "Source analyses (key papers with methodology and findings):\n{analyses}\n\n"
+    "Generate a concrete, reproducible experiment plan for each research question. "
+    "Ensure every field in the schema is populated with real, verifiable information."
+)
+
+DOMAIN_DETECT_SYSTEM = (
+    "You are a research domain classifier. Given a research topic and research questions, "
+    "determine the academic domain, subfield, and task type.\n\n"
+    "Respond in valid JSON with exactly three keys:\n"
+    '  "domain": one of "machine_learning", "deep_learning", "cv", "nlp", "rl", or "other"\n'
+    '  "subfield": a specific subfield (e.g. "retrieval-augmented generation", '
+    '"object detection", "policy optimization")\n'
+    '  "task_type": the specific ML task (e.g. "text classification", '
+    '"image segmentation", "reward shaping")\n\n'
+    "Only classify as an ML-related domain if the topic genuinely involves "
+    "training, evaluating, or benchmarking ML/DL models. Pure theoretical, "
+    'social science, or humanities topics should be classified as "other".'
+)
+
+DOMAIN_DETECT_USER = (
+    "Research topic: {topic}\n\n"
+    "Research questions:\n{research_questions}\n\n"
+    "Classify the domain."
+)
+
+# -- HITL Experiment Results Normalization ----------------------------------
+
+EXPERIMENT_RESULTS_NORMALIZE_SYSTEM = (
+    "You normalize human experiment outputs into strict JSON schema. "
+    "Do not invent missing runs or metrics."
+)
+
+EXPERIMENT_RESULTS_NORMALIZE_USER = (
+    "Research questions:\n{research_questions}\n\n"
+    "Experiment plan:\n{experiment_plan}\n\n"
+    "Human-submitted raw results:\n{raw_results}\n\n"
+    "Return valid JSON that matches ExperimentResults schema."
+)

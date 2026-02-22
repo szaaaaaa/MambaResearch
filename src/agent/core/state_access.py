@@ -12,6 +12,8 @@ _FIELD_NS_MAP = {
     "findings": "research",
     "synthesis": "research",
     "memory_summary": "research",
+    "experiment_plan": "research",
+    "experiment_results": "research",
     "research_questions": "planning",
     "search_queries": "planning",
     "query_routes": "planning",

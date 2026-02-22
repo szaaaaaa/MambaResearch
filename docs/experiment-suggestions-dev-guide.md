@@ -1,6 +1,8 @@
 # Experimental Blueprint -- Extension Development Guide
 
 > **Feature**: When the research topic falls within ML/DL/CV/NLP/RL domains, the agent automatically generates a structured **Experimental Blueprint** chapter in the final report, providing actionable experiment plans including datasets, code frameworks, environment configs, hyperparameters, run commands, and evaluation protocols.
+> 
+> **HITL Extension**: After `recommend_experiments`, the workflow pauses for human experiment execution and only resumes once human-submitted `experiment_results` are provided.
 
 ---
 
@@ -35,11 +37,18 @@ plan_research -> fetch_sources -> index_sources -> analyze_sources
 
 ```
 plan_research -> fetch_sources -> index_sources -> analyze_sources
-    -> synthesize -> recommend_experiments -> evaluate_progress --(loop)--> plan_research
-                                                                --(done)--> generate_report -> END
+    -> synthesize -> recommend_experiments -> [HITL pause: await_experiment_results]
+    -> ingest_experiment_results -> evaluate_progress --(loop)--> plan_research
+                                                     --(done)--> generate_report -> END
 ```
 
 The new `recommend_experiments` node is inserted between `synthesize` and `evaluate_progress`. It reads the synthesized research context, performs domain detection, and conditionally generates experiment plans. When the topic does not fall in ML/DL/CV/NLP/RL, it passes through as a no-op.
+
+For ML/DL/CV/NLP/RL topics, this extension introduces a human-in-the-loop checkpoint:
+- `recommend_experiments` produces `experiment_plan` and sets `await_experiment_results=True`.
+- The run pauses until human experiment execution is completed.
+- Human submits `experiment_results`.
+- `ingest_experiment_results` validates and merges results into state, then the graph continues.
 
 ### Key Design Principles
 
@@ -47,6 +56,7 @@ The new `recommend_experiments` node is inserted between `synthesize` and `evalu
 - **Fixed output schema**: The experiment plan follows a strict JSON schema with mandatory fields for reproducibility.
 - **Per-RQ experiments**: Each research question gets 1-2 experiment proposals.
 - **Non-invasive**: For non-ML topics, the node is a no-op and adds no content to the report.
+- **HITL checkpoint**: Plan generation and experiment evidence are separated; report-quality closure should rely on validated `experiment_results`.
 
 ---
 
@@ -153,6 +163,55 @@ __all__ = [
 ]
 ```
 
+### 2.4 HITL addition: add `experiment_results` and pause flag
+
+To support pause/resume after plan generation, add result types and state fields:
+
+```python
+class ExperimentRunMetric(TypedDict, total=False):
+    name: str
+    value: float
+    higher_is_better: bool
+
+class ExperimentRun(TypedDict, total=False):
+    run_id: str
+    research_question: str
+    experiment_name: str
+    config: Dict[str, Any]
+    metrics: List[ExperimentRunMetric]
+    artifacts: List[str]
+    notes: str
+
+class ExperimentResultSummary(TypedDict, total=False):
+    research_question: str
+    best_run_id: str
+    conclusion: str
+    confidence: str
+
+class ExperimentResults(TypedDict, total=False):
+    status: str  # pending | submitted | validated
+    submitted_by: str
+    submitted_at: str
+    runs: List[ExperimentRun]
+    summaries: List[ExperimentResultSummary]
+    validation_issues: List[str]
+```
+
+Then extend state fields:
+
+```python
+class ResearchNamespace(TypedDict, total=False):
+    # ... existing fields ...
+    experiment_plan: ExperimentPlan
+    experiment_results: ExperimentResults      # <-- ADD
+
+class ResearchState(TypedDict, total=False):
+    # ... existing fields ...
+    experiment_plan: ExperimentPlan
+    experiment_results: ExperimentResults      # <-- ADD (legacy flat)
+    await_experiment_results: bool             # <-- ADD (workflow control flag)
+```
+
 ---
 
 ## 3. Step 2 -- Add Prompt Templates
@@ -233,6 +292,24 @@ DOMAIN_DETECT_USER = (
     "Research topic: {topic}\n\n"
     "Research questions:\n{research_questions}\n\n"
     "Classify the domain."
+)
+```
+
+### 3.1 HITL addition: normalize human experiment results
+
+Add prompts for turning human-submitted logs into strict `experiment_results` JSON:
+
+```python
+EXPERIMENT_RESULTS_NORMALIZE_SYSTEM = (
+    "You normalize human experiment outputs into strict JSON schema. "
+    "Do not invent missing runs or metrics."
+)
+
+EXPERIMENT_RESULTS_NORMALIZE_USER = (
+    "Research questions:\n{research_questions}\n\n"
+    "Experiment plan:\n{experiment_plan}\n\n"
+    "Human-submitted raw results:\n{raw_results}\n\n"
+    "Return valid JSON that matches ExperimentResults schema."
 )
 ```
 
@@ -530,6 +607,87 @@ def recommend_experiments(state: ResearchState) -> Dict[str, Any]:
     })
 ```
 
+### 4.7 HITL addition: pause after plan generation
+
+For eligible ML topics, `recommend_experiments()` should trigger a pause and wait for human experiment execution:
+
+```python
+    return _ns({
+        "experiment_plan": plan,
+        "experiment_results": {
+            "status": "pending",
+            "runs": [],
+            "summaries": [],
+            "validation_issues": [],
+        },
+        "await_experiment_results": True,
+        "status": "Experiment plan generated; awaiting human experiment results",
+    })
+```
+
+For non-ML/no-op branches, keep:
+
+```python
+{
+    "experiment_plan": {},
+    "experiment_results": {},
+    "await_experiment_results": False,
+}
+```
+
+### 4.8 HITL addition: validate experiment results
+
+```python
+def _validate_experiment_results(
+    results: Dict[str, Any],
+    research_questions: List[str],
+) -> List[str]:
+    """Validate experiment_results completeness and RQ coverage."""
+    issues: List[str] = []
+    runs = results.get("runs", [])
+    if not runs:
+        issues.append("no_runs")
+        return issues
+    rq_set = {str(rq).strip() for rq in research_questions if str(rq).strip()}
+    covered = {str(r.get("research_question", "")).strip() for r in runs}
+    if rq_set and not rq_set.issubset(covered):
+        issues.append("rq_coverage_incomplete")
+    for i, run in enumerate(runs):
+        if not run.get("run_id"):
+            issues.append(f"runs[{i}].run_id: missing")
+        if not run.get("metrics"):
+            issues.append(f"runs[{i}].metrics: missing")
+    return issues
+```
+
+### 4.9 HITL addition: ingest human results node
+
+```python
+def ingest_experiment_results(state: ResearchState) -> Dict[str, Any]:
+    """Validate and ingest human-submitted experiment results."""
+    state = _state_view(state)
+    results = state.get("experiment_results", {}) or {}
+    research_questions = state.get("research_questions", [])
+
+    issues = _validate_experiment_results(results, research_questions)
+    if issues:
+        results["status"] = "submitted"
+        results["validation_issues"] = issues
+        return _ns({
+            "experiment_results": results,
+            "await_experiment_results": True,
+            "status": f"Experiment results invalid: {', '.join(issues[:3])}",
+        })
+
+    results["status"] = "validated"
+    results["validation_issues"] = []
+    return _ns({
+        "experiment_results": results,
+        "await_experiment_results": False,
+        "status": "Experiment results validated; continuing workflow",
+    })
+```
+
 ---
 
 ## 5. Step 4 -- Register Node and Edges
@@ -546,6 +704,7 @@ from src.agent.nodes import (
     evaluate_progress,
     fetch_sources,
     generate_report,
+    ingest_experiment_results,  # <-- ADD
     index_sources,
     plan_research,
     recommend_experiments,     # <-- ADD
@@ -559,6 +718,7 @@ Inside `build_graph()`, add the node after the `synthesize` node registration:
 
 ```python
 graph.add_node("recommend_experiments", instrument_node("recommend_experiments", recommend_experiments))
+graph.add_node("ingest_experiment_results", instrument_node("ingest_experiment_results", ingest_experiment_results))
 ```
 
 ### 5.3 Update edges
@@ -571,7 +731,20 @@ Replace the edge from `synthesize -> evaluate_progress` with:
 
 # AFTER:
 graph.add_edge("synthesize", "recommend_experiments")
-graph.add_edge("recommend_experiments", "evaluate_progress")
+
+def _route_after_recommend_experiments(state: ResearchState) -> str:
+    # Pause/resume gate controlled by HITL result submission.
+    return "ingest_experiment_results" if state.get("await_experiment_results", False) else "evaluate_progress"
+
+graph.add_conditional_edges(
+    "recommend_experiments",
+    _route_after_recommend_experiments,
+    {
+        "ingest_experiment_results": "ingest_experiment_results",
+        "evaluate_progress": "evaluate_progress",
+    },
+)
+graph.add_edge("ingest_experiment_results", "evaluate_progress")
 ```
 
 ### 5.4 Update the docstring
@@ -614,6 +787,8 @@ Update the graph topology ASCII art in the module docstring to reflect the new f
              v
            [END]
 ```
+
+Also include the HITL pause/resume branch (`await_experiment_results -> ingest_experiment_results`) in the ASCII diagram.
 
 ---
 
@@ -796,6 +971,27 @@ Add the following **after** that line (the first occurrence, before the critic c
                 report = report.rstrip() + "\n\n" + blueprint_md + "\n"
 ```
 
+### 6.3 HITL addition: render validated experiment results
+
+After injecting the blueprint, also inject a results chapter when `experiment_results.status == "validated"`:
+
+```python
+def _render_experiment_results(results: Dict[str, Any], language: str = "en") -> str:
+    """Render validated experiment_results as a Markdown chapter."""
+    # Recommended: include per-RQ best run, metrics, and conclusion.
+```
+
+In `generate_report()`:
+
+```python
+experiment_results = state.get("experiment_results", {})
+if experiment_results.get("status") == "validated":
+    results_md = _render_experiment_results(experiment_results, language=language)
+    # Insert before References, similar to blueprint insertion logic.
+```
+
+If there is only `experiment_plan` but no validated results, keep the blueprint but label it as a planned protocol (not yet executed).
+
 ---
 
 ## 7. Step 6 -- Quality Gate Enhancement
@@ -885,6 +1081,33 @@ Update the call site in `generate_report()`:
     )
 ```
 
+### 7.4 HITL addition: include `experiment_results` in quality gates
+
+Extend both functions further:
+
+```python
+def _critic_report(
+    ...,
+    experiment_plan: Dict[str, Any] | None = None,
+    experiment_results: Dict[str, Any] | None = None,  # <-- ADD
+) -> Dict[str, Any]:
+```
+
+```python
+def _compute_acceptance_metrics(
+    ...,
+    experiment_plan: Dict[str, Any] | None = None,
+    experiment_results: Dict[str, Any] | None = None,  # <-- ADD
+) -> Dict[str, Any]:
+```
+
+Recommended checks:
+- If `experiment_results.status == "validated"`, run `_validate_experiment_results(...)`.
+- If ML topic has plan but still lacks validated results, add soft issue `experiment_results_missing`.
+- Add acceptance fields: `experiment_results_present`, `experiment_results_validated`, `experiment_results_issues`.
+
+Pass `experiment_results` at all call sites together with `experiment_plan`.
+
 ---
 
 ## 8. Step 7 -- State Access Layer Update
@@ -897,10 +1120,12 @@ Add `experiment_plan` to the `_FIELD_NS_MAP`:
 _FIELD_NS_MAP = {
     # ... existing entries ...
     "experiment_plan": "research",          # <-- ADD
+    "experiment_results": "research",       # <-- ADD
 }
 ```
 
-This ensures that the namespaced state system correctly reads and writes the field.
+This ensures that the namespaced state system correctly reads and writes the fields.
+`await_experiment_results` is a workflow control flag and can remain top-level.
 
 ---
 
@@ -913,6 +1138,7 @@ This ensures that the namespaced state system correctly reads and writes the fie
 ```python
 DEFAULT_EXPERIMENT_PLAN_ENABLED = True
 DEFAULT_EXPERIMENT_MAX_PER_RQ = 2
+DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS = True
 ```
 
 ### 9.2 Add configuration normalization
@@ -926,6 +1152,10 @@ Inside `normalize_and_validate_config`, add after the `topic_filter_cfg` section
     )
     experiment_cfg["max_per_rq"] = int(
         experiment_cfg.get("max_per_rq", DEFAULT_EXPERIMENT_MAX_PER_RQ)
+    )
+    experiment_cfg["require_human_results"] = _to_bool(
+        experiment_cfg.get("require_human_results"),
+        DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS,
     )
 ```
 
@@ -941,6 +1171,9 @@ In `recommend_experiments()`, check the config before proceeding:
             "experiment_plan": {},
             "status": "Experiment recommendation disabled by config",
         })
+
+    # HITL gate (recommended default).
+    require_human_results = exp_cfg.get("require_human_results", True)
 ```
 
 ### 9.4 YAML config example
@@ -952,6 +1185,7 @@ agent:
   experiment_plan:
     enabled: true        # Set to false to disable experiment suggestions
     max_per_rq: 2        # Max experiment groups per research question
+    require_human_results: true   # Pause until human experiment results are submitted
 ```
 
 ---
@@ -1036,6 +1270,39 @@ agent:
 }
 ```
 
+### HITL addition: `experiment_results` JSON Schema
+
+```json
+{
+  "status": "validated",
+  "submitted_by": "alice",
+  "submitted_at": "2026-02-21T10:30:00Z",
+  "runs": [
+    {
+      "run_id": "rq1-expA-seed42",
+      "research_question": "How does chunk size affect RAG retrieval accuracy?",
+      "experiment_name": "chunk_size_512",
+      "config": {"chunk_size": 512, "seed": 42},
+      "metrics": [
+        {"name": "EM", "value": 41.2, "higher_is_better": true},
+        {"name": "F1", "value": 58.7, "higher_is_better": true}
+      ],
+      "artifacts": ["outputs/runs/rq1-expA-seed42/metrics.json"],
+      "notes": "Stable across 3 seeds"
+    }
+  ],
+  "summaries": [
+    {
+      "research_question": "How does chunk size affect RAG retrieval accuracy?",
+      "best_run_id": "rq1-expA-seed42",
+      "conclusion": "Chunk size 512 gave best F1 with acceptable latency",
+      "confidence": "medium"
+    }
+  ],
+  "validation_issues": []
+}
+```
+
 ### Quality Gate Mandatory Fields Summary
 
 | Check | Required Field | Description |
@@ -1049,6 +1316,9 @@ agent:
 | Train command | `run_commands.train` | Executable training command |
 | Eval command | `run_commands.eval` | Executable evaluation command |
 | Evidence refs | `evidence_refs` | Traceability to source papers |
+| Result run id | `runs[*].run_id` | Every submitted run must be uniquely identifiable |
+| Result metrics | `runs[*].metrics` | Every submitted run must include metrics |
+| RQ coverage | `runs[*].research_question` | Results should cover all research questions |
 
 ---
 
@@ -1223,12 +1493,22 @@ from unittest.mock import patch
 # See existing integration test patterns in the codebase.
 ```
 
+### 11.2.1 HITL pause/resume integration checks
+
+Add two additional integration scenarios:
+
+- ML topic: graph pauses after `recommend_experiments` with `await_experiment_results=True`.
+- After injecting valid `experiment_results`, rerun/resume and verify flow reaches `evaluate_progress` and `generate_report`.
+
 ### 11.3 Manual Smoke Test
 
 ```bash
 # Run with an ML topic
 python -m src.agent --topic "Fine-tuning large language models for domain-specific tasks" \
     --config configs/default.yaml
+
+# Expect pause in state: await_experiment_results=True
+# (then provide experiment_results via your runtime/state injection entrypoint)
 
 # Verify the output report contains "## Experimental Blueprint"
 grep -c "Experimental Blueprint" output/report.md
@@ -1248,20 +1528,28 @@ Use this checklist to track implementation progress:
 - [ ] Add `DatasetInfo`, `CodeFramework`, `EnvironmentSpec`, `Hyperparameters`, `RunCommands`, `EvaluationProtocol`, `EvidenceRef`, `RQExperiment`, `ExperimentPlan` TypedDicts to `schemas.py`
 - [ ] Add `experiment_plan` field to `ResearchNamespace`
 - [ ] Add `experiment_plan` legacy flat field to `ResearchState`
+- [ ] Add `ExperimentResults` related TypedDicts (`ExperimentRunMetric`, `ExperimentRun`, `ExperimentResultSummary`, `ExperimentResults`)
+- [ ] Add `experiment_results` field to `ResearchNamespace`
+- [ ] Add `experiment_results` and `await_experiment_results` fields to `ResearchState`
 - [ ] Update `state.py` re-exports
 
 ### State Access
 - [ ] Add `"experiment_plan": "research"` to `_FIELD_NS_MAP` in `state_access.py`
+- [ ] Add `"experiment_results": "research"` to `_FIELD_NS_MAP` in `state_access.py`
 
 ### Configuration
 - [ ] Add `DEFAULT_EXPERIMENT_PLAN_ENABLED` and `DEFAULT_EXPERIMENT_MAX_PER_RQ` to `config.py`
 - [ ] Add normalization logic for `experiment_plan` config section in `normalize_and_validate_config`
+- [ ] Add `DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS` in `config.py`
+- [ ] Add normalization logic for `experiment_plan.require_human_results`
 
 ### Prompts
 - [ ] Add `EXPERIMENT_PLAN_SYSTEM` to `prompts.py`
 - [ ] Add `EXPERIMENT_PLAN_USER` to `prompts.py`
 - [ ] Add `DOMAIN_DETECT_SYSTEM` to `prompts.py`
 - [ ] Add `DOMAIN_DETECT_USER` to `prompts.py`
+- [ ] Add `EXPERIMENT_RESULTS_NORMALIZE_SYSTEM` to `prompts.py`
+- [ ] Add `EXPERIMENT_RESULTS_NORMALIZE_USER` to `prompts.py`
 
 ### Node Implementation
 - [ ] Add `_ML_DOMAIN_KEYWORDS` set to `nodes.py`
@@ -1271,15 +1559,22 @@ Use this checklist to track implementation progress:
 - [ ] Implement `_validate_experiment_plan()` in `nodes.py`
 - [ ] Implement `recommend_experiments()` node in `nodes.py`
 - [ ] Implement `_render_experiment_blueprint()` in `nodes.py`
+- [ ] In `recommend_experiments()`, set `await_experiment_results=True` when plan is generated
+- [ ] Implement `_validate_experiment_results()` in `nodes.py`
+- [ ] Implement `ingest_experiment_results()` node in `nodes.py`
+- [ ] Implement `_render_experiment_results()` in `nodes.py`
 
 ### Graph Wiring
 - [ ] Import `recommend_experiments` in `graph.py`
 - [ ] Register `recommend_experiments` node in `build_graph()`
-- [ ] Update edges: `synthesize -> recommend_experiments -> evaluate_progress`
+- [ ] Import and register `ingest_experiment_results` node in `graph.py`
+- [ ] Update edges: `synthesize -> recommend_experiments -> ingest_experiment_results -> evaluate_progress` (with conditional route on `await_experiment_results`)
 - [ ] Update docstring ASCII art
 
 ### Report Integration
 - [ ] Insert blueprint Markdown before References in `generate_report()`
+- [ ] Insert validated experiment results Markdown before References in `generate_report()`
+- [ ] If no validated results, label blueprint as planned-only (not executed)
 
 ### Quality Gates
 - [ ] Add `experiment_plan` parameter to `_critic_report()`
@@ -1288,6 +1583,9 @@ Use this checklist to track implementation progress:
 - [ ] Add `experiment_plan` parameter to `_compute_acceptance_metrics()`
 - [ ] Add experiment plan metrics to acceptance output
 - [ ] Update `_compute_acceptance_metrics()` call site
+- [ ] Add `experiment_results` parameter to `_critic_report()` and validate result quality
+- [ ] Add `experiment_results` parameter to `_compute_acceptance_metrics()`
+- [ ] Add `experiment_results_present/validated/issues` metrics to acceptance output
 
 ### Testing
 - [ ] Unit tests for `_detect_domain_by_rules()`
@@ -1296,10 +1594,14 @@ Use this checklist to track implementation progress:
 - [ ] Unit tests for `_render_experiment_blueprint()`
 - [ ] Integration smoke test with ML topic
 - [ ] Integration smoke test with non-ML topic (no-op)
+- [ ] Unit tests for `_validate_experiment_results()`
+- [ ] Unit tests for `ingest_experiment_results()`
+- [ ] Integration test for HITL pause/resume path (plan -> pause -> result ingest -> continue)
 
 ### Documentation
 - [ ] Update `README.md` to mention the Experimental Blueprint feature
 - [ ] Add YAML config example to `configs/` directory
+- [ ] Document HITL checkpoint and how to submit `experiment_results`
 
 ---
 
@@ -1307,11 +1609,12 @@ Use this checklist to track implementation progress:
 
 | File | Changes |
 |------|---------|
-| `src/agent/core/schemas.py` | Add 10 new TypedDicts, add `experiment_plan` to namespaces |
-| `src/agent/core/state_access.py` | Add `experiment_plan` to `_FIELD_NS_MAP` |
-| `src/agent/core/config.py` | Add 2 default constants, add config normalization |
-| `src/agent/prompts.py` | Add 4 new prompt constants |
-| `src/agent/nodes.py` | Add 6 new functions, modify `generate_report`, `_critic_report`, `_compute_acceptance_metrics` |
-| `src/agent/graph.py` | Import new node, register node, update edges, update docstring |
+| `src/agent/core/schemas.py` | Add new TypedDicts, add `experiment_plan`/`experiment_results` to namespaces |
+| `src/agent/core/state_access.py` | Add `experiment_plan` and `experiment_results` to `_FIELD_NS_MAP` |
+| `src/agent/core/config.py` | Add experiment-plan defaults and HITL (`require_human_results`) normalization |
+| `src/agent/prompts.py` | Add experiment-plan prompts and experiment-result normalization prompts |
+| `src/agent/nodes.py` | Add plan + result validation helpers, `recommend_experiments`, `ingest_experiment_results`, and report/quality-gate integration |
+| `src/agent/graph.py` | Import/register new nodes, add HITL pause/resume routing, update docstring |
 | `src/agent/state.py` | Re-export new types |
 | `tests/test_recommend_experiments.py` | New test file |
+| `tests/test_experiment_results_ingestion.py` | New test file |

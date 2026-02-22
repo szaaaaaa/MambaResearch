@@ -53,6 +53,91 @@ class GraphRuntimeTest(unittest.TestCase):
         self.assertEqual(graph._route_after_evaluate({"should_continue": False}), "generate_report")
         self.assertEqual(graph._route_after_evaluate({}), "generate_report")
 
+    def test_route_after_recommend_experiments(self) -> None:
+        self.assertEqual(
+            graph._route_after_recommend_experiments({"await_experiment_results": True}),
+            "ingest_experiment_results",
+        )
+        self.assertEqual(
+            graph._route_after_recommend_experiments({"await_experiment_results": False}),
+            "evaluate_progress",
+        )
+        self.assertEqual(
+            graph._route_after_recommend_experiments({}),
+            "evaluate_progress",
+        )
+
+    def test_route_after_ingest_experiment_results(self) -> None:
+        self.assertEqual(
+            graph._route_after_ingest_experiment_results({"await_experiment_results": True}),
+            "pause_for_human",
+        )
+        self.assertEqual(
+            graph._route_after_ingest_experiment_results({"await_experiment_results": False}),
+            "evaluate_progress",
+        )
+        self.assertEqual(
+            graph._route_after_ingest_experiment_results({}),
+            "evaluate_progress",
+        )
+
+    def test_build_graph_wiring_for_experiment_nodes(self) -> None:
+        calls = {"nodes": [], "edges": [], "conditional": [], "entry": None}
+
+        class _RecordingGraph:
+            def __init__(self, *args, **kwargs):
+                return None
+
+            def add_node(self, name, fn):
+                calls["nodes"].append(name)
+                return None
+
+            def set_entry_point(self, name):
+                calls["entry"] = name
+                return None
+
+            def add_edge(self, start, end):
+                calls["edges"].append((start, end))
+                return None
+
+            def add_conditional_edges(self, node, route_fn, mapping):
+                calls["conditional"].append((node, mapping))
+                return None
+
+            def compile(self):
+                return self
+
+        with patch("src.agent.graph.StateGraph", _RecordingGraph):
+            with patch("src.agent.graph.instrument_node", side_effect=lambda name, fn: fn):
+                built = graph.build_graph()
+
+        self.assertIsInstance(built, _RecordingGraph)
+        self.assertEqual(calls["entry"], "plan_research")
+        self.assertIn("recommend_experiments", calls["nodes"])
+        self.assertIn("ingest_experiment_results", calls["nodes"])
+        self.assertIn(("synthesize", "recommend_experiments"), calls["edges"])
+
+        cond_nodes = [x[0] for x in calls["conditional"]]
+        self.assertIn("recommend_experiments", cond_nodes)
+        self.assertIn("ingest_experiment_results", cond_nodes)
+        self.assertIn("evaluate_progress", cond_nodes)
+
+        cond_map = {node: mapping for node, mapping in calls["conditional"]}
+        self.assertEqual(
+            cond_map["recommend_experiments"],
+            {
+                "ingest_experiment_results": "ingest_experiment_results",
+                "evaluate_progress": "evaluate_progress",
+            },
+        )
+        self.assertEqual(
+            cond_map["ingest_experiment_results"],
+            {
+                "pause_for_human": graph.END,
+                "evaluate_progress": "evaluate_progress",
+            },
+        )
+
     def test_run_research_injects_state_and_calls_app(self) -> None:
         captured = {}
 
@@ -77,6 +162,9 @@ class GraphRuntimeTest(unittest.TestCase):
         self.assertIn("planning", state)
         self.assertIn("evidence", state)
         self.assertIn("report", state)
+        self.assertIn("experiment_plan", state["research"])
+        self.assertIn("experiment_results", state["research"])
+        self.assertIn("await_experiment_results", state)
         self.assertEqual(state["_cfg"]["_run_id"], "fixed-run-id")
         self.assertEqual(Path(state["_cfg"]["_root"]), Path(".").resolve())
         self.assertIn("_budget_guard", state["_cfg"])

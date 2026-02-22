@@ -78,6 +78,9 @@ DEFAULT_DEEP_QUERY_TERMS = [
 DEFAULT_REWRITE_MIN_PER_RQ = 6
 DEFAULT_REWRITE_MAX_PER_RQ = 8
 DEFAULT_REWRITE_MAX_TOTAL_QUERIES = 24
+DEFAULT_EXPERIMENT_PLAN_ENABLED = True
+DEFAULT_EXPERIMENT_MAX_PER_RQ = 2
+DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS = True
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -239,6 +242,18 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     topic_filter_cfg["block_terms"] = _normalized_order(
         topic_filter_cfg.get("block_terms"),
         DEFAULT_TOPIC_BLOCK_TERMS,
+    )
+    experiment_cfg = agent_cfg.setdefault("experiment_plan", {})
+    experiment_cfg["enabled"] = _to_bool(
+        experiment_cfg.get("enabled"),
+        DEFAULT_EXPERIMENT_PLAN_ENABLED,
+    )
+    experiment_cfg["max_per_rq"] = int(
+        experiment_cfg.get("max_per_rq", DEFAULT_EXPERIMENT_MAX_PER_RQ)
+    )
+    experiment_cfg["require_human_results"] = _to_bool(
+        experiment_cfg.get("require_human_results"),
+        DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS,
     )
 
     sources_cfg = out.setdefault("sources", {})

@@ -199,7 +199,14 @@ def main() -> None:
     cfg_snapshot_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
     # Save report
+    await_experiment_results = bool(final_state.get("await_experiment_results", False))
     report = sget(final_state, "report", "")
+    if await_experiment_results and not str(report).strip():
+        report = (
+            "# Research Run Paused\n\n"
+            "The workflow is waiting for human-submitted experiment results.\n"
+            "Fill `experiment_results` in the saved state file and resume from HITL checkpoint.\n"
+        )
     report_path = out_dir / f"research_report_{tag}.md"
     report_path.write_text(report, encoding="utf-8")
     logger.info("Report saved: %s", report_path)
@@ -238,6 +245,9 @@ def main() -> None:
         "evidence_audit_log": sget(final_state, "evidence_audit_log", []),
         "gaps": sget(final_state, "gaps", []),
         "synthesis": sget(final_state, "synthesis", ""),
+        "experiment_plan": sget(final_state, "experiment_plan", {}),
+        "experiment_results": sget(final_state, "experiment_results", {}),
+        "await_experiment_results": await_experiment_results,
         "report_critic": sget(final_state, "report_critic", {}),
         "repair_attempted": sget(final_state, "repair_attempted", False),
         "run_id": final_state.get("run_id", ""),
@@ -313,7 +323,10 @@ def main() -> None:
     n_analyses = len(sget(final_state, "analyses", []))
 
     logger.info("=" * 60)
-    logger.info("Research complete!")
+    if await_experiment_results:
+        logger.info("Research paused at HITL checkpoint (awaiting experiment results).")
+    else:
+        logger.info("Research complete!")
     logger.info("Papers collected: %d", n_papers)
     logger.info("Web sources collected: %d", n_web)
     logger.info("Total analyses: %d", n_analyses)

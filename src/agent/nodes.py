@@ -37,8 +37,14 @@ from src.agent.prompts import (
     ANALYZE_PAPER_USER,
     ANALYZE_WEB_SYSTEM,
     ANALYZE_WEB_USER,
+    DOMAIN_DETECT_SYSTEM,
+    DOMAIN_DETECT_USER,
     EVALUATE_SYSTEM,
     EVALUATE_USER,
+    EXPERIMENT_PLAN_SYSTEM,
+    EXPERIMENT_PLAN_USER,
+    EXPERIMENT_RESULTS_NORMALIZE_SYSTEM,
+    EXPERIMENT_RESULTS_NORMALIZE_USER,
     PLAN_RESEARCH_REFINE_CONTEXT,
     PLAN_RESEARCH_SYSTEM,
     PLAN_RESEARCH_USER,
@@ -99,6 +105,33 @@ _SYNONYM_HINTS = {
     "security": "safety",
     "robustness": "reliability",
     "retrieval": "search",
+}
+_ML_DOMAIN_KEYWORDS = {
+    "transformer", "attention", "finetune", "fine-tune", "fine-tuning",
+    "pretrain", "pre-train", "pretraining", "pre-training",
+    "benchmark", "dataset", "baseline", "ablation",
+    "backpropagation", "gradient descent", "stochastic gradient",
+    "neural network", "deep learning", "machine learning",
+    "convolutional", "recurrent", "lstm", "gru", "bert", "gpt",
+    "diffusion", "generative", "gan", "vae", "autoencoder",
+    "reinforcement learning", "reward", "policy gradient", "q-learning",
+    "classification", "detection", "segmentation", "recognition",
+    "embedding", "tokenizer", "tokenization",
+    "huggingface", "pytorch", "tensorflow", "jax",
+    "epoch", "batch size", "learning rate", "optimizer",
+    "loss function", "cross-entropy", "dropout", "regularization",
+    "convolution", "pooling", "softmax", "activation",
+    "retrieval-augmented", "rag", "prompt tuning", "lora", "qlora",
+    "knowledge distillation", "model compression", "quantization",
+    "object detection", "image classification", "named entity",
+    "text classification", "sentiment analysis", "question answering",
+    "language model", "vision transformer", "multimodal",
+    "contrastive learning", "self-supervised", "semi-supervised",
+    "federated learning", "meta-learning", "few-shot", "zero-shot",
+    "hyperparameter", "grid search", "random search", "bayesian optimization",
+}
+_EXPERIMENT_ELIGIBLE_DOMAINS = {
+    "machine_learning", "deep_learning", "cv", "nlp", "rl",
 }
 
 # Helpers
@@ -729,6 +762,410 @@ def _format_claim_map(claim_map: List[Dict[str, Any]]) -> str:
     return "\n".join(parts) if parts else "(no claim-evidence map)"
 
 
+def _detect_domain_by_rules(topic: str, research_questions: List[str]) -> bool:
+    """Return True if keyword matching suggests an ML/DL domain."""
+    combined_text = " ".join([str(topic or "")] + [str(q or "") for q in research_questions]).lower()
+    hit_count = sum(1 for kw in _ML_DOMAIN_KEYWORDS if kw in combined_text)
+    return hit_count >= 2
+
+
+def _detect_domain_by_llm(
+    topic: str,
+    research_questions: List[str],
+    cfg: Dict[str, Any],
+) -> Dict[str, str]:
+    """Use LLM to classify domain/subfield/task for experiment recommendation."""
+    model = cfg.get("llm", {}).get("model", "gpt-4.1-mini")
+    temperature = cfg.get("llm", {}).get("temperature", 0.1)
+    rq_text = "\n".join(f"- {q}" for q in research_questions) if research_questions else "(none)"
+    prompt = DOMAIN_DETECT_USER.format(
+        topic=topic,
+        research_questions=rq_text,
+    )
+    raw = _llm_call(
+        DOMAIN_DETECT_SYSTEM,
+        prompt,
+        cfg=cfg,
+        model=model,
+        temperature=temperature,
+    )
+    try:
+        result = _parse_json(raw)
+    except json.JSONDecodeError:
+        result = {"domain": "other", "subfield": "", "task_type": ""}
+    return {
+        "domain": str(result.get("domain", "other")).strip().lower(),
+        "subfield": str(result.get("subfield", "")).strip(),
+        "task_type": str(result.get("task_type", "")).strip(),
+    }
+
+
+def _validate_experiment_plan(plan: Dict[str, Any]) -> List[str]:
+    """Validate experiment plan completeness and return issue codes."""
+    issues: List[str] = []
+    rq_experiments = plan.get("rq_experiments", [])
+    if not isinstance(rq_experiments, list) or not rq_experiments:
+        issues.append("no_rq_experiments")
+        return issues
+
+    for i, exp in enumerate(rq_experiments):
+        prefix = f"rq_experiments[{i}]"
+
+        datasets = exp.get("datasets", []) if isinstance(exp, dict) else []
+        if not isinstance(datasets, list) or not datasets:
+            issues.append(f"{prefix}.datasets: missing")
+        else:
+            for j, ds in enumerate(datasets):
+                ds_item = ds if isinstance(ds, dict) else {}
+                if not ds_item.get("url"):
+                    issues.append(f"{prefix}.datasets[{j}].url: missing")
+                if not ds_item.get("name"):
+                    issues.append(f"{prefix}.datasets[{j}].name: missing")
+
+        env = exp.get("environment", {}) if isinstance(exp, dict) else {}
+        if not isinstance(env, dict):
+            env = {}
+        if not env.get("python"):
+            issues.append(f"{prefix}.environment.python: missing")
+        if not env.get("cuda"):
+            issues.append(f"{prefix}.environment.cuda: missing")
+        if not env.get("pytorch"):
+            issues.append(f"{prefix}.environment.pytorch: missing")
+
+        hp = exp.get("hyperparameters", {}) if isinstance(exp, dict) else {}
+        if not isinstance(hp, dict):
+            hp = {}
+        if not hp.get("baseline"):
+            issues.append(f"{prefix}.hyperparameters.baseline: missing")
+        if not hp.get("search_space"):
+            issues.append(f"{prefix}.hyperparameters.search_space: missing")
+
+        cmds = exp.get("run_commands", {}) if isinstance(exp, dict) else {}
+        if not isinstance(cmds, dict):
+            cmds = {}
+        if not cmds.get("train"):
+            issues.append(f"{prefix}.run_commands.train: missing")
+        if not cmds.get("eval"):
+            issues.append(f"{prefix}.run_commands.eval: missing")
+
+        refs = exp.get("evidence_refs", []) if isinstance(exp, dict) else []
+        if not isinstance(refs, list) or not refs:
+            issues.append(f"{prefix}.evidence_refs: missing")
+
+    return issues
+
+
+def _limit_experiment_groups_per_rq(
+    plan: Dict[str, Any],
+    *,
+    max_per_rq: int,
+) -> tuple[Dict[str, Any], int]:
+    """Cap number of experiment groups per research question."""
+    if not isinstance(plan, dict):
+        return {}, 0
+
+    rq_experiments = plan.get("rq_experiments", [])
+    if not isinstance(rq_experiments, list):
+        plan["rq_experiments"] = []
+        return plan, 0
+
+    cap = max(1, int(max_per_rq))
+    seen: Dict[str, int] = {}
+    limited: List[Dict[str, Any]] = []
+    dropped = 0
+    for exp in rq_experiments:
+        if not isinstance(exp, dict):
+            dropped += 1
+            continue
+        rq = re.sub(r"\s+", " ", str(exp.get("research_question", "")).strip()).lower()
+        key = rq or "__missing_rq__"
+        cur = seen.get(key, 0)
+        if cur >= cap:
+            dropped += 1
+            continue
+        seen[key] = cur + 1
+        limited.append(exp)
+
+    plan["rq_experiments"] = limited
+    return plan, dropped
+
+
+def _normalize_experiment_results_with_llm(
+    *,
+    raw_results: Any,
+    research_questions: List[str],
+    experiment_plan: Dict[str, Any],
+    cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Normalize raw human experiment logs to ExperimentResults JSON."""
+    model = cfg.get("llm", {}).get("model", "gpt-4.1-mini")
+    temperature = cfg.get("llm", {}).get("temperature", 0.0)
+    rq_text = "\n".join(f"- {q}" for q in research_questions) if research_questions else "(none)"
+    try:
+        plan_text = json.dumps(experiment_plan or {}, ensure_ascii=False, indent=2)
+    except Exception:
+        plan_text = "{}"
+    if isinstance(raw_results, str):
+        raw_text = raw_results
+    else:
+        try:
+            raw_text = json.dumps(raw_results, ensure_ascii=False, indent=2)
+        except Exception:
+            raw_text = str(raw_results)
+
+    prompt = EXPERIMENT_RESULTS_NORMALIZE_USER.format(
+        research_questions=rq_text,
+        experiment_plan=plan_text,
+        raw_results=raw_text,
+    )
+    raw = _llm_call(
+        EXPERIMENT_RESULTS_NORMALIZE_SYSTEM,
+        prompt,
+        cfg=cfg,
+        model=model,
+        temperature=temperature,
+    )
+    parsed = _parse_json(raw)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def recommend_experiments(state: ResearchState) -> Dict[str, Any]:
+    """Generate experiment recommendations for eligible ML/DL/CV/NLP/RL topics."""
+    state = _state_view(state)
+    cfg = _get_cfg(state)
+    topic = str(state.get("topic", ""))
+    research_questions = [str(q) for q in state.get("research_questions", []) if str(q).strip()]
+
+    exp_cfg = cfg.get("agent", {}).get("experiment_plan", {})
+    if not exp_cfg.get("enabled", True):
+        return _ns({
+            "experiment_plan": {},
+            "experiment_results": {},
+            "await_experiment_results": False,
+            "status": "Experiment recommendation disabled by config",
+        })
+
+    rule_hit = _detect_domain_by_rules(topic, research_questions)
+    if not rule_hit:
+        logger.info("[recommend_experiments] Rule-based detection: non-ML topic, skipping.")
+        return _ns({
+            "experiment_plan": {},
+            "experiment_results": {},
+            "await_experiment_results": False,
+            "status": "Experiment recommendation skipped (non-ML domain by rules)",
+        })
+
+    domain_info = _detect_domain_by_llm(topic, research_questions, cfg)
+    domain = domain_info["domain"]
+    subfield = domain_info["subfield"]
+    task_type = domain_info["task_type"]
+
+    if domain not in _EXPERIMENT_ELIGIBLE_DOMAINS:
+        logger.info(
+            "[recommend_experiments] LLM domain detection '%s' not eligible, skipping.",
+            domain,
+        )
+        return _ns({
+            "experiment_plan": {},
+            "experiment_results": {},
+            "await_experiment_results": False,
+            "status": f"Experiment recommendation skipped (LLM classified as '{domain}')",
+        })
+
+    model = cfg.get("llm", {}).get("model", "gpt-4.1-mini")
+    temperature = cfg.get("llm", {}).get("temperature", 0.3)
+    max_per_rq = int(exp_cfg.get("max_per_rq", 2))
+    rq_text = "\n".join(f"- {q}" for q in research_questions) if research_questions else "(none)"
+    claim_map_text = _format_claim_map(state.get("claim_evidence_map", []))
+
+    analyses = state.get("analyses", [])
+    analyses_parts: List[str] = []
+    for a in analyses[:15]:
+        if not isinstance(a, dict):
+            continue
+        source_tag = a.get("source", "unknown")
+        part = (
+            f"### [{str(source_tag).upper()}] {a.get('title', 'Unknown')}\n"
+            f"UID: {a.get('uid', 'N/A')}\n"
+        )
+        url = str(a.get("url") or "").strip() or _uid_to_resolvable_url(str(a.get("uid") or ""))
+        if url:
+            part += f"URL: {url}\n"
+        part += (
+            f"Summary: {a.get('summary', 'N/A')}\n"
+            f"Key findings: {', '.join(a.get('key_findings', []))}\n"
+            f"Methodology: {a.get('methodology', 'N/A')}"
+        )
+        analyses_parts.append(part)
+    analyses_text = "\n\n".join(analyses_parts) if analyses_parts else "(none)"
+
+    prompt = EXPERIMENT_PLAN_USER.format(
+        topic=topic,
+        domain=domain,
+        subfield=subfield,
+        task_type=task_type,
+        research_questions=rq_text,
+        claim_evidence_map=claim_map_text,
+        analyses=analyses_text,
+    )
+    prompt += f"\n\nConstraint: At most {max(1, max_per_rq)} experiment groups per research question."
+    raw = _llm_call(
+        EXPERIMENT_PLAN_SYSTEM,
+        prompt,
+        cfg=cfg,
+        model=model,
+        temperature=temperature,
+    )
+
+    try:
+        parsed = _parse_json(raw)
+        plan = parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        logger.warning("[recommend_experiments] Failed to parse experiment plan JSON")
+        plan = {}
+
+    if not plan:
+        plan = {
+            "domain": domain,
+            "subfield": subfield,
+            "task_type": task_type,
+            "rq_experiments": [],
+        }
+    plan.setdefault("domain", domain)
+    plan.setdefault("subfield", subfield)
+    plan.setdefault("task_type", task_type)
+    plan, dropped_count = _limit_experiment_groups_per_rq(plan, max_per_rq=max_per_rq)
+    if dropped_count:
+        logger.info(
+            "[recommend_experiments] Trimmed %d experiment groups by max_per_rq=%d",
+            dropped_count,
+            max(1, max_per_rq),
+        )
+
+    validation_issues = _validate_experiment_plan(plan)
+    if validation_issues:
+        logger.warning(
+            "[recommend_experiments] Experiment plan has %d validation issues: %s",
+            len(validation_issues),
+            "; ".join(validation_issues[:5]),
+        )
+
+    require_human_results = bool(exp_cfg.get("require_human_results", True))
+    return _ns({
+        "experiment_plan": plan,
+        "experiment_results": {
+            "status": "pending",
+            "runs": [],
+            "summaries": [],
+            "validation_issues": [],
+        },
+        "await_experiment_results": require_human_results,
+        "status": (
+            f"Experiment plan generated: domain={domain}, subfield={subfield}, "
+            f"{len(plan.get('rq_experiments', []))} experiment groups, "
+            f"{len(validation_issues)} validation issues"
+            + (f", trimmed={dropped_count}" if dropped_count else "")
+            + ("; awaiting human experiment results" if require_human_results else "")
+        ),
+    })
+
+
+def _validate_experiment_results(
+    results: Dict[str, Any],
+    research_questions: List[str],
+) -> List[str]:
+    """Validate experiment result completeness and coverage."""
+    issues: List[str] = []
+    runs = results.get("runs", [])
+    if not isinstance(runs, list) or not runs:
+        issues.append("no_runs")
+        return issues
+
+    rq_set = {str(rq).strip() for rq in research_questions if str(rq).strip()}
+    covered = {
+        str(run.get("research_question", "")).strip()
+        for run in runs
+        if isinstance(run, dict)
+    }
+    if rq_set and not rq_set.issubset(covered):
+        issues.append("rq_coverage_incomplete")
+
+    for i, run in enumerate(runs):
+        run_item = run if isinstance(run, dict) else {}
+        if not run_item.get("run_id"):
+            issues.append(f"runs[{i}].run_id: missing")
+        metrics = run_item.get("metrics", [])
+        if not isinstance(metrics, list) or not metrics:
+            issues.append(f"runs[{i}].metrics: missing")
+
+    return issues
+
+
+def ingest_experiment_results(state: ResearchState) -> Dict[str, Any]:
+    """Validate and ingest human-submitted experiment results."""
+    state = _state_view(state)
+    cfg = _get_cfg(state)
+    results_raw = state.get("experiment_results", {}) or {}
+    results = results_raw if isinstance(results_raw, dict) else {}
+    research_questions = [str(q) for q in state.get("research_questions", []) if str(q).strip()]
+    experiment_plan = state.get("experiment_plan", {}) if isinstance(state.get("experiment_plan", {}), dict) else {}
+
+    raw_payload: Any | None = None
+    if isinstance(results, dict):
+        if "raw_results" in results:
+            raw_payload = results.get("raw_results")
+    else:
+        raw_payload = results_raw
+
+    if raw_payload not in (None, "", {}):
+        try:
+            normalized = _normalize_experiment_results_with_llm(
+                raw_results=raw_payload,
+                research_questions=research_questions,
+                experiment_plan=experiment_plan,
+                cfg=cfg,
+            )
+            if normalized:
+                results = normalized
+        except Exception as exc:
+            logger.warning("[ingest_experiment_results] Failed to normalize raw results: %s", exc)
+
+    status = str(results.get("status", "")).lower() if isinstance(results, dict) else ""
+    runs = results.get("runs", []) if isinstance(results, dict) else []
+    if not isinstance(runs, list):
+        runs = []
+    if not runs and status in {"", "pending"}:
+        pending = {
+            "status": "pending",
+            "runs": [],
+            "summaries": [],
+            "validation_issues": [],
+        }
+        return _ns({
+            "experiment_results": pending,
+            "await_experiment_results": True,
+            "status": "Waiting for human experiment results submission",
+        })
+
+    issues = _validate_experiment_results(results, research_questions)
+    if issues:
+        results["status"] = "submitted"
+        results["validation_issues"] = issues
+        return _ns({
+            "experiment_results": results,
+            "await_experiment_results": True,
+            "status": f"Experiment results invalid: {', '.join(issues[:3])}",
+        })
+
+    results["status"] = "validated"
+    results["validation_issues"] = []
+    return _ns({
+        "experiment_results": results,
+        "await_experiment_results": False,
+        "status": "Experiment results validated; continuing workflow",
+    })
+
+
 def _extract_reference_urls(report: str) -> List[str]:
     out: List[str] = []
     for line in report.splitlines():
@@ -751,6 +1188,8 @@ def _critic_report(
     max_refs: int,
     max_sections: int,
     block_terms: List[str],
+    experiment_plan: Dict[str, Any] | None = None,
+    experiment_results: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     issues: List[str] = []
     refs = _extract_reference_urls(report)
@@ -805,6 +1244,35 @@ def _critic_report(
     if off_topic_hits:
         issues.append(f"off_topic_terms:{', '.join(off_topic_hits[:5])}")
 
+    # Validate experiment plan quality (if present).
+    if experiment_plan and isinstance(experiment_plan, dict) and experiment_plan.get("rq_experiments"):
+        exp_issues = _validate_experiment_plan(experiment_plan)
+        for issue in exp_issues:
+            issues.append(f"experiment_plan:{issue}")
+
+    # Validate experiment results quality (if present and marked validated).
+    if (
+        experiment_results
+        and isinstance(experiment_results, dict)
+        and str(experiment_results.get("status", "")).lower() == "validated"
+    ):
+        result_issues = _validate_experiment_results(experiment_results, research_questions)
+        for issue in result_issues:
+            issues.append(f"experiment_results:{issue}")
+
+    # Soft gate: ML experiment plan exists but no validated results yet.
+    if (
+        experiment_plan
+        and isinstance(experiment_plan, dict)
+        and experiment_plan.get("rq_experiments")
+        and not (
+            experiment_results
+            and isinstance(experiment_results, dict)
+            and str(experiment_results.get("status", "")).lower() == "validated"
+        )
+    ):
+        issues.append("experiment_results_missing")
+
     return {"pass": len(issues) == 0, "issues": issues}
 
 
@@ -852,6 +1320,8 @@ def _compute_acceptance_metrics(
     *,
     evidence_audit_log: List[Dict[str, Any]],
     report_critic: Dict[str, Any],
+    experiment_plan: Dict[str, Any] | None = None,
+    experiment_results: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Compute quantitative acceptance metrics from audit data.
 
@@ -867,7 +1337,7 @@ def _compute_acceptance_metrics(
     run_view_isolation_active   : always True when run_id is in use (marker for cross-contamination tracking)
     """
     if not evidence_audit_log:
-        return {
+        result = {
             "avg_a_evidence_ratio": 0.0,
             "a_ratio_pass": False,
             "rq_min2_evidence_rate": 0.0,
@@ -878,28 +1348,57 @@ def _compute_acceptance_metrics(
             "run_view_isolation_active": True,
             "note": "no evidence_audit_log available",
         }
+    else:
+        a_ratios = [float(x.get("a_ratio", 0.0)) for x in evidence_audit_log]
+        avg_a_ratio = sum(a_ratios) / len(a_ratios)
 
-    a_ratios = [float(x.get("a_ratio", 0.0)) for x in evidence_audit_log]
-    avg_a_ratio = sum(a_ratios) / len(a_ratios)
+        rqs_with_2plus = sum(1 for x in evidence_audit_log if int(x.get("evidence_count", 0)) >= 2)
+        rq_coverage_rate = rqs_with_2plus / len(evidence_audit_log)
+        rqs_with_3_hq = sum(1 for x in evidence_audit_log if int(x.get("high_quality_count", 0)) >= 3)
+        rqs_with_2_peer = sum(1 for x in evidence_audit_log if int(x.get("peer_reviewed_count", 0)) >= 2)
 
-    rqs_with_2plus = sum(1 for x in evidence_audit_log if int(x.get("evidence_count", 0)) >= 2)
-    rq_coverage_rate = rqs_with_2plus / len(evidence_audit_log)
-    rqs_with_3_hq = sum(1 for x in evidence_audit_log if int(x.get("high_quality_count", 0)) >= 3)
-    rqs_with_2_peer = sum(1 for x in evidence_audit_log if int(x.get("peer_reviewed_count", 0)) >= 2)
+        ref_compliant = "reference_budget_exceeded" not in report_critic.get("issues", [])
 
-    ref_compliant = "reference_budget_exceeded" not in report_critic.get("issues", [])
+        result = {
+            "avg_a_evidence_ratio": round(avg_a_ratio, 3),
+            "a_ratio_pass": avg_a_ratio >= DEFAULT_CORE_MIN_A_RATIO,
+            "rq_min2_evidence_rate": round(rq_coverage_rate, 3),
+            "rq_coverage_pass": rq_coverage_rate >= 0.90,
+            "rq_min3_high_quality_rate": round(rqs_with_3_hq / len(evidence_audit_log), 3),
+            "rq_min2_peer_review_rate": round(rqs_with_2_peer / len(evidence_audit_log), 3),
+            "reference_budget_compliant": ref_compliant,
+            "run_view_isolation_active": True,
+            "critic_issues": report_critic.get("issues", []),
+        }
 
-    return {
-        "avg_a_evidence_ratio": round(avg_a_ratio, 3),
-        "a_ratio_pass": avg_a_ratio >= DEFAULT_CORE_MIN_A_RATIO,
-        "rq_min2_evidence_rate": round(rq_coverage_rate, 3),
-        "rq_coverage_pass": rq_coverage_rate >= 0.90,
-        "rq_min3_high_quality_rate": round(rqs_with_3_hq / len(evidence_audit_log), 3),
-        "rq_min2_peer_review_rate": round(rqs_with_2_peer / len(evidence_audit_log), 3),
-        "reference_budget_compliant": ref_compliant,
-        "run_view_isolation_active": True,
-        "critic_issues": report_critic.get("issues", []),
-    }
+    # Experiment plan metrics
+    exp_plan = experiment_plan or {}
+    exp_rqs = exp_plan.get("rq_experiments", []) if isinstance(exp_plan, dict) else []
+    if not isinstance(exp_rqs, list):
+        exp_rqs = []
+    exp_plan_issues = _validate_experiment_plan(exp_plan) if exp_rqs else []
+    result["experiment_plan_present"] = bool(exp_rqs)
+    result["experiment_plan_rq_count"] = len(exp_rqs)
+    result["experiment_plan_issues"] = exp_plan_issues
+    result["experiment_plan_valid"] = bool(exp_rqs) and len(exp_plan_issues) == 0
+
+    # Experiment results metrics
+    exp_results = experiment_results or {}
+    exp_status = str(exp_results.get("status", "")).lower() if isinstance(exp_results, dict) else ""
+    exp_runs = exp_results.get("runs", []) if isinstance(exp_results, dict) else []
+    if not isinstance(exp_runs, list):
+        exp_runs = []
+    result["experiment_results_present"] = bool(exp_runs)
+    result["experiment_results_validated"] = exp_status == "validated"
+    result["experiment_results_issues"] = (
+        _validate_experiment_results(exp_results, [])
+        if (isinstance(exp_results, dict) and exp_status == "validated")
+        else list(exp_results.get("validation_issues", []))
+        if isinstance(exp_results, dict) and isinstance(exp_results.get("validation_issues", []), list)
+        else []
+    )
+
+    return result
 
 
 def _build_topic_keywords(state: ResearchState, cfg: Dict[str, Any]) -> set[str]:
@@ -1080,6 +1579,173 @@ def _strip_outer_markdown_fence(report: str) -> str:
     inner = lines[:first_idx] + lines[first_idx + 1 : close_idx] + lines[close_idx + 1 :]
     cleaned = "\n".join(inner).strip()
     return cleaned + "\n" if cleaned else ""
+
+
+def _insert_chapter_before_references(report: str, chapter_md: str) -> str:
+    """Insert markdown chapter before References heading if present, else append."""
+    content = (chapter_md or "").strip()
+    if not content:
+        return report
+    ref_match = re.search(
+        r"^(#{1,6}\s*(?:\d+\.?\s*)?(?:References|Bibliography|参考文献)\s*$)",
+        report,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    if ref_match:
+        insert_pos = ref_match.start()
+        return (
+            report[:insert_pos].rstrip()
+            + "\n\n"
+            + content
+            + "\n\n"
+            + report[insert_pos:]
+        )
+    return report.rstrip() + "\n\n" + content + "\n"
+
+
+def _render_experiment_blueprint(plan: Dict[str, Any], language: str = "en") -> str:
+    """Render experiment plan as a markdown chapter."""
+    rq_experiments = plan.get("rq_experiments", []) if isinstance(plan, dict) else []
+    if not isinstance(rq_experiments, list) or not rq_experiments:
+        return ""
+
+    is_zh = str(language).lower() == "zh"
+    header = "## Experimental Blueprint" if not is_zh else "## 实验蓝图"
+    domain_label = "Domain" if not is_zh else "领域"
+    subfield_label = "Subfield" if not is_zh else "子领域"
+    task_label = "Task Type" if not is_zh else "任务类型"
+    planned_label = (
+        "_Status: planned protocol (not yet executed)._"
+        if not is_zh
+        else "_状态：实验计划，尚未执行。_"
+    )
+
+    parts: List[str] = [
+        header,
+        "",
+        f"**{domain_label}**: {plan.get('domain', 'N/A')} | "
+        f"**{subfield_label}**: {plan.get('subfield', 'N/A')} | "
+        f"**{task_label}**: {plan.get('task_type', 'N/A')}",
+        "",
+        planned_label,
+        "",
+    ]
+
+    for i, exp in enumerate(rq_experiments, 1):
+        exp_item = exp if isinstance(exp, dict) else {}
+        rq = exp_item.get("research_question", f"RQ {i}")
+        parts.append(f"### Experiment {i}: {rq}")
+        parts.append("")
+        parts.append(f"**Task**: {exp_item.get('task', 'N/A')}")
+
+        datasets = exp_item.get("datasets", [])
+        if isinstance(datasets, list) and datasets:
+            parts.append("")
+            parts.append("#### Datasets")
+            for ds in datasets:
+                ds_item = ds if isinstance(ds, dict) else {}
+                name = ds_item.get("name", "N/A")
+                url = ds_item.get("url", "N/A")
+                lic = ds_item.get("license", "N/A")
+                reason = ds_item.get("reason", "N/A")
+                parts.append(f"- {name} ({url}), license: {lic}; reason: {reason}")
+
+        cmds = exp_item.get("run_commands", {})
+        if isinstance(cmds, dict) and (cmds.get("train") or cmds.get("eval")):
+            parts.append("")
+            parts.append("#### Run Commands")
+            if cmds.get("train"):
+                parts.append("```bash")
+                parts.append(str(cmds.get("train")))
+                parts.append("```")
+            if cmds.get("eval"):
+                parts.append("```bash")
+                parts.append(str(cmds.get("eval")))
+                parts.append("```")
+
+        ev = exp_item.get("evaluation", {})
+        if isinstance(ev, dict) and (ev.get("metrics") or ev.get("protocol")):
+            parts.append("")
+            parts.append("#### Evaluation")
+            metrics = ev.get("metrics", [])
+            if isinstance(metrics, list) and metrics:
+                parts.append(f"- Metrics: {', '.join(str(x) for x in metrics)}")
+            if ev.get("protocol"):
+                parts.append(f"- Protocol: {ev.get('protocol')}")
+
+        refs = exp_item.get("evidence_refs", [])
+        if isinstance(refs, list) and refs:
+            parts.append("")
+            parts.append("#### Evidence References")
+            for ref in refs:
+                ref_item = ref if isinstance(ref, dict) else {}
+                uid = ref_item.get("uid", "")
+                url = ref_item.get("url", "")
+                if url:
+                    parts.append(f"- [{uid}]({url})")
+                elif uid:
+                    parts.append(f"- {uid}")
+        parts.append("")
+
+    return "\n".join(parts).strip()
+
+
+def _render_experiment_results(results: Dict[str, Any], language: str = "en") -> str:
+    """Render validated experiment results as a markdown chapter."""
+    if not isinstance(results, dict):
+        return ""
+    if str(results.get("status", "")).lower() != "validated":
+        return ""
+    runs = results.get("runs", [])
+    if not isinstance(runs, list) or not runs:
+        return ""
+
+    is_zh = str(language).lower() == "zh"
+    header = "## Experimental Results" if not is_zh else "## 实验结果"
+    submitted_by_label = "Submitted By" if not is_zh else "提交人"
+    submitted_at_label = "Submitted At" if not is_zh else "提交时间"
+
+    parts: List[str] = [header, ""]
+    if results.get("submitted_by") or results.get("submitted_at"):
+        parts.append(
+            f"**{submitted_by_label}**: {results.get('submitted_by', 'N/A')} | "
+            f"**{submitted_at_label}**: {results.get('submitted_at', 'N/A')}"
+        )
+        parts.append("")
+
+    summaries = results.get("summaries", [])
+    if isinstance(summaries, list) and summaries:
+        parts.append("### Result Summaries")
+        parts.append("")
+        for s in summaries:
+            s_item = s if isinstance(s, dict) else {}
+            rq = s_item.get("research_question", "N/A")
+            best = s_item.get("best_run_id", "N/A")
+            conc = s_item.get("conclusion", "N/A")
+            conf = s_item.get("confidence", "N/A")
+            parts.append(f"- **{rq}**: best_run={best}; confidence={conf}; conclusion={conc}")
+        parts.append("")
+
+    parts.append("### Runs")
+    parts.append("")
+    for i, run in enumerate(runs, 1):
+        run_item = run if isinstance(run, dict) else {}
+        parts.append(
+            f"- Run {i}: id={run_item.get('run_id', 'N/A')}, "
+            f"rq={run_item.get('research_question', 'N/A')}, "
+            f"name={run_item.get('experiment_name', 'N/A')}"
+        )
+        metrics = run_item.get("metrics", [])
+        if isinstance(metrics, list) and metrics:
+            metric_parts = []
+            for m in metrics:
+                m_item = m if isinstance(m, dict) else {}
+                metric_parts.append(f"{m_item.get('name', 'metric')}={m_item.get('value', 'N/A')}")
+            parts.append(f"  - metrics: {', '.join(metric_parts)}")
+        if run_item.get("notes"):
+            parts.append(f"  - notes: {run_item.get('notes')}")
+    parts.append("")
+    return "\n".join(parts).strip()
 
 
 # Node: plan_research
@@ -2000,6 +2666,24 @@ def generate_report(state: ResearchState) -> Dict[str, Any]:
     report = _strip_outer_markdown_fence(report)
     report = _clean_reference_section(report, max_refs=max_report_sources)
 
+    experiment_plan = state.get("experiment_plan", {}) or {}
+    experiment_results = state.get("experiment_results", {}) or {}
+
+    # Inject experimental blueprint chapter when a plan is available.
+    if isinstance(experiment_plan, dict) and experiment_plan.get("rq_experiments"):
+        blueprint_md = _render_experiment_blueprint(experiment_plan, language=language)
+        if blueprint_md:
+            report = _insert_chapter_before_references(report, blueprint_md)
+
+    # Inject validated experimental results chapter.
+    if (
+        isinstance(experiment_results, dict)
+        and str(experiment_results.get("status", "")).lower() == "validated"
+    ):
+        results_md = _render_experiment_results(experiment_results, language=language)
+        if results_md:
+            report = _insert_chapter_before_references(report, results_md)
+
     critic = _critic_report(
         topic=topic,
         report=report,
@@ -2008,6 +2692,8 @@ def generate_report(state: ResearchState) -> Dict[str, Any]:
         max_refs=max_report_sources,
         max_sections=int(budget.get("max_sections", DEFAULT_MAX_SECTIONS)),
         block_terms=block_terms,
+        experiment_plan=experiment_plan,
+        experiment_results=experiment_results,
     )
     repair_attempted = bool(state.get("repair_attempted", False))
     if not critic.get("pass", False) and not repair_attempted:
@@ -2033,6 +2719,8 @@ def generate_report(state: ResearchState) -> Dict[str, Any]:
             max_refs=max_report_sources,
             max_sections=int(budget.get("max_sections", DEFAULT_MAX_SECTIONS)),
             block_terms=block_terms,
+            experiment_plan=experiment_plan,
+            experiment_results=experiment_results,
         )
         repair_attempted = True
 
@@ -2045,6 +2733,8 @@ def generate_report(state: ResearchState) -> Dict[str, Any]:
     acceptance_metrics = _compute_acceptance_metrics(
         evidence_audit_log=state.get("evidence_audit_log", []),
         report_critic=critic,
+        experiment_plan=experiment_plan,
+        experiment_results=experiment_results,
     )
 
     return _ns({

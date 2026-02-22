@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from src.agent import nodes
 
@@ -219,6 +220,138 @@ class NodesHelpersTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["rq_min2_evidence_rate"], 0.5, places=6)
         self.assertFalse(metrics["rq_coverage_pass"])
         self.assertFalse(metrics["reference_budget_compliant"])
+
+    def test_render_experiment_blueprint_and_results(self) -> None:
+        self.assertEqual(nodes._render_experiment_blueprint({}), "")
+        self.assertEqual(nodes._render_experiment_results({}), "")
+
+        plan = {
+            "domain": "deep_learning",
+            "subfield": "nlp",
+            "task_type": "classification",
+            "rq_experiments": [
+                {
+                    "research_question": "RQ1",
+                    "task": "classification",
+                    "datasets": [{"name": "SST-2", "url": "https://example.com", "license": "MIT", "reason": "test"}],
+                    "run_commands": {"train": "python train.py", "eval": "python eval.py"},
+                    "evaluation": {"metrics": ["accuracy"], "protocol": "3 seeds"},
+                    "evidence_refs": [{"uid": "arxiv:1234", "url": "https://arxiv.org/abs/1234"}],
+                }
+            ],
+        }
+        blueprint = nodes._render_experiment_blueprint(plan)
+        self.assertIn("## Experimental Blueprint", blueprint)
+        self.assertIn("RQ1", blueprint)
+        self.assertIn("python train.py", blueprint)
+
+        results = {
+            "status": "validated",
+            "submitted_by": "alice",
+            "submitted_at": "2026-02-21T10:30:00Z",
+            "runs": [
+                {
+                    "run_id": "rq1-expA",
+                    "research_question": "RQ1",
+                    "experiment_name": "expA",
+                    "metrics": [{"name": "F1", "value": 80.0}],
+                }
+            ],
+            "summaries": [
+                {
+                    "research_question": "RQ1",
+                    "best_run_id": "rq1-expA",
+                    "conclusion": "expA is best",
+                    "confidence": "medium",
+                }
+            ],
+        }
+        results_md = nodes._render_experiment_results(results)
+        self.assertIn("## Experimental Results", results_md)
+        self.assertIn("rq1-expA", results_md)
+
+    def test_critic_report_experiment_checks(self) -> None:
+        report = "## Intro\n\n## References\n1. Ref https://example.com\n"
+        critic = nodes._critic_report(
+            topic="fine-tuning transformer models",
+            report=report,
+            research_questions=["RQ1"],
+            claim_map=[],
+            max_refs=10,
+            max_sections=5,
+            block_terms=[],
+            experiment_plan={"rq_experiments": [{"datasets": []}]},
+            experiment_results={},
+        )
+        self.assertFalse(critic["pass"])
+        self.assertTrue(any(x.startswith("experiment_plan:") for x in critic["issues"]))
+        self.assertIn("experiment_results_missing", critic["issues"])
+
+    def test_compute_acceptance_metrics_with_experiment_fields(self) -> None:
+        plan = {
+            "rq_experiments": [
+                {
+                    "datasets": [{"name": "X", "url": "https://x.example"}],
+                    "environment": {"python": "3.10", "cuda": "12.1", "pytorch": "2.3"},
+                    "hyperparameters": {
+                        "baseline": {"lr": 2e-5},
+                        "search_space": {"lr": [1e-5, 5e-5]},
+                    },
+                    "run_commands": {"train": "python train.py", "eval": "python eval.py"},
+                    "evidence_refs": [{"uid": "arxiv:1234"}],
+                }
+            ]
+        }
+        results = {
+            "status": "validated",
+            "runs": [{"run_id": "rq1-expA", "research_question": "RQ1", "metrics": [{"name": "F1", "value": 80.0}]}],
+        }
+        metrics = nodes._compute_acceptance_metrics(
+            evidence_audit_log=[{"a_ratio": 0.8, "evidence_count": 2}],
+            report_critic={"issues": []},
+            experiment_plan=plan,
+            experiment_results=results,
+        )
+        self.assertTrue(metrics["experiment_plan_present"])
+        self.assertTrue(metrics["experiment_plan_valid"])
+        self.assertTrue(metrics["experiment_results_present"])
+        self.assertTrue(metrics["experiment_results_validated"])
+        self.assertEqual(metrics["experiment_results_issues"], [])
+
+    def test_generate_report_injects_experiment_sections_before_references(self) -> None:
+        state = {
+            "topic": "Fine-tuning transformers",
+            "research_questions": ["RQ1"],
+            "analyses": [],
+            "synthesis": "Synthesis text",
+            "claim_evidence_map": [],
+            "evidence_audit_log": [],
+            "experiment_plan": {
+                "domain": "deep_learning",
+                "subfield": "nlp",
+                "task_type": "classification",
+                "rq_experiments": [{"research_question": "RQ1", "task": "classification"}],
+            },
+            "experiment_results": {
+                "status": "validated",
+                "runs": [{"run_id": "rq1-expA", "research_question": "RQ1", "metrics": [{"name": "F1", "value": 80.0}]}],
+                "summaries": [],
+            },
+            "_cfg": {"agent": {"language": "en", "report_max_sources": 10, "budget": {"max_sections": 5, "max_references": 10}}},
+        }
+
+        generated_report = "## Introduction\n\nBody\n\n## References\n1. Ref https://example.com/ref\n"
+        with patch("src.agent.nodes._llm_call", return_value=generated_report):
+            with patch("src.agent.nodes._critic_report", return_value={"pass": True, "issues": []}):
+                with patch("src.agent.nodes._compute_acceptance_metrics", return_value={}):
+                    out = nodes.generate_report(state)
+
+        report = out["report"]["report"]
+        self.assertIn("## Experimental Blueprint", report)
+        self.assertIn("## Experimental Results", report)
+        self.assertIn("## References", report)
+        self.assertLess(report.find("## Experimental Blueprint"), report.find("## References"))
+        self.assertLess(report.find("## Experimental Results"), report.find("## References"))
 
 
 if __name__ == "__main__":
