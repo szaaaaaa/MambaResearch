@@ -140,7 +140,7 @@ def _citation_semantic_stats(
             "citation_semantic_pairs": [],
         }
 
-    from src.rag.retriever import embed_texts
+    from src.rag.embeddings import embed_texts
 
     claim_texts = [str(c["claim"]) for c in claims]
     claim_vecs = embed_texts(claim_texts)
@@ -192,7 +192,7 @@ def _citation_stats(answer: str, hit_count: int) -> Dict[str, Any]:
 def _answer_consistency(answers: List[str]) -> float | None:
     if len(answers) < 2:
         return None
-    from src.rag.retriever import embed_texts
+    from src.rag.embeddings import embed_texts
 
     vecs = embed_texts(answers)
     vals: List[float] = []

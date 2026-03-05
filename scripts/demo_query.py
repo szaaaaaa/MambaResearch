@@ -11,6 +11,8 @@ from src.common.rag_config import (
     outputs_dir,
     persist_dir,
     retrieval_candidate_k,
+    retrieval_embedding_model,
+    retrieval_hybrid,
     retrieval_reranker_model,
     retrieval_top_k,
 )
@@ -35,6 +37,8 @@ def main() -> int:
     top_k = retrieval_top_k(cfg, args.top_k)
     candidate_k = retrieval_candidate_k(cfg, args.candidate_k)
     reranker_model = retrieval_reranker_model(cfg, args.reranker_model)
+    emb_model = retrieval_embedding_model(cfg, getattr(args, "embedding_model", None))
+    hybrid = retrieval_hybrid(cfg, getattr(args, "hybrid", None))
     model = openai_model(cfg, args.model)
     temperature = openai_temperature(cfg, args.temperature)
     out_dir = outputs_dir(root, cfg)
@@ -58,6 +62,8 @@ def main() -> int:
         reranker_model=reranker_model,
         model=model,
         temperature=float(temperature),
+        embedding_model=emb_model,
+        hybrid=hybrid,
     )
     hits = qa["hits"]
     cited_prompt = qa["prompt"]
