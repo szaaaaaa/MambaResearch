@@ -34,10 +34,14 @@ index:
   chunk_size: 1200
   overlap: 200
 retrieval:
+  runtime_mode: standard
+  embedding_backend: local_st
   embedding_model: BAAI/bge-m3        # or all-MiniLM-L6-v2
+  remote_embedding_model: text-embedding-3-small
   hybrid: true                         # BM25 + dense RRF fusion
   top_k: 10
   candidate_k: 30
+  reranker_backend: local_crossencoder
   reranker_model: BAAI/bge-reranker-v2-m3
 llm:
   model: gemini-3-flash-preview

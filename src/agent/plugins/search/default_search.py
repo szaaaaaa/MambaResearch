@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 from urllib.parse import urlparse
 from difflib import SequenceMatcher
 
+from src.agent.core.circuit_breaker import get_provider_circuit_breaker
 from src.agent.core.schemas import SearchFetchResult
 from src.agent.infra.search.sources import (
     dedupe_search_results,
@@ -549,6 +550,30 @@ def _web_provider_order(cfg: Dict[str, Any]) -> List[str]:
     return ["duckduckgo", "bing", "google_cse", "google", "github"]
 
 
+def _provider_call(
+    breaker: Any,
+    provider: str,
+    func,
+    *args: Any,
+    default: Any,
+    logger_prefix: str,
+    **kwargs: Any,
+) -> Any:
+    if breaker is not None and not breaker.allow(provider):
+        logger.warning("[%s] Skipped because circuit is open", logger_prefix)
+        return default
+    try:
+        result = func(*args, **kwargs)
+    except Exception as exc:  # pragma: no cover - network path
+        if breaker is not None:
+            breaker.record_failure(provider, str(exc))
+        logger.error("[%s] Failed: %s", logger_prefix, exc)
+        return default
+    if breaker is not None:
+        breaker.record_success(provider)
+    return result
+
+
 class DefaultSearchBackend:
     def fetch(
         self,
@@ -563,6 +588,7 @@ class DefaultSearchBackend:
         sources_cfg = cfg.get("sources", {})
         delay = float(cfg.get("fetch", {}).get("polite_delay_sec", 1.0))
         search_provider_cfg = cfg.get("providers", {}).get("search", {})
+        breaker = get_provider_circuit_breaker(cfg, root)
 
         new_papers: List[Dict[str, Any]] = []
         new_web: List[Dict[str, Any]] = []
@@ -612,26 +638,28 @@ class DefaultSearchBackend:
 
                 if arxiv_enabled:
                     logger.info("[arXiv] Searching: %s (max %d)", q, arxiv_per_query)
-                    try:
-                        records = fetch_arxiv_records(
-                            query=q,
-                            sqlite_path=sqlite_path,
-                            papers_dir=papers_dir,
-                            max_results=arxiv_per_query,
-                            download=allow_download,
-                            download_source=download_source,
-                            source_dir=source_dir,
-                            polite_delay_sec=delay,
-                        )
-                        for r in records:
-                            c = _paper_from_arxiv_record(r, query=q)
-                            key = _canonical_paper_key(c)
-                            if key in per_query_candidates:
-                                per_query_candidates[key] = _merge_paper(per_query_candidates[key], c)
-                            else:
-                                per_query_candidates[key] = c
-                    except Exception as e:  # pragma: no cover - network path
-                        logger.error("[arXiv] Failed for '%s': %s", q, e)
+                    records = _provider_call(
+                        breaker,
+                        "arxiv",
+                        fetch_arxiv_records,
+                        query=q,
+                        sqlite_path=sqlite_path,
+                        papers_dir=papers_dir,
+                        max_results=arxiv_per_query,
+                        download=allow_download,
+                        download_source=download_source,
+                        source_dir=source_dir,
+                        polite_delay_sec=delay,
+                        default=[],
+                        logger_prefix=f"arXiv:{q}",
+                    )
+                    for r in records:
+                        c = _paper_from_arxiv_record(r, query=q)
+                        key = _canonical_paper_key(c)
+                        if key in per_query_candidates:
+                            per_query_candidates[key] = _merge_paper(per_query_candidates[key], c)
+                        else:
+                            per_query_candidates[key] = c
 
                 merged_results = []
                 for provider in order:
@@ -642,34 +670,50 @@ class DefaultSearchBackend:
                             continue
                         oa_max = max(oa_per_query, need_more)
                         logger.info("[OpenAlex] Searching: %s (max %d)", q, oa_max)
-                        try:
-                            merged_results.extend(query_openalex(q, max_results=oa_max))
-                        except Exception as e:  # pragma: no cover - network path
-                            logger.error("[OpenAlex] Failed for '%s': %s", q, e)
+                        merged_results.extend(
+                            _provider_call(
+                                breaker,
+                                "openalex",
+                                query_openalex,
+                                q,
+                                max_results=oa_max,
+                                default=[],
+                                logger_prefix=f"OpenAlex:{q}",
+                            )
+                        )
                     elif provider == "google_scholar" and _source_enabled(cfg, "google_scholar"):
                         gs_max = max(gs_per_query, need_more)
                         logger.info("[Google Scholar] Searching: %s (max %d)", q, gs_max)
-                        try:
-                            merged_results.extend(query_google_scholar(q, max_results=gs_max))
-                        except Exception as e:  # pragma: no cover - network path
-                            logger.error("[Google Scholar] Failed for '%s': %s", q, e)
+                        merged_results.extend(
+                            _provider_call(
+                                breaker,
+                                "google_scholar",
+                                query_google_scholar,
+                                q,
+                                max_results=gs_max,
+                                default=[],
+                                logger_prefix=f"GoogleScholar:{q}",
+                            )
+                        )
                     elif provider == "semantic_scholar" and _source_enabled(cfg, "semantic_scholar"):
                         if need_more == 0 and merged_results and not query_all:
                             continue
                         s2_max = max(s2_per_query, need_more)
                         logger.info("[Semantic Scholar] Searching: %s (max %d)", q, s2_max)
-                        try:
-                            merged_results.extend(
-                                query_semantic_scholar(
-                                    q,
-                                    max_results=s2_max,
-                                    min_interval_sec=s2_min_interval,
-                                    max_retries=s2_max_retries,
-                                    backoff_sec=s2_backoff,
-                                )
+                        merged_results.extend(
+                            _provider_call(
+                                breaker,
+                                "semantic_scholar",
+                                query_semantic_scholar,
+                                q,
+                                max_results=s2_max,
+                                min_interval_sec=s2_min_interval,
+                                max_retries=s2_max_retries,
+                                backoff_sec=s2_backoff,
+                                default=[],
+                                logger_prefix=f"SemanticScholar:{q}",
                             )
-                        except Exception as e:  # pragma: no cover - network path
-                            logger.error("[Semantic Scholar] Failed for '%s': %s", q, e)
+                        )
 
                 for r in dedupe_search_results(merged_results):
                     c = _paper_from_search_result(r, query=q)
@@ -745,15 +789,72 @@ class DefaultSearchBackend:
                             break
 
                         if provider == "google" and _source_enabled(cfg, "web"):
-                            merged.extend(query_google_web(q, max_results=raw_n, hl=google_hl, gl=google_gl))
+                            merged.extend(
+                                _provider_call(
+                                    breaker,
+                                    "google_web",
+                                    query_google_web,
+                                    q,
+                                    max_results=raw_n,
+                                    hl=google_hl,
+                                    gl=google_gl,
+                                    default=[],
+                                    logger_prefix=f"GoogleWeb:{q}",
+                                )
+                            )
                         elif provider == "google_cse" and _source_enabled(cfg, "google_cse"):
-                            merged.extend(query_google_cse_web(q, max_results=raw_n, hl=google_hl, gl=google_gl))
+                            merged.extend(
+                                _provider_call(
+                                    breaker,
+                                    "google_cse",
+                                    query_google_cse_web,
+                                    q,
+                                    max_results=raw_n,
+                                    hl=google_hl,
+                                    gl=google_gl,
+                                    default=[],
+                                    logger_prefix=f"GoogleCSE:{q}",
+                                )
+                            )
                         elif provider == "bing" and _source_enabled(cfg, "bing"):
-                            merged.extend(query_bing_web(q, max_results=raw_n, mkt=bing_mkt))
+                            merged.extend(
+                                _provider_call(
+                                    breaker,
+                                    "bing",
+                                    query_bing_web,
+                                    q,
+                                    max_results=raw_n,
+                                    mkt=bing_mkt,
+                                    default=[],
+                                    logger_prefix=f"Bing:{q}",
+                                )
+                            )
                         elif provider == "duckduckgo" and _source_enabled(cfg, "web"):
-                            merged.extend(query_duckduckgo_web(q, max_results=raw_n, region=ddg_region))
+                            merged.extend(
+                                _provider_call(
+                                    breaker,
+                                    "duckduckgo",
+                                    query_duckduckgo_web,
+                                    q,
+                                    max_results=raw_n,
+                                    region=ddg_region,
+                                    default=[],
+                                    logger_prefix=f"DuckDuckGo:{q}",
+                                )
+                            )
                         elif provider == "github" and _source_enabled(cfg, "github"):
-                            merged.extend(query_github_web(q, max_results=raw_n, sort=github_sort))
+                            merged.extend(
+                                _provider_call(
+                                    breaker,
+                                    "github",
+                                    query_github_web,
+                                    q,
+                                    max_results=raw_n,
+                                    sort=github_sort,
+                                    default=[],
+                                    logger_prefix=f"GitHub:{q}",
+                                )
+                            )
 
                     results = dedupe_search_results(merged)
                     results = filter_search_results_by_domain(results, blocked_domains=blocked_domains)

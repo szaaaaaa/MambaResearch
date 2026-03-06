@@ -140,8 +140,19 @@ def process_figures(
     temperature: float = 0.1,
     validation_min_entity_match: float = 0.5,
 ) -> List[FigureChunkData]:
-    out: List[FigureChunkData] = []
+    seen_ids: set[str] = set()
+    deduped_contexts: List[FigureContext] = []
     for figure in figure_contexts:
+        figure_id = str(getattr(figure, "figure_id", "") or "").strip()
+        dedupe_key = figure_id or str(getattr(figure, "image_path", "") or "").strip()
+        if dedupe_key and dedupe_key in seen_ids:
+            continue
+        if dedupe_key:
+            seen_ids.add(dedupe_key)
+        deduped_contexts.append(figure)
+
+    out: List[FigureChunkData] = []
+    for figure in deduped_contexts:
         description = ""
         passed = False
         try:
@@ -184,6 +195,7 @@ def figure_data_to_chunks(
 ) -> List[Chunk]:
     chunks: List[Chunk] = []
     next_idx = int(text_chunk_count)
+    seen_content: set[str] = set()
     for figure in figures:
         lines = [f"[Figure {figure.figure_id}]"]
         if figure.caption:
@@ -194,10 +206,15 @@ def figure_data_to_chunks(
             lines.append(f"Description: {figure.visual_description}")
         if len(lines) == 1:
             continue
+        text = "\n".join(lines)
+        content_key = text.lower().strip()
+        if content_key in seen_content:
+            continue
+        seen_content.add(content_key)
         chunks.append(
             Chunk(
                 chunk_id=f"chunk_{next_idx:06d}",
-                text="\n".join(lines),
+                text=text,
                 start_char=-1,
                 end_char=-1,
                 metadata={

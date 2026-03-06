@@ -19,6 +19,7 @@ def index_pdf_documents(
     overlap: int,
     run_id: str,
     embedding_model: str = "all-MiniLM-L6-v2",
+    embedding_backend: str = "local_st",
     build_bm25: bool = False,
     root: Path | None = None,
     cfg: dict | None = None,
@@ -33,6 +34,7 @@ def index_pdf_documents(
         overlap=overlap,
         run_id=run_id,
         embedding_model=embedding_model,
+        embedding_backend=embedding_backend,
         build_bm25=build_bm25,
         root=root,
         cfg=cfg,
@@ -47,7 +49,9 @@ def build_web_index(
     doc_id: str,
     run_id: str,
     embedding_model: str = "all-MiniLM-L6-v2",
+    embedding_backend: str = "local_st",
     build_bm25: bool = False,
+    cfg: dict | None = None,
 ):
     from src.ingest.indexer import build_chroma_index
 
@@ -58,7 +62,9 @@ def build_web_index(
         doc_id=doc_id,
         run_id=run_id,
         embedding_model=embedding_model,
+        embedding_backend=embedding_backend,
         build_bm25=build_bm25,
+        cfg=cfg,
     )
 
 

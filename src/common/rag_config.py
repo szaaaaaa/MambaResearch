@@ -83,6 +83,48 @@ def retrieval_embedding_model(cfg: Dict[str, Any], override: str | None = None) 
     )
 
 
+def retrieval_runtime_mode(cfg: Dict[str, Any], override: str | None = None) -> str:
+    raw = pick_str(override, get_by_dotted(cfg, "retrieval.runtime_mode"), default="standard").lower()
+    if raw not in {"lite", "standard", "heavy"}:
+        return "standard"
+    return raw
+
+
+def retrieval_embedding_backend(cfg: Dict[str, Any], override: str | None = None) -> str:
+    raw = pick_str(override, get_by_dotted(cfg, "retrieval.embedding_backend"), default="local_st").lower()
+    if raw in {"remote", "remote_embedding"}:
+        return "openai_embedding"
+    if raw not in {"local_st", "openai_embedding", "disabled"}:
+        return "local_st"
+    return raw
+
+
+def retrieval_remote_embedding_model(cfg: Dict[str, Any], override: str | None = None) -> str:
+    return pick_str(
+        override,
+        get_by_dotted(cfg, "retrieval.remote_embedding_model"),
+        default="text-embedding-3-small",
+    )
+
+
+def retrieval_effective_embedding_model(cfg: Dict[str, Any], override: str | None = None) -> str:
+    backend = retrieval_embedding_backend(cfg)
+    if backend == "openai_embedding":
+        return retrieval_remote_embedding_model(cfg)
+    return retrieval_embedding_model(cfg, override=override)
+
+
+def retrieval_reranker_backend(cfg: Dict[str, Any], override: str | None = None) -> str:
+    raw = pick_str(
+        override,
+        get_by_dotted(cfg, "retrieval.reranker_backend"),
+        default="local_crossencoder",
+    ).lower()
+    if raw not in {"local_crossencoder", "disabled"}:
+        return "local_crossencoder"
+    return raw
+
+
 def retrieval_hybrid(cfg: Dict[str, Any], override: bool | None = None) -> bool:
     if override is not None:
         return override

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from src.rag.embeddings import DEFAULT_MODEL
+from src.rag.embeddings import DEFAULT_BACKEND, DEFAULT_MODEL
 from src.rag.retriever import retrieve
 
 
@@ -17,6 +17,9 @@ def retrieve_chunks(
     allowed_doc_ids: List[str] | None = None,
     embedding_model: str = DEFAULT_MODEL,
     hybrid: bool = False,
+    embedding_backend_name: str = DEFAULT_BACKEND,
+    reranker_backend_name: str = "local_crossencoder",
+    cfg: Dict[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     return retrieve(
         persist_dir=persist_dir,
@@ -28,4 +31,7 @@ def retrieve_chunks(
         reranker_model=reranker_model,
         allowed_doc_ids=allowed_doc_ids,
         hybrid=hybrid,
+        embedding_backend_name=embedding_backend_name,
+        reranker_backend_name=reranker_backend_name,
+        cfg=cfg,
     )

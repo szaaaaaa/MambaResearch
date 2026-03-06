@@ -21,8 +21,9 @@ from typing import Any, Dict
 from langgraph.graph import END, StateGraph
 
 from src.agent.core.budget import BudgetGuard
+from src.agent.core.checkpointing import build_checkpointer, build_run_config, checkpointing_enabled
 from src.agent.core.config import normalize_and_validate_config
-from src.agent.core.events import instrument_node
+from src.agent.core.events import emit_event, instrument_node
 from src.agent.core.schemas import ResearchState
 from src.agent.core.state_access import sget
 from src.agent.nodes import (
@@ -61,7 +62,7 @@ def _route_after_ingest_experiment_results(state: ResearchState) -> str:
     return "evaluate_progress"
 
 
-def build_graph() -> StateGraph:
+def build_graph(*, checkpointer: Any | None = None) -> StateGraph:
     """Construct and compile the research agent graph."""
     graph = StateGraph(ResearchState)
 
@@ -116,13 +117,17 @@ def build_graph() -> StateGraph:
 
     graph.add_edge("generate_report", END)
 
-    return graph.compile()
+    compile_kwargs = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+    return graph.compile(**compile_kwargs)
 
 
 def run_research(
     topic: str,
     cfg: Dict[str, Any],
     root: Path | str = ".",
+    resume_run_id: str | None = None,
 ) -> ResearchState:
     """High-level entry: build graph, inject config, and run.
 
@@ -151,12 +156,17 @@ def run_research(
     )
 
     # Generate a unique run ID for cross-run isolation and tracking
-    run_id = str(uuid.uuid4())
+    run_id = str(resume_run_id or uuid.uuid4())
 
     # Inject config and root into state so nodes can access them
     cfg["_root"] = str(root)
     cfg["_run_id"] = run_id
     cfg["_budget_guard"] = guard
+    checkpointer = build_checkpointer(cfg, root)
+    if resume_run_id and checkpointer is None:
+        if checkpointing_enabled(cfg):
+            raise RuntimeError("Resume requested but checkpointing backend is unavailable")
+        raise RuntimeError("Resume requested but checkpointing is disabled")
 
     initial_state: ResearchState = {
         "topic": topic,
@@ -203,7 +213,8 @@ def run_research(
         "_cfg": cfg,
     }
 
-    app = build_graph()
+    app = build_graph(checkpointer=checkpointer)
+    invoke_config = build_run_config(run_id)
 
     logger.info("Starting autonomous research on: %s", topic)
     logger.info("Max iterations: %d", max_iterations)
@@ -213,5 +224,15 @@ def run_research(
     enabled = [k for k, v in sources.items() if v.get("enabled", True)]
     logger.info("Enabled sources: %s", ", ".join(enabled) if enabled else "arxiv (default)")
 
-    final_state = app.invoke(initial_state)
+    if resume_run_id:
+        emit_event(
+            cfg,
+            {
+                "event": "checkpoint_resume_requested",
+                "run_id": run_id,
+            },
+        )
+        final_state = app.invoke(None, config=invoke_config)
+    else:
+        final_state = app.invoke(initial_state, config=invoke_config)
     return final_state

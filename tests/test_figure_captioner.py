@@ -79,6 +79,37 @@ class FigureCaptionerTest(unittest.TestCase):
         )
         self.assertEqual(chunks, [])
 
+    def test_process_figures_and_chunk_assembly_deduplicate_same_figure(self) -> None:
+        image = Path("tests/fixtures/latex/fig1.png").resolve()
+        contexts = [
+            SimpleNamespace(
+                figure_id="fig:dup",
+                image_path=image,
+                caption="Caption one",
+                context_paragraphs=["Context one"],
+                source="latex",
+            ),
+            SimpleNamespace(
+                figure_id="fig:dup",
+                image_path=image,
+                caption="Caption two",
+                context_paragraphs=["Context two"],
+                source="latex",
+            ),
+        ]
+
+        with patch("src.ingest.figure_captioner.describe_figure", return_value="A figure."):
+            figures = process_figures(
+                figure_contexts=contexts,
+                paper_title="Sample Paper",
+                validation_min_entity_match=0.0,
+            )
+
+        chunks = figure_data_to_chunks(figures + figures, doc_id="doc1", text_chunk_count=0)
+        self.assertEqual(len(figures), 1)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].metadata["figure_id"], "fig:dup")
+
 
 if __name__ == "__main__":
     unittest.main()

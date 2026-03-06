@@ -36,7 +36,8 @@ ALL_SOURCES = ("arxiv", "google_scholar", "semantic_scholar", "web")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Autonomous Research Agent")
-    p.add_argument("--topic", required=True, help="Research topic or question")
+    p.add_argument("--topic", required=False, help="Research topic or question")
+    p.add_argument("--resume-run-id", type=str, default=None, help="Resume from a checkpointed run id")
     p.add_argument("--config", default="configs/agent.yaml", help="Config file path")
     p.add_argument("--max_iter", type=int, default=None, help="Override max iterations")
     p.add_argument("--papers_per_query", type=int, default=None, help="Papers per search query")
@@ -57,7 +58,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-web", action="store_true", help="Disable web search (academic sources only)")
     p.add_argument("--no-scrape", action="store_true", help="Skip web page scraping (snippets only)")
     p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.topic and not args.resume_run_id:
+        p.error("either --topic or --resume-run-id must be provided")
+    return args
 
 
 def _resolve_cfg_paths(cfg: dict) -> dict:
@@ -109,6 +113,7 @@ def _set_global_seed(seed: int) -> None:
 
 def main() -> None:
     args = parse_args()
+    topic_label = args.topic or f"(resume:{args.resume_run_id})"
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -168,11 +173,12 @@ def main() -> None:
         {
             "ts": datetime.now().isoformat(),
             "event": "run_start",
-            "topic": args.topic,
+            "topic": topic_label,
             "tag": tag,
             "sources": [s for s in ALL_SOURCES if cfg["sources"].get(s, {}).get("enabled")],
             "seed": run_seed,
             "git_commit_hash": git_commit_hash,
+            "resume_run_id": args.resume_run_id,
         },
     )
 
@@ -183,14 +189,21 @@ def main() -> None:
 
     logger.info("=" * 60)
     logger.info("Autonomous Research Agent")
-    logger.info("Topic: %s", args.topic)
+    logger.info("Topic: %s", topic_label)
+    if args.resume_run_id:
+        logger.info("Resume run id: %s", args.resume_run_id)
     logger.info("Model: %s", cfg.get("llm", {}).get("model", "gpt-4.1-mini"))
     logger.info("Max iterations: %s", cfg.get("agent", {}).get("max_iterations", 3))
     logger.info("Sources: %s", ", ".join(enabled))
     logger.info("=" * 60)
 
     run_started_global = time.time()
-    final_state = run_research(topic=args.topic, cfg=cfg, root=ROOT)
+    final_state = run_research(
+        topic=args.topic or "",
+        cfg=cfg,
+        root=ROOT,
+        resume_run_id=args.resume_run_id,
+    )
 
     # ── Write outputs ────────────────────────────────────────────────
     run_started = run_started_global
@@ -282,7 +295,8 @@ def main() -> None:
             budget_usage = {}
 
     run_meta = {
-        "topic": args.topic,
+        "topic": topic_label,
+        "resume_run_id": args.resume_run_id,
         "run_tag": tag,
         "run_id": final_state.get("run_id", ""),
         "timestamp": datetime.now().isoformat(),
@@ -308,6 +322,7 @@ def main() -> None:
             "ts": datetime.now().isoformat(),
             "event": "run_end",
             "run_id": final_state.get("run_id", ""),
+            "resume_run_id": args.resume_run_id,
             "iterations": int(final_state.get("iteration", 0)),
             "papers": len(sget(final_state, "papers", [])),
             "web_sources": len(sget(final_state, "web_sources", [])),

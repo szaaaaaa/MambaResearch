@@ -87,6 +87,14 @@ DEFAULT_EVIDENCE_ALLOW_GRACEFUL_DEGRADE = True
 DEFAULT_CLAIM_ALIGNMENT_ENABLED = True
 DEFAULT_CLAIM_ALIGNMENT_MIN_RQ_RELEVANCE = 0.20
 DEFAULT_CLAIM_ALIGNMENT_ANCHOR_TERMS_MAX = 4
+DEFAULT_CHECKPOINTING_ENABLED = True
+DEFAULT_CHECKPOINTING_BACKEND = "sqlite"
+DEFAULT_CHECKPOINTING_SQLITE_PATH = "data/runtime/langgraph_checkpoints.sqlite"
+DEFAULT_SEARCH_CB_ENABLED = True
+DEFAULT_SEARCH_CB_FAILURE_THRESHOLD = 3
+DEFAULT_SEARCH_CB_OPEN_TTL_SEC = 600.0
+DEFAULT_SEARCH_CB_HALF_OPEN_PROBE_AFTER_SEC = 300.0
+DEFAULT_SEARCH_CB_SQLITE_PATH = "data/runtime/provider_health.sqlite"
 DEFAULT_PDF_DOWNLOAD_ONLY_ALLOWED_HOSTS = True
 DEFAULT_PDF_DOWNLOAD_ALLOWED_HOSTS = [
     "arxiv.org",
@@ -111,6 +119,10 @@ DEFAULT_INGEST_FIGURE_MIN_HEIGHT = 100
 DEFAULT_INGEST_FIGURE_VLM_MODEL = "gemini-2.5-flash"
 DEFAULT_INGEST_FIGURE_VLM_TEMPERATURE = 0.1
 DEFAULT_INGEST_FIGURE_VALIDATION_MIN_ENTITY_MATCH = 0.5
+DEFAULT_RETRIEVAL_RUNTIME_MODE = "standard"
+DEFAULT_RETRIEVAL_EMBEDDING_BACKEND = "local_st"
+DEFAULT_RETRIEVAL_REMOTE_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_RETRIEVAL_RERANKER_BACKEND = "local_crossencoder"
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -141,8 +153,18 @@ def _normalized_order(value: Any, fallback: Iterable[str]) -> List[str]:
     return list(fallback)
 
 
+def _has_nested_key(data: Dict[str, Any] | None, *path: str) -> bool:
+    cur: Any = data or {}
+    for part in path:
+        if not isinstance(cur, dict) or part not in cur:
+            return False
+        cur = cur[part]
+    return True
+
+
 def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     """Normalize config shape and enforce baseline defaults."""
+    raw_cfg: Dict[str, Any] = deepcopy(cfg or {})
     out: Dict[str, Any] = deepcopy(cfg or {})
 
     llm_cfg = out.setdefault("llm", {})
@@ -177,12 +199,58 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
         providers_search_cfg.get("query_all_web"),
         False,
     )
+    circuit_breaker_cfg = providers_search_cfg.setdefault("circuit_breaker", {})
+    circuit_breaker_cfg["enabled"] = _to_bool(
+        circuit_breaker_cfg.get("enabled"),
+        DEFAULT_SEARCH_CB_ENABLED,
+    )
+    circuit_breaker_cfg["failure_threshold"] = max(
+        1,
+        int(circuit_breaker_cfg.get("failure_threshold", DEFAULT_SEARCH_CB_FAILURE_THRESHOLD)),
+    )
+    circuit_breaker_cfg["open_ttl_sec"] = float(
+        circuit_breaker_cfg.get("open_ttl_sec", DEFAULT_SEARCH_CB_OPEN_TTL_SEC)
+    )
+    circuit_breaker_cfg["half_open_probe_after_sec"] = float(
+        circuit_breaker_cfg.get(
+            "half_open_probe_after_sec",
+            DEFAULT_SEARCH_CB_HALF_OPEN_PROBE_AFTER_SEC,
+        )
+    )
+    circuit_breaker_cfg["sqlite_path"] = str(
+        circuit_breaker_cfg.get("sqlite_path", DEFAULT_SEARCH_CB_SQLITE_PATH)
+    ).strip() or DEFAULT_SEARCH_CB_SQLITE_PATH
     providers_retrieval_cfg = providers_cfg.setdefault("retrieval", {})
     providers_retrieval_cfg["backend"] = str(
         providers_retrieval_cfg.get("backend", "default_retriever")
     ).strip().lower()
     if not providers_retrieval_cfg["backend"]:
         raise ValueError("providers.retrieval.backend cannot be empty")
+
+    retrieval_cfg = out.setdefault("retrieval", {})
+    runtime_mode = str(
+        retrieval_cfg.get("runtime_mode", DEFAULT_RETRIEVAL_RUNTIME_MODE)
+    ).strip().lower()
+    if runtime_mode not in {"lite", "standard", "heavy"}:
+        runtime_mode = DEFAULT_RETRIEVAL_RUNTIME_MODE
+    retrieval_cfg["runtime_mode"] = runtime_mode
+    embedding_backend = str(retrieval_cfg.get("embedding_backend", "")).strip().lower()
+    if not embedding_backend:
+        embedding_backend = "openai_embedding" if runtime_mode == "lite" else DEFAULT_RETRIEVAL_EMBEDDING_BACKEND
+    if embedding_backend in {"remote", "remote_embedding"}:
+        embedding_backend = "openai_embedding"
+    if embedding_backend not in {"local_st", "openai_embedding", "disabled"}:
+        embedding_backend = DEFAULT_RETRIEVAL_EMBEDDING_BACKEND
+    retrieval_cfg["embedding_backend"] = embedding_backend
+    retrieval_cfg["remote_embedding_model"] = str(
+        retrieval_cfg.get("remote_embedding_model", DEFAULT_RETRIEVAL_REMOTE_EMBEDDING_MODEL)
+    ).strip() or DEFAULT_RETRIEVAL_REMOTE_EMBEDDING_MODEL
+    reranker_backend = str(retrieval_cfg.get("reranker_backend", "")).strip().lower()
+    if not reranker_backend:
+        reranker_backend = "disabled" if runtime_mode == "lite" else DEFAULT_RETRIEVAL_RERANKER_BACKEND
+    if reranker_backend not in {"local_crossencoder", "disabled"}:
+        reranker_backend = DEFAULT_RETRIEVAL_RERANKER_BACKEND
+    retrieval_cfg["reranker_backend"] = reranker_backend
 
     agent_cfg = out.setdefault("agent", {})
     agent_cfg["max_iterations"] = int(agent_cfg.get("max_iterations", DEFAULT_MAX_ITERATIONS))
@@ -288,6 +356,17 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
         experiment_cfg.get("require_human_results"),
         DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS,
     )
+    checkpoint_cfg = agent_cfg.setdefault("checkpointing", {})
+    checkpoint_cfg["enabled"] = _to_bool(
+        checkpoint_cfg.get("enabled"),
+        DEFAULT_CHECKPOINTING_ENABLED,
+    )
+    checkpoint_cfg["backend"] = str(
+        checkpoint_cfg.get("backend", DEFAULT_CHECKPOINTING_BACKEND)
+    ).strip().lower() or DEFAULT_CHECKPOINTING_BACKEND
+    checkpoint_cfg["sqlite_path"] = str(
+        checkpoint_cfg.get("sqlite_path", DEFAULT_CHECKPOINTING_SQLITE_PATH)
+    ).strip() or DEFAULT_CHECKPOINTING_SQLITE_PATH
     evidence_cfg = agent_cfg.setdefault("evidence", {})
     evidence_cfg["min_per_rq"] = max(
         1,
@@ -332,6 +411,10 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     if text_extraction not in {"auto", "latex_first", "marker_only", "pymupdf_only"}:
         text_extraction = DEFAULT_INGEST_TEXT_EXTRACTION
     ingest_cfg["text_extraction"] = text_extraction
+    if runtime_mode == "lite" and not _has_nested_key(raw_cfg, "ingest", "text_extraction"):
+        ingest_cfg["text_extraction"] = "pymupdf_only"
+    elif runtime_mode == "heavy" and not _has_nested_key(raw_cfg, "ingest", "text_extraction"):
+        ingest_cfg["text_extraction"] = "marker_only"
 
     latex_cfg = ingest_cfg.setdefault("latex", {})
     latex_cfg["download_source"] = _to_bool(
@@ -347,6 +430,10 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
         figure_cfg.get("enabled"),
         DEFAULT_INGEST_FIGURE_ENABLED,
     )
+    if runtime_mode == "lite" and not _has_nested_key(raw_cfg, "ingest", "figure", "enabled"):
+        figure_cfg["enabled"] = False
+    elif runtime_mode == "heavy" and not _has_nested_key(raw_cfg, "ingest", "figure", "enabled"):
+        figure_cfg["enabled"] = True
     figure_cfg["image_dir"] = str(
         figure_cfg.get("image_dir", DEFAULT_INGEST_FIGURE_IMAGE_DIR)
     ).strip() or DEFAULT_INGEST_FIGURE_IMAGE_DIR

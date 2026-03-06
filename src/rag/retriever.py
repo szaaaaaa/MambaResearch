@@ -1,33 +1,76 @@
 from __future__ import annotations
 
-from functools import lru_cache
+import re
 from typing import Any, Dict, List
 
-import numpy as np
+from src.rag.embeddings import DEFAULT_BACKEND, DEFAULT_MODEL, embed_text
+from src.rag.reranker_backends import rerank_hits as rerank_hits_with_backend
 
-from src.rag.embeddings import DEFAULT_MODEL, embed_text
+_VISUAL_INTENT_TERMS = {
+    "figure", "fig", "diagram", "architecture", "plot", "chart",
+    "table", "visualization", "illustration", "schematic", "overview",
+    "flowchart", "pipeline", "framework",
+    "图", "图表", "架构图", "流程图", "示意图", "框架图",
+}
+_FORMULA_INTENT_TERMS = {
+    "equation", "formula", "derive", "derivation", "proof",
+    "theorem", "lemma", "corollary", "mathematical",
+    "公式", "方程", "推导", "证明", "定理",
+}
+_VISUAL_FIGURE_BONUS = 0.003
+_FORMULA_MATH_BONUS = 0.002
 
 
-@lru_cache(maxsize=2)
-def _get_reranker(model_name: str):
-    from sentence_transformers import CrossEncoder
+def _detect_query_intent(query: str) -> str:
+    q_lower = str(query or "").lower()
+    tokens = set(re.findall(r"[a-zA-Z\u4e00-\u9fff]+", q_lower))
+    if (tokens & _VISUAL_INTENT_TERMS) or any(term in q_lower for term in _VISUAL_INTENT_TERMS if any("\u4e00" <= ch <= "\u9fff" for ch in term)):
+        return "visual"
+    if (tokens & _FORMULA_INTENT_TERMS) or any(term in q_lower for term in _FORMULA_INTENT_TERMS if any("\u4e00" <= ch <= "\u9fff" for ch in term)):
+        return "formula"
+    return "general"
 
-    return CrossEncoder(model_name)
+
+def _has_math_density(text: str, threshold: float = 0.05) -> bool:
+    if not text:
+        return False
+    math_chars = sum(1 for c in text if c in "$\\^_{}")
+    return (math_chars / max(1, len(text))) > threshold
 
 
-def rerank_hits(query: str, hits: List[Dict[str, Any]], model_name: str) -> List[Dict[str, Any]]:
-    if not hits:
-        return []
-    model = _get_reranker(model_name)
-    pairs = [(query, h["text"]) for h in hits]
-    scores = model.predict(pairs)
-    out: List[Dict[str, Any]] = []
-    for h, s in zip(hits, scores):
-        x = dict(h)
-        x["reranker_score"] = float(s)
-        out.append(x)
-    out.sort(key=lambda x: x["reranker_score"], reverse=True)
-    return out
+def _base_rank_score(hit: Dict[str, Any]) -> float:
+    if "rrf_score" in hit:
+        return float(hit["rrf_score"])
+    if "reranker_score" in hit:
+        return float(hit["reranker_score"])
+    if "distance" in hit:
+        return 1.0 / (1.0 + max(0.0, float(hit["distance"])))
+    if "bm25_score" in hit:
+        return float(hit["bm25_score"])
+    return 0.0
+
+
+def _apply_intent_prior(hits: List[Dict[str, Any]], intent: str) -> List[Dict[str, Any]]:
+    if intent == "general":
+        return hits
+
+    boosted: List[Dict[str, Any]] = []
+    for hit in hits:
+        entry = dict(hit)
+        meta = entry.get("meta", {}) or {}
+        chunk_type = str(meta.get("chunk_type", "text"))
+
+        bonus = 0.0
+        if intent == "visual" and chunk_type == "figure":
+            bonus = _VISUAL_FIGURE_BONUS
+        elif intent == "formula" and _has_math_density(entry.get("text", "")):
+            bonus = _FORMULA_MATH_BONUS
+
+        entry["_intent_score"] = _base_rank_score(entry) + bonus
+        boosted.append(entry)
+
+    boosted.sort(key=lambda x: x.get("_intent_score", 0.0), reverse=True)
+    return boosted
 
 
 def _reciprocal_rank_fusion(
@@ -52,6 +95,47 @@ def _reciprocal_rank_fusion(
     return fused
 
 
+def _collapse_figure_duplicates(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for hit in hits:
+        meta = hit.get("meta", {}) or {}
+        if meta.get("chunk_type") != "figure":
+            out.append(hit)
+            continue
+        figure_key = str(meta.get("figure_id") or meta.get("image_path") or "").strip()
+        if not figure_key:
+            out.append(hit)
+            continue
+        if figure_key in seen:
+            continue
+        seen.add(figure_key)
+        out.append(hit)
+    return out
+
+
+def _ensure_figure_presence(
+    hits: List[Dict[str, Any]],
+    *,
+    top_k: int,
+    min_figure_slots: int = 2,
+) -> List[Dict[str, Any]]:
+    top = list(hits[:top_k])
+    rest = list(hits[top_k:])
+    figure_count = sum(1 for hit in top if (hit.get("meta", {}) or {}).get("chunk_type") == "figure")
+    if figure_count >= min_figure_slots:
+        return hits
+
+    figure_candidates = [hit for hit in rest if (hit.get("meta", {}) or {}).get("chunk_type") == "figure"]
+    needed = max(0, min_figure_slots - figure_count)
+    for fig_hit in figure_candidates[:needed]:
+        for idx in range(len(top) - 1, -1, -1):
+            if (top[idx].get("meta", {}) or {}).get("chunk_type") != "figure":
+                top[idx] = fig_hit
+                break
+    return top + rest
+
+
 class Retriever:
     def __init__(self, chroma_collection, model_name: str = DEFAULT_MODEL):
         self.col = chroma_collection
@@ -67,6 +151,9 @@ class Retriever:
         hybrid: bool = False,
         persist_dir: str | None = None,
         collection_name: str | None = None,
+        embedding_backend_name: str = DEFAULT_BACKEND,
+        reranker_backend_name: str = "local_crossencoder",
+        cfg: Dict[str, Any] | None = None,
     ) -> List[Dict[str, Any]]:
         """Retrieve relevant chunks.
 
@@ -88,7 +175,13 @@ class Retriever:
         n_results = max(top_k, candidate_k or top_k)
 
         # --- Dense retrieval via Chroma ---
-        q_emb = embed_text(query, model_name=self.model_name, is_query=True).tolist()
+        q_emb = embed_text(
+            query,
+            model_name=self.model_name,
+            backend_name=embedding_backend_name,
+            cfg=cfg,
+            is_query=True,
+        ).tolist()
         where = {"doc_id": {"$in": list(allowed_doc_ids)}} if allowed_doc_ids else None
 
         try:
@@ -167,8 +260,19 @@ class Retriever:
         else:
             out = dense_hits
 
+        intent = _detect_query_intent(query)
+        if intent != "general":
+            out = _apply_intent_prior(out, intent)
         if reranker_model:
-            out = rerank_hits(query, out, reranker_model)
+            out = rerank_hits_with_backend(
+                query,
+                out,
+                model_name=reranker_model,
+                backend_name=reranker_backend_name,
+            )
+        out = _collapse_figure_duplicates(out)
+        if intent == "visual":
+            out = _ensure_figure_presence(out, top_k=top_k)
         return out[:top_k]
 
 
@@ -183,6 +287,9 @@ def retrieve(
     reranker_model: str | None = None,
     allowed_doc_ids: list[str] | None = None,
     hybrid: bool = False,
+    embedding_backend_name: str = DEFAULT_BACKEND,
+    reranker_backend_name: str = "local_crossencoder",
+    cfg: Dict[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     import chromadb
 
@@ -197,4 +304,7 @@ def retrieve(
         hybrid=hybrid,
         persist_dir=persist_dir,
         collection_name=collection_name,
+        embedding_backend_name=embedding_backend_name,
+        reranker_backend_name=reranker_backend_name,
+        cfg=cfg,
     )

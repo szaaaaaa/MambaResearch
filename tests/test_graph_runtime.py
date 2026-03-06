@@ -33,7 +33,7 @@ def _import_graph_module():
             def add_conditional_edges(self, *args, **kwargs):
                 return None
 
-            def compile(self):
+            def compile(self, **kwargs):
                 return self
 
         fake_graph.END = "__end__"
@@ -104,14 +104,16 @@ class GraphRuntimeTest(unittest.TestCase):
                 calls["conditional"].append((node, mapping))
                 return None
 
-            def compile(self):
+            def compile(self, **kwargs):
+                calls["compile_kwargs"] = kwargs
                 return self
 
         with patch("src.agent.graph.StateGraph", _RecordingGraph):
             with patch("src.agent.graph.instrument_node", side_effect=lambda name, fn: fn):
-                built = graph.build_graph()
+                built = graph.build_graph(checkpointer="cp")
 
         self.assertIsInstance(built, _RecordingGraph)
+        self.assertEqual(calls["compile_kwargs"], {"checkpointer": "cp"})
         self.assertEqual(calls["entry"], "plan_research")
         self.assertIn("recommend_experiments", calls["nodes"])
         self.assertIn("ingest_experiment_results", calls["nodes"])
@@ -142,19 +144,22 @@ class GraphRuntimeTest(unittest.TestCase):
         captured = {}
 
         class _DummyApp:
-            def invoke(self, state):
+            def invoke(self, state, config=None):
                 captured["state"] = state
+                captured["config"] = config
                 return {"final": True, "run_id": state["run_id"]}
 
         cfg = {"agent": {"max_iterations": 4}, "sources": {"arxiv": {"enabled": True}}}
 
         with patch("src.agent.graph.build_graph", return_value=_DummyApp()):
-            with patch("src.agent.graph.normalize_and_validate_config", side_effect=lambda x: dict(x)):
-                with patch("src.agent.graph.uuid.uuid4", return_value="fixed-run-id"):
-                    out = graph.run_research(topic="test-topic", cfg=cfg, root=".")
+            with patch("src.agent.graph.build_checkpointer", return_value=None):
+                with patch("src.agent.graph.normalize_and_validate_config", side_effect=lambda x: dict(x)):
+                    with patch("src.agent.graph.uuid.uuid4", return_value="fixed-run-id"):
+                        out = graph.run_research(topic="test-topic", cfg=cfg, root=".")
 
         self.assertEqual(out, {"final": True, "run_id": "fixed-run-id"})
         state = captured["state"]
+        self.assertEqual(captured["config"], {"configurable": {"thread_id": "fixed-run-id"}})
         self.assertEqual(state["topic"], "test-topic")
         self.assertEqual(state["max_iterations"], 4)
         self.assertEqual(state["run_id"], "fixed-run-id")
@@ -168,6 +173,31 @@ class GraphRuntimeTest(unittest.TestCase):
         self.assertEqual(state["_cfg"]["_run_id"], "fixed-run-id")
         self.assertEqual(Path(state["_cfg"]["_root"]), Path(".").resolve())
         self.assertIn("_budget_guard", state["_cfg"])
+
+    def test_run_research_resume_uses_checkpoint_thread_id(self) -> None:
+        captured = {}
+
+        class _DummyApp:
+            def invoke(self, state, config=None):
+                captured["state"] = state
+                captured["config"] = config
+                return {"final": True, "run_id": config["configurable"]["thread_id"]}
+
+        cfg = {"agent": {"max_iterations": 2, "checkpointing": {"enabled": True}}}
+
+        with patch("src.agent.graph.build_graph", return_value=_DummyApp()):
+            with patch("src.agent.graph.build_checkpointer", return_value="cp"):
+                with patch("src.agent.graph.normalize_and_validate_config", side_effect=lambda x: dict(x)):
+                    out = graph.run_research(
+                        topic="test-topic",
+                        cfg=cfg,
+                        root=".",
+                        resume_run_id="resume-run-id",
+                    )
+
+        self.assertEqual(out, {"final": True, "run_id": "resume-run-id"})
+        self.assertIsNone(captured["state"])
+        self.assertEqual(captured["config"], {"configurable": {"thread_id": "resume-run-id"}})
 
 
 if __name__ == "__main__":

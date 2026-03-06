@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from scripts.run_agent import _git_commit_hash, _resolve_cfg_paths, _resolve_run_seed
+from scripts.run_agent import _git_commit_hash, _resolve_cfg_paths, _resolve_run_seed, parse_args
 
 
 class RunAgentUtilsTest(unittest.TestCase):
@@ -34,6 +35,17 @@ class RunAgentUtilsTest(unittest.TestCase):
             self.assertEqual(_git_commit_hash(Path(".")), "abc123")
         with patch("scripts.run_agent.subprocess.run", side_effect=RuntimeError("x")):
             self.assertIsNone(_git_commit_hash(Path(".")))
+
+    def test_parse_args_accepts_resume_without_topic(self) -> None:
+        with patch.object(sys, "argv", ["run_agent.py", "--resume-run-id", "run-123"]):
+            args = parse_args()
+        self.assertIsNone(args.topic)
+        self.assertEqual(args.resume_run_id, "run-123")
+
+    def test_parse_args_requires_topic_or_resume(self) -> None:
+        with patch.object(sys, "argv", ["run_agent.py"]):
+            with self.assertRaises(SystemExit):
+                parse_args()
 
 
 if __name__ == "__main__":

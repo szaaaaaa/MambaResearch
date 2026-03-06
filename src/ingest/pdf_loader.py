@@ -13,6 +13,7 @@ class LoadedPDF:
     pdf_path: str
     text: str
     num_pages: int
+    page_texts: dict[int, str] | None = None
 
 
 def load_pdf_text(
@@ -35,12 +36,15 @@ def load_pdf_text(
         end = n if max_pages is None else min(n, max_pages)
 
         parts: list[str] = []
+        page_texts: dict[int, str] = {}
         for i in range(end):
             page = doc.load_page(i)
-            parts.append(page.get_text("text"))
+            page_text = page.get_text("text")
+            parts.append(page_text)
+            page_texts[i + 1] = page_text.strip()
 
         text = "\n".join(parts).strip()
-        return LoadedPDF(pdf_path=str(p), text=text, num_pages=n)
+        return LoadedPDF(pdf_path=str(p), text=text, num_pages=n, page_texts=page_texts)
     finally:
         doc.close()
 
@@ -64,4 +68,4 @@ def _load_with_marker(pdf_path: str, max_pages: Optional[int] = None) -> LoadedP
     converter = PdfConverter(artifact_dict=create_model_dict())
     rendered = converter(str(pdf_path), page_range=(0, max_pages) if max_pages is not None else None)
     text, _, _ = text_from_rendered(rendered)
-    return LoadedPDF(pdf_path=pdf_path, text=(text or "").strip(), num_pages=total_pages)
+    return LoadedPDF(pdf_path=pdf_path, text=(text or "").strip(), num_pages=total_pages, page_texts=None)

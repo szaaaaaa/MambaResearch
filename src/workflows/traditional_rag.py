@@ -14,6 +14,9 @@ from src.common.rag_config import (
     ingest_figure_vlm_temperature,
     ingest_latex_source_dir,
     ingest_text_extraction,
+    retrieval_effective_embedding_model,
+    retrieval_embedding_backend,
+    retrieval_reranker_backend,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +85,7 @@ def index_pdfs(
     single_doc_id: str | None = None,
     run_id: str = "",
     embedding_model: str = "all-MiniLM-L6-v2",
+    embedding_backend: str | None = None,
     build_bm25: bool = False,
     root: Path | None = None,
     cfg: Dict[str, Any] | None = None,
@@ -99,6 +103,8 @@ def index_pdfs(
 
     cfg = cfg or {}
     root = root or Path(".").resolve()
+    embedding_backend = embedding_backend or retrieval_embedding_backend(cfg)
+    effective_embedding_model = retrieval_effective_embedding_model(cfg, embedding_model)
     rows: List[Dict[str, Any]] = []
     indexed_docs: List[str] = []
     total_chunks = 0
@@ -162,7 +168,11 @@ def index_pdfs(
                 if parsed is not None and parsed.figures:
                     contexts = build_figure_contexts_from_latex(parsed.figures, extracted)
                 else:
-                    contexts = build_figure_contexts_from_text(text_source, extracted)
+                    contexts = build_figure_contexts_from_text(
+                        text_source,
+                        extracted,
+                        page_texts=loaded.page_texts,
+                    )
                 figure_data = process_figures(
                     figure_contexts=contexts,
                     paper_title=doc_id,
@@ -185,8 +195,10 @@ def index_pdfs(
             chunks=all_chunks,
             doc_id=doc_id,
             run_id=run_id,
-            embedding_model=embedding_model,
+            embedding_model=effective_embedding_model,
+            embedding_backend=embedding_backend,
             build_bm25=build_bm25,
+            cfg=cfg,
         )
 
         rows.append(
@@ -219,7 +231,7 @@ def _resolve_latex_source(*, doc_id: str, source_dir: Path) -> ArxivSource | Non
     tex_files = sorted(p for p in base_dir.rglob("*.tex") if p.is_file())
     if not tex_files:
         return None
-    from src.ingest.latex_loader import _pick_main_tex
+    from src.ingest.latex_loader import ArxivSource, _pick_main_tex
 
     image_files = sorted(p for p in base_dir.rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf", ".eps"})
     return ArxivSource(
@@ -243,11 +255,13 @@ def answer_question(
     reranker_model: str | None = None,
     embedding_model: str = "all-MiniLM-L6-v2",
     hybrid: bool = False,
+    cfg: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     from src.rag.answerer import answer_with_openai_chat
     from src.rag.cite_prompt import build_cited_prompt
     from src.rag.retriever import retrieve
 
+    cfg = cfg or {}
     hits = retrieve(
         persist_dir=persist_dir,
         collection_name=collection_name,
@@ -255,8 +269,11 @@ def answer_question(
         top_k=top_k,
         candidate_k=candidate_k,
         reranker_model=reranker_model,
-        model_name=embedding_model,
+        model_name=retrieval_effective_embedding_model(cfg, embedding_model),
         hybrid=hybrid,
+        embedding_backend_name=retrieval_embedding_backend(cfg),
+        reranker_backend_name=retrieval_reranker_backend(cfg),
+        cfg=cfg,
     )
     prompt = build_cited_prompt(question=question, hits=hits)
     answer = answer_with_openai_chat(prompt=prompt, model=model, temperature=temperature)

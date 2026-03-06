@@ -13,6 +13,7 @@ from src.agent.infra.indexing.chroma_indexing import (
     upsert_run_doc_records,
     upsert_run_session_record,
 )
+from src.common.rag_config import retrieval_effective_embedding_model, retrieval_embedding_backend
 
 
 class IndexExecutor:
@@ -53,7 +54,11 @@ class IndexExecutor:
                     chunk_size=int(params["chunk_size"]),
                     overlap=int(params["overlap"]),
                     run_id=str(params.get("run_id", "")),
-                    embedding_model=str(retrieval_cfg.get("embedding_model", "all-MiniLM-L6-v2")),
+                    embedding_model=retrieval_effective_embedding_model(
+                        cfg,
+                        str(retrieval_cfg.get("embedding_model", "all-MiniLM-L6-v2")),
+                    ),
+                    embedding_backend=retrieval_embedding_backend(cfg),
                     build_bm25=bool(retrieval_cfg.get("hybrid", False)),
                     root=Path(str(cfg.get("_root", "."))),
                     cfg=cfg,
@@ -76,8 +81,13 @@ class IndexExecutor:
                     chunks=list(params.get("chunks", [])),
                     doc_id=str(params["doc_id"]),
                     run_id=str(params.get("run_id", "")),
-                    embedding_model=str(retrieval_cfg.get("embedding_model", "all-MiniLM-L6-v2")),
+                    embedding_model=retrieval_effective_embedding_model(
+                        cfg,
+                        str(retrieval_cfg.get("embedding_model", "all-MiniLM-L6-v2")),
+                    ),
+                    embedding_backend=retrieval_embedding_backend(cfg),
                     build_bm25=bool(retrieval_cfg.get("hybrid", False)),
+                    cfg=cfg,
                 )
                 return TaskResult(success=True, data={"ok": True})
 

@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".pdf", ".eps")
 _DISPLAY_MATH_ENVS = ("equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*")
+_INLINE_MATH_RE = re.compile(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", re.DOTALL)
+_MATH_COMMANDS = {
+    "sqrt", "frac", "sum", "prod", "int", "partial",
+    "cdot", "times", "div", "pm", "mp", "leq", "geq",
+    "alpha", "beta", "gamma", "delta", "epsilon",
+    "theta", "lambda", "mu", "sigma", "omega", "pi",
+    "log", "exp", "sin", "cos", "tan", "max", "min",
+    "inf", "sup", "lim", "mathbb", "mathcal", "mathbf",
+    "text", "mathrm", "operatorname", "left", "right",
+}
 
 
 @dataclass
@@ -270,9 +280,14 @@ def _find_ref_contexts(body: str, label: str) -> List[str]:
 
 def _latex_to_markdown(text: str) -> str:
     out = text
-    out = re.sub(r"\\section\*?\{([^}]+)\}", lambda m: f"\n## {m.group(1).strip()}\n", out)
-    out = re.sub(r"\\subsection\*?\{([^}]+)\}", lambda m: f"\n### {m.group(1).strip()}\n", out)
-    out = re.sub(r"\\subsubsection\*?\{([^}]+)\}", lambda m: f"\n#### {m.group(1).strip()}\n", out)
+
+    inline_math: List[str] = []
+
+    def _protect_inline_math(match: re.Match[str]) -> str:
+        inline_math.append(match.group(0))
+        return f"\x00MATH{len(inline_math) - 1}\x00"
+
+    out = _INLINE_MATH_RE.sub(_protect_inline_math, out)
 
     for env in _DISPLAY_MATH_ENVS:
         out = re.sub(
@@ -282,6 +297,16 @@ def _latex_to_markdown(text: str) -> str:
             flags=re.DOTALL,
         )
 
+    display_math: List[str] = []
+
+    def _protect_display_math(match: re.Match[str]) -> str:
+        display_math.append(match.group(0))
+        return f"\x00DMATH{len(display_math) - 1}\x00"
+
+    out = re.sub(r"\$\$\n.*?\n\$\$", _protect_display_math, out, flags=re.DOTALL)
+    out = re.sub(r"\\section\*?\{([^}]+)\}", lambda m: f"\n## {m.group(1).strip()}\n", out)
+    out = re.sub(r"\\subsection\*?\{([^}]+)\}", lambda m: f"\n### {m.group(1).strip()}\n", out)
+    out = re.sub(r"\\subsubsection\*?\{([^}]+)\}", lambda m: f"\n#### {m.group(1).strip()}\n", out)
     out = re.sub(
         r"\\begin\{table\*?\}(.*?)\\end\{table\*?\}",
         lambda m: "\n" + _table_env_to_markdown(m.group(1)) + "\n",
@@ -297,14 +322,19 @@ def _latex_to_markdown(text: str) -> str:
     out = re.sub(r"\\[A-Za-z]+\*?(?:\[[^\]]*\])?", "", out)
     out = out.replace("~", " ")
     out = re.sub(r"\{([^{}]+)\}", r"\1", out)
+    for idx, span in enumerate(display_math):
+        out = out.replace(f"\x00DMATH{idx}\x00", span)
+    for idx, span in enumerate(inline_math):
+        out = out.replace(f"\x00MATH{idx}\x00", span)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
 
 
 def _normalize_display_math(content: str) -> str:
     out = content.strip()
-    out = out.replace("&", " ")
+    out = re.sub(r"\s*&\s*", " ", out)
     out = out.replace("\\\\", "\n")
+    out = re.sub(r"\\(?:nonumber|notag)\b", "", out)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
@@ -331,6 +361,29 @@ def _table_env_to_markdown(block: str) -> str:
 
 
 def _latex_inline_to_text(text: str) -> str:
-    out = re.sub(r"\\[A-Za-z]+\*?(?:\[[^\]]*\])?\{([^}]*)\}", r"\1", text)
-    out = out.replace("{", "").replace("}", "")
+    math_spans: List[str] = []
+
+    def _protect(match: re.Match[str]) -> str:
+        math_spans.append(match.group(0))
+        return f"\x00M{len(math_spans) - 1}\x00"
+
+    out = _INLINE_MATH_RE.sub(_protect, text)
+
+    def _replace_braced_command(match: re.Match[str]) -> str:
+        cmd = match.group(1)
+        arg = match.group(2) or ""
+        if cmd in _MATH_COMMANDS:
+            return match.group(0)
+        return arg
+
+    out = re.sub(r"\\([A-Za-z]+)\*?(?:\[[^\]]*\])?\{([^}]*)\}", _replace_braced_command, out)
+    out = re.sub(
+        r"\\([A-Za-z]+)\*?(?:\[[^\]]*\])?",
+        lambda m: m.group(0) if m.group(1) in _MATH_COMMANDS else "",
+        out,
+    )
+    out = out.replace("~", " ")
+    out = re.sub(r"(?<!\\)[{}]", "", out)
+    for idx, span in enumerate(math_spans):
+        out = out.replace(f"\x00M{idx}\x00", span)
     return re.sub(r"\s+", " ", out).strip()

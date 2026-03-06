@@ -32,16 +32,30 @@ class CoreConfigTest(unittest.TestCase):
         self.assertTrue(out["agent"]["claim_alignment"]["enabled"])
         self.assertAlmostEqual(out["agent"]["claim_alignment"]["min_rq_relevance"], 0.2, places=6)
         self.assertEqual(out["agent"]["claim_alignment"]["anchor_terms_max"], 4)
+        self.assertIn("checkpointing", out["agent"])
+        self.assertTrue(out["agent"]["checkpointing"]["enabled"])
+        self.assertEqual(out["agent"]["checkpointing"]["backend"], "sqlite")
+        self.assertEqual(
+            out["agent"]["checkpointing"]["sqlite_path"],
+            "data/runtime/langgraph_checkpoints.sqlite",
+        )
         self.assertIn("budget_guard", out)
         self.assertIn("max_tokens", out["budget_guard"])
         self.assertIn("max_api_calls", out["budget_guard"])
         self.assertIn("max_wall_time_sec", out["budget_guard"])
+        self.assertIn("circuit_breaker", out["providers"]["search"])
+        self.assertTrue(out["providers"]["search"]["circuit_breaker"]["enabled"])
+        self.assertEqual(out["providers"]["search"]["circuit_breaker"]["failure_threshold"], 3)
         self.assertIn("pdf_download", out["sources"])
         self.assertTrue(out["sources"]["pdf_download"]["only_allowed_hosts"])
         self.assertIsInstance(out["sources"]["pdf_download"]["allowed_hosts"], list)
         self.assertGreater(len(out["sources"]["pdf_download"]["allowed_hosts"]), 0)
         self.assertGreater(out["sources"]["pdf_download"]["forbidden_host_ttl_sec"], 0.0)
         self.assertIn("ingest", out)
+        self.assertEqual(out["retrieval"]["runtime_mode"], "standard")
+        self.assertEqual(out["retrieval"]["embedding_backend"], "local_st")
+        self.assertEqual(out["retrieval"]["remote_embedding_model"], "text-embedding-3-small")
+        self.assertEqual(out["retrieval"]["reranker_backend"], "local_crossencoder")
         self.assertEqual(out["ingest"]["text_extraction"], "auto")
         self.assertTrue(out["ingest"]["latex"]["download_source"])
         self.assertTrue(out["ingest"]["figure"]["enabled"])
@@ -136,6 +150,39 @@ class CoreConfigTest(unittest.TestCase):
         self.assertAlmostEqual(claim_align["min_rq_relevance"], 0.35, places=6)
         self.assertEqual(claim_align["anchor_terms_max"], 6)
 
+    def test_checkpoint_and_circuit_breaker_config_normalized(self) -> None:
+        out = normalize_and_validate_config(
+            {
+                "agent": {
+                    "checkpointing": {
+                        "enabled": "0",
+                        "backend": " SQLITE ",
+                        "sqlite_path": " custom/runtime.sqlite ",
+                    }
+                },
+                "providers": {
+                    "search": {
+                        "circuit_breaker": {
+                            "enabled": "yes",
+                            "failure_threshold": "5",
+                            "open_ttl_sec": "120",
+                            "half_open_probe_after_sec": "45",
+                            "sqlite_path": " custom/provider.sqlite ",
+                        }
+                    }
+                },
+            }
+        )
+        self.assertFalse(out["agent"]["checkpointing"]["enabled"])
+        self.assertEqual(out["agent"]["checkpointing"]["backend"], "sqlite")
+        self.assertEqual(out["agent"]["checkpointing"]["sqlite_path"], "custom/runtime.sqlite")
+        breaker = out["providers"]["search"]["circuit_breaker"]
+        self.assertTrue(breaker["enabled"])
+        self.assertEqual(breaker["failure_threshold"], 5)
+        self.assertAlmostEqual(breaker["open_ttl_sec"], 120.0, places=6)
+        self.assertAlmostEqual(breaker["half_open_probe_after_sec"], 45.0, places=6)
+        self.assertEqual(breaker["sqlite_path"], "custom/provider.sqlite")
+
     def test_topic_filter_anchor_config_normalized(self) -> None:
         out = normalize_and_validate_config(
             {
@@ -202,6 +249,35 @@ class CoreConfigTest(unittest.TestCase):
         self.assertEqual(ingest_cfg["figure"]["vlm_model"], "gemini-2.0-flash")
         self.assertAlmostEqual(ingest_cfg["figure"]["vlm_temperature"], 0.25, places=6)
         self.assertAlmostEqual(ingest_cfg["figure"]["validation_min_entity_match"], 0.75, places=6)
+
+    def test_lite_runtime_mode_applies_lightweight_defaults(self) -> None:
+        out = normalize_and_validate_config({"retrieval": {"runtime_mode": "lite"}})
+
+        self.assertEqual(out["retrieval"]["runtime_mode"], "lite")
+        self.assertEqual(out["retrieval"]["embedding_backend"], "openai_embedding")
+        self.assertEqual(out["retrieval"]["reranker_backend"], "disabled")
+        self.assertEqual(out["ingest"]["text_extraction"], "pymupdf_only")
+        self.assertFalse(out["ingest"]["figure"]["enabled"])
+
+    def test_runtime_mode_respects_explicit_overrides(self) -> None:
+        out = normalize_and_validate_config(
+            {
+                "retrieval": {
+                    "runtime_mode": "lite",
+                    "embedding_backend": "local_st",
+                    "reranker_backend": "local_crossencoder",
+                },
+                "ingest": {
+                    "text_extraction": "auto",
+                    "figure": {"enabled": True},
+                },
+            }
+        )
+
+        self.assertEqual(out["retrieval"]["embedding_backend"], "local_st")
+        self.assertEqual(out["retrieval"]["reranker_backend"], "local_crossencoder")
+        self.assertEqual(out["ingest"]["text_extraction"], "auto")
+        self.assertTrue(out["ingest"]["figure"]["enabled"])
 
 
 if __name__ == "__main__":

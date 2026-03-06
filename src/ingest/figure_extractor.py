@@ -14,6 +14,11 @@ from src.ingest.latex_loader import ArxivSource, LatexFigure
 
 logger = logging.getLogger(__name__)
 
+_MAX_CAPTION_CHARS = 500
+_MAX_CAPTION_SENTENCES = 3
+_MAX_CONTEXT_CHARS = 800
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
 
 @dataclass
 class ExtractedFigure:
@@ -175,8 +180,8 @@ def build_figure_contexts_from_latex(
 def build_figure_contexts_from_text(
     full_text: str,
     extracted: List[ExtractedFigure],
+    page_texts: dict[int, str] | None = None,
 ) -> List[FigureContext]:
-    captions = _extract_captions(full_text)
     extracted_sorted = sorted(
         extracted,
         key=lambda item: (item.page_number if item.page_number is not None else 10**9, item.figure_id),
@@ -184,14 +189,19 @@ def build_figure_contexts_from_text(
 
     contexts: List[FigureContext] = []
     for idx, figure in enumerate(extracted_sorted, start=1):
-        caption = captions.get(idx, "")
+        page_text = page_texts.get(figure.page_number, "") if page_texts and figure.page_number is not None else ""
+        local_captions = _extract_captions(page_text) if page_text else {}
+        global_captions = _extract_captions(full_text)
+        caption = local_captions.get(idx) or global_captions.get(idx, "")
         ref_patterns = [
             rf"\bFigure\s+{idx}\b",
             rf"\bFig\.\s*{idx}\b",
             rf"\bfigure\s+{idx}\b",
             rf"\bfig\.\s*{idx}\b",
         ]
-        paragraphs = _extract_reference_paragraphs(full_text, ref_patterns)
+        paragraphs = _extract_reference_paragraphs(page_text, ref_patterns) if page_text else []
+        if not paragraphs:
+            paragraphs = _extract_reference_paragraphs(full_text, ref_patterns)
         contexts.append(
             FigureContext(
                 figure_id=figure.figure_id,
@@ -205,29 +215,76 @@ def build_figure_contexts_from_text(
 
 
 def _extract_captions(full_text: str) -> dict[int, str]:
-    pattern = re.compile(
-        r"(?is)(?:^|\n)\s*(?:Figure|Fig\.)\s*(\d+)\s*[:.]\s*(.+?)(?=\n\s*\n|\n\s*(?:Figure|Fig\.|Table)\s*\d+\s*[:.]|$)"
-    )
+    pattern = re.compile(r"(?im)(?:^|\n)\s*(?:Figure|Fig\.)\s*(\d+)\s*[:.]\s*")
     out: dict[int, str] = {}
     for match in pattern.finditer(full_text):
-        out[int(match.group(1))] = re.sub(r"\s+", " ", match.group(2)).strip()
+        fig_num = int(match.group(1))
+        caption = _truncate_caption(full_text[match.end(): match.end() + _MAX_CAPTION_CHARS])
+        if caption:
+            out[fig_num] = caption
     return out
 
 
 def _extract_reference_paragraphs(full_text: str, patterns: List[str]) -> List[str]:
     out: List[str] = []
-    seen = set()
-    for paragraph in re.split(r"\n\s*\n", full_text):
-        normalized = re.sub(r"\s+", " ", paragraph).strip()
-        if not normalized:
+    seen: set[str] = set()
+    total_chars = 0
+    sentences = _split_sentences(full_text)
+    for idx, sentence in enumerate(sentences):
+        if not any(re.search(pattern, sentence) for pattern in patterns):
             continue
-        if any(re.search(pattern, normalized) for pattern in patterns):
-            key = normalized.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(normalized)
+        window: List[str] = []
+        if idx > 0:
+            window.append(sentences[idx - 1])
+        window.append(sentence)
+        if idx + 1 < len(sentences):
+            window.append(sentences[idx + 1])
+        snippet = _clean_snippet(" ".join(window))
+        if not snippet:
+            continue
+        key = snippet.lower()
+        if key in seen:
+            continue
+        if total_chars + len(snippet) > _MAX_CONTEXT_CHARS:
+            break
+        seen.add(key)
+        out.append(snippet)
+        total_chars += len(snippet)
     return out
+
+
+def _truncate_caption(window: str) -> str:
+    if not window:
+        return ""
+    end = len(window)
+    terminators = [
+        r"\n\s*\n",
+        r"\n\s*(?:Figure|Fig\.|Table)\s*\d+\s*[:.)]",
+        r"\n\s*(?:\\section|##\s)",
+        r"\n\s*[A-Z][A-Z ]{5,}\n",
+        r"\n\s*(?:[A-Z][a-z]+(?:\s+(?:and|of|the|for|to|in|on|with|[A-Z][a-z]+))+)\s*\n\s*\n",
+    ]
+    for term in terminators:
+        match = re.search(term, window)
+        if match and match.start() < end:
+            end = match.start()
+    text = _clean_snippet(window[:end])
+    if not text:
+        return ""
+    sentences = _split_sentences(text)
+    if len(sentences) > _MAX_CAPTION_SENTENCES:
+        text = " ".join(sentences[:_MAX_CAPTION_SENTENCES])
+    return _clean_snippet(text)
+
+
+def _split_sentences(text: str) -> List[str]:
+    normalized = text.replace("\r\n", "\n")
+    normalized = re.sub(r"(?<![.!?])\n+", " ", normalized)
+    return [_clean_snippet(part) for part in _SENTENCE_SPLIT_RE.split(normalized) if _clean_snippet(part)]
+
+
+def _clean_snippet(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
 
 
 def _resolve_latex_image_path(source: ArxivSource, image_ref: str) -> Path | None:
