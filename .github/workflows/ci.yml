@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  quality-gate:
+  core-ci:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,16 +24,49 @@ jobs:
           pip install -e . --no-deps
           pip install pyyaml requests
 
-      - name: Unit Tests
-        run: python -m unittest discover -s tests -v
+      - name: Core Unit Tests
+        run: |
+          python -m unittest -v \
+            tests.test_budget_guard \
+            tests.test_checkpointing \
+            tests.test_circuit_breaker \
+            tests.test_core_config \
+            tests.test_core_events \
+            tests.test_core_evidence \
+            tests.test_core_experiment_helpers \
+            tests.test_core_query_planning \
+            tests.test_core_report_helpers \
+            tests.test_core_schemas \
+            tests.test_core_source_ranking \
+            tests.test_core_topic_filter \
+            tests.test_default_search_circuit_breaker \
+            tests.test_default_search_pdf_policy \
+            tests.test_executor \
+            tests.test_experiment_integration \
+            tests.test_experiment_prompts \
+            tests.test_factories_and_providers \
+            tests.test_failure_router \
+            tests.test_gemini_llm_backend \
+            tests.test_graph_runtime \
+            tests.test_nodes_flow \
+            tests.test_nodes_helpers \
+            tests.test_phase3_contracts \
+            tests.test_recommend_experiments \
+            tests.test_reference_utils \
+            tests.test_registry \
+            tests.test_run_agent_utils \
+            tests.test_runtime_modes \
+            tests.test_secret_redaction \
+            tests.test_stage_analysis \
+            tests.test_stage_evaluation \
+            tests.test_stage_experiments \
+            tests.test_stage_indexing \
+            tests.test_stage_planning \
+            tests.test_stage_reporting \
+            tests.test_stage_retrieval \
+            tests.test_stage_synthesis \
+            tests.test_state_access \
+            tests.test_state_accumulation
 
       - name: Smoke Test
         run: python -m scripts.smoke_test
-
-      - name: Validation Gate
-        run: |
-          python -m scripts.validate_run_outputs \
-            --state tests/fixtures/validation/pass_state.json \
-            --report tests/fixtures/validation/pass_report.md \
-            --strict \
-            --require-critic-pass

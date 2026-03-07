@@ -212,13 +212,13 @@ def _import_run_research():
         def add_conditional_edges(self, src, router, mapping):
             self._conditional[src] = (router, mapping)
 
-        def compile(self):
+        def compile(self, **_kwargs):
             graph = self
 
             class _CompiledGraph:
-                def invoke(self, state):
+                def invoke(self, state, config=None):
                     cur = graph._entry
-                    st = dict(state)
+                    st = dict(state or {})
                     append_fields = {
                         "papers",
                         "indexed_paper_ids",

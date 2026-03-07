@@ -22,6 +22,10 @@ data/
 outputs/
 logs/
 *.log
+.pytest_cache/
+.tmp/
+tests/.tmp_*/
+tests/.tmp_*.sqlite
 
 # Local DB / index artifacts
 *.sqlite

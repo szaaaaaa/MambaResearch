@@ -1,0 +1,47 @@
+name: Research Quality
+
+on:
+  workflow_dispatch:
+
+jobs:
+  research-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e . --no-deps
+          pip install pyyaml requests numpy pymupdf
+
+      - name: Research Quality Tests
+        run: |
+          python -m unittest -v \
+            tests.test_citation_validator \
+            tests.test_claim_extractor \
+            tests.test_experiment_reviewer \
+            tests.test_retrieval_reviewer \
+            tests.test_retriever_intent \
+            tests.test_tracing \
+            tests.test_validate_run_outputs \
+            tests.test_figure_captioner \
+            tests.test_figure_extractor \
+            tests.test_pdf_loader_marker \
+            tests.test_latex_loader
+
+      - name: Validation Gate
+        run: |
+          python -m scripts.validate_run_outputs \
+            --state tests/fixtures/validation/pass_state.json \
+            --report tests/fixtures/validation/pass_report.md \
+            --strict \
+            --require-critic-pass
