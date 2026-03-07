@@ -272,11 +272,9 @@ def main() -> None:
         "sources_enabled": enabled,
         "timestamp": datetime.now().isoformat(),
     }
-    state_path = out_dir / f"research_state_{tag}.json"
-    state_path.write_text(json.dumps(state_export, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("State saved: %s", state_path)
     run_state_path = run_dir / "research_state.json"
     run_state_path.write_text(json.dumps(state_export, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("State saved: %s", run_state_path)
 
     metrics_payload = {
         "acceptance_metrics": sget(final_state, "acceptance_metrics", {}),

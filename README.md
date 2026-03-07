@@ -734,7 +734,6 @@ Each agent run produces a timestamped directory `outputs/run_<timestamp>/`:
 Convenience copies are also written to `outputs/`:
 
 - `research_report_<timestamp>.md`
-- `research_state_<timestamp>.json`
 
 ---
 

@@ -137,6 +137,19 @@ class ValidateRunOutputsTest(unittest.TestCase):
             found = v._infer_report_path_from_state_path(s)
         self.assertEqual(found, expected)
 
+    def test_main_accepts_run_scoped_state_path(self) -> None:
+        state = self._minimal_state()
+        report = "## Intro\n\n## Methods\n\n## References\n1. A https://arxiv.org/abs/1\n"
+        state_path = Path("outputs/run_20260220_170014/research_state.json")
+        report_path = Path("outputs/run_20260220_170014/research_report.md")
+
+        with patch("pathlib.Path.exists", return_value=True), patch.object(
+            v, "_read_json", return_value=state
+        ), patch.object(v, "_read_text", return_value=report):
+            code = v.main(["--state", str(state_path), "--report", str(report_path)])
+
+        self.assertEqual(code, 0)
+
     def test_main_exit_codes(self) -> None:
         state = self._minimal_state()
         state["report_critic"] = {"pass": False, "issues": ["claim_evidence_mapping_weak"]}

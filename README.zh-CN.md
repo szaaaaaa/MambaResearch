@@ -756,7 +756,6 @@ budget_guard:
 同时在 `outputs/` 下生成便捷副本：
 
 - `research_report_<timestamp>.md`
-- `research_state_<timestamp>.json`
 
 ---
 

@@ -14,10 +14,10 @@ python -m scripts.run_agent --topic "retrieval augmented generation" --max_iter 
 ```
 
 检查项（全部通过才进入下一步）：
-- 生成 `outputs/research_report_*.md`
-- 生成 `outputs/research_state_*.json`
-- `research_state_*.json` 中 `iterations >= 1`
-- `research_state_*.json` 中 `sources_enabled` 符合预期
+- 生成 `outputs/run_*/research_report.md`
+- 生成 `outputs/run_*/research_state.json`
+- `research_state.json` 中 `iterations >= 1`
+- `research_state.json` 中 `sources_enabled` 符合预期
 
 ## 4. 准确性测试（已知答案题集）
 准备 5-10 个你熟悉的主题，每题运行一次：

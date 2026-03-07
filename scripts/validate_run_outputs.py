@@ -566,8 +566,16 @@ def _format_human_report(result: Dict[str, Any], state_path: Path, report_path: 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Validate research run outputs against acceptance checklist.")
-    p.add_argument("--state", required=True, help="Path to research_state_*.json")
-    p.add_argument("--report", default=None, help="Path to research_report_*.md (optional)")
+    p.add_argument(
+        "--state",
+        required=True,
+        help="Path to run-scoped research_state.json (or legacy research_state_*.json)",
+    )
+    p.add_argument(
+        "--report",
+        default=None,
+        help="Path to run-scoped research_report.md (or legacy research_report_*.md)",
+    )
     p.add_argument("--json", action="store_true", help="Print JSON result instead of human-readable report")
     p.add_argument("--strict", action="store_true", help="Return non-zero when warnings exist.")
     p.add_argument("--require-critic-pass", action="store_true", help="Treat critic pass=false as failure.")
