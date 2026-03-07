@@ -54,7 +54,34 @@ def _route_after_evaluate(state: ResearchState) -> str:
 
 
 def _route_after_review_experiment(state: ResearchState) -> str:
-    """Route to HITL result ingest when waiting for external experiment runs."""
+    """Route based on experiment reviewer verdict and HITL wait state."""
+    review_ns = state.get("review", {})
+    experiment_review = review_ns.get("experiment_review", {})
+    verdict = experiment_review.get("verdict", {})
+    action = verdict.get("action", "continue")
+
+    review_retries = int(state.get("_experiment_review_retries", 0) or 0)
+    max_retries = int(state.get("_cfg", {}).get("reviewer", {}).get("experiment", {}).get("max_retries", 1))
+
+    if action == "retry_upstream":
+        if review_retries <= max_retries:
+            logger.info(
+                "[ExperimentReviewer] Routing back to recommend_experiments for revision (%d/%d)",
+                review_retries,
+                max_retries,
+            )
+            return "recommend_experiments"
+        logger.warning(
+            "[ExperimentReviewer] Experiment plan retries exhausted (%d/%d); blocking workflow",
+            review_retries,
+            max_retries,
+        )
+        return "block"
+
+    if action == "block":
+        logger.warning("[ExperimentReviewer] Blocking workflow per reviewer verdict")
+        return "block"
+
     if bool(sget(state, "await_experiment_results", False)):
         return "ingest_experiment_results"
     return "evaluate_progress"
@@ -137,8 +164,10 @@ def build_graph(*, checkpointer: Any | None = None) -> StateGraph:
         "review_experiment",
         _route_after_review_experiment,
         {
+            "recommend_experiments": "recommend_experiments",
             "ingest_experiment_results": "ingest_experiment_results",
             "evaluate_progress": "evaluate_progress",
+            "block": END,
         },
     )
     graph.add_conditional_edges(

@@ -31,7 +31,7 @@ from src.agent.core.state_access import to_namespaced_update, with_flattened_leg
 from src.agent.core.source_ranking import (
     _dedupe_and_rank_analyses,
     _has_traceable_source,
-    _normalize_source_url,
+    _semantic_reference_filter,
     _source_dedupe_key,
     _source_tier,
     _uid_to_resolvable_url,
@@ -144,16 +144,6 @@ def generate_report(
             claim_anchor_terms_max=claim_anchor_terms_max,
         )
 
-    core_keys = set()
-    for c in claim_map:
-        for e in c.get("evidence", []):
-            k_uid = str(e.get("uid") or "").strip().lower()
-            k_url = _normalize_source_url(str(e.get("url") or ""))
-            if k_uid:
-                core_keys.add(f"uid:{k_uid}")
-            elif k_url:
-                core_keys.add(f"url:{k_url}")
-
     selected: List[Dict[str, Any]] = []
     seen = set()
 
@@ -164,28 +154,15 @@ def generate_report(
         seen.add(k)
         selected.append(a)
 
-    for a in traceable_analyses:
-        k = _source_dedupe_key(a)
-        if k in core_keys and a.get("source_tier") in {"A", "B"}:
-            _push(a)
-
-    core_cap = max(1, max_report_sources - max(0, background_max_c))
-    for tier in ("A", "B"):
-        for a in traceable_analyses:
-            if len(selected) >= core_cap:
-                break
-            if a.get("source_tier") == tier:
-                _push(a)
-
-    c_added = 0
-    for a in traceable_analyses:
-        if len(selected) >= max_report_sources:
-            break
-        if a.get("source_tier") == "C" and c_added < max(0, background_max_c):
-            _push(a)
-            c_added += 1
-
-    selected = selected[:max_report_sources]
+    semantic_selected = _semantic_reference_filter(
+        traceable_analyses,
+        research_questions=state.get("research_questions", []),
+        claim_map=claim_map,
+        max_background=background_max_c,
+        max_items=max_report_sources,
+    )
+    for a in semantic_selected:
+        _push(a)
     claim_map_text = _format_claim_map(claim_map)
 
     analyses_parts = []
@@ -198,6 +175,7 @@ def generate_report(
             part += f"URL: {final_url}\n"
             allowed_refs.append(f"- [{a.get('title', 'Unknown')}]({final_url})")
         part += f"Tier: {a.get('source_tier', 'C')}\n"
+        part += f"Semantic label: {a.get('semantic_reference_label', 'core')}\n"
         authors = a.get("authors", [])
         if isinstance(authors, list) and authors:
             part += f"Authors: {', '.join(authors)}\n"
@@ -230,7 +208,8 @@ def generate_report(
         "- Every reference entry must include a resolvable URL (http/https) or arXiv/DOI identifier.\n"
         "- Build Key Findings from the Claim-Evidence Map below.\n"
         f"- For core conclusions, use only tier A/B evidence (A target ratio >= {core_min_a_ratio}).\n"
-        f"- Tier C sources are background-only and capped at {background_max_c}.\n"
+        f"- Background-only references are capped at {background_max_c}.\n"
+        "- Reject-labeled sources are excluded from References.\n"
         "- Do not repeat references; each source appears once in References.\n"
         "- Do not invent references or placeholders.\n"
         "\nClaim-Evidence Map:\n"

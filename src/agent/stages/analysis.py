@@ -10,7 +10,10 @@ from src.agent.core.config import DEFAULT_ANALYSIS_WEB_CONTENT_MAX_CHARS
 from src.agent.core.executor import TaskRequest
 from src.agent.core.executor_router import dispatch as _default_dispatch
 from src.agent.core.schemas import ResearchState
-from src.agent.core.source_ranking import _source_tier as _default_source_tier
+from src.agent.core.source_ranking import (
+    _normalize_source_url as _default_normalize_source_url,
+    _source_tier as _default_source_tier,
+)
 from src.agent.core.state_access import to_namespaced_update, with_flattened_legacy_view
 from src.agent.core.topic_filter import _extract_table_signals as _default_extract_table_signals
 from src.agent.prompts import (
@@ -35,6 +38,7 @@ def analyze_sources(
     parse_json: Callable[[str], Dict[str, Any]] | None = None,
     extract_table_signals: Callable[[str], List[str]] | None = None,
     source_tier: Callable[[Dict[str, Any]], str] | None = None,
+    normalize_source_url: Callable[[str], str] | None = None,
 ) -> Dict[str, Any]:
     """Analyze paper and web sources into structured findings."""
     state_view = state_view or with_flattened_legacy_view
@@ -45,6 +49,7 @@ def analyze_sources(
     parse_json = parse_json or _runtime_parse_json
     extract_table_signals = extract_table_signals or _default_extract_table_signals
     source_tier = source_tier or _default_source_tier
+    normalize_source_url = normalize_source_url or _default_normalize_source_url
 
     state = state_view(state)
     cfg = get_cfg(state)
@@ -146,6 +151,12 @@ def analyze_sources(
         analysis["source"] = paper.get("source", "arxiv")
         if paper.get("url"):
             analysis["url"] = paper["url"]
+        if paper.get("authors") not in (None, "", []):
+            analysis["authors"] = list(paper.get("authors", []))
+        if paper.get("year") not in (None, ""):
+            analysis["year"] = paper.get("year")
+        if paper.get("abstract"):
+            analysis["abstract"] = paper.get("abstract")
         for key in (
             "venue",
             "journal",
@@ -162,6 +173,9 @@ def analyze_sources(
                 analysis[key] = paper.get(key)
         if not analysis.get("url") and paper.get("pdf_url"):
             analysis["url"] = paper.get("pdf_url")
+        canonical_url = normalize_source_url(str(analysis.get("url") or ""))
+        if canonical_url:
+            analysis["source_url_canonical"] = canonical_url
         analysis["source_tier"] = source_tier(analysis)
         new_analyses.append(analysis)
 
@@ -212,6 +226,12 @@ def analyze_sources(
         analysis["title"] = web_source["title"]
         analysis["url"] = web_source.get("url", "")
         analysis["source"] = "web"
+        if web_source.get("authors") not in (None, "", []):
+            analysis["authors"] = list(web_source.get("authors", []))
+        if web_source.get("year") not in (None, ""):
+            analysis["year"] = web_source.get("year")
+        if web_source.get("snippet"):
+            analysis["abstract"] = web_source.get("snippet")
         for key in (
             "venue",
             "journal",
@@ -222,6 +242,9 @@ def analyze_sources(
         ):
             if key in web_source and web_source.get(key) not in (None, "", []):
                 analysis[key] = web_source.get(key)
+        canonical_url = normalize_source_url(str(analysis.get("url") or ""))
+        if canonical_url:
+            analysis["source_url_canonical"] = canonical_url
         analysis["source_tier"] = source_tier(analysis)
         new_analyses.append(analysis)
 

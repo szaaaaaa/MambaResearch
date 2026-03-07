@@ -88,6 +88,39 @@ def _rq_anchor_terms(rq: str, *, max_terms: int = 4) -> List[str]:
     return out
 
 
+def _claim_alignment_terms(rq: str, claim: str, *, max_terms: int = 4) -> List[str]:
+    rq_tokens = [t for t in _tokenize(rq) if t not in _STOPWORDS]
+    claim_tokens = set(_tokenize(claim))
+    matched: List[str] = []
+    seen = set()
+    for tok in rq_tokens:
+        if tok in seen or tok not in claim_tokens:
+            continue
+        seen.add(tok)
+        matched.append(tok)
+        if len(matched) >= max(1, int(max_terms)):
+            return matched
+    if matched:
+        return matched
+    return _rq_anchor_terms(rq, max_terms=max_terms)
+
+
+def _claim_rq_alignment(
+    *,
+    rq: str,
+    claim: str,
+    min_relevance: float = 0.20,
+    anchor_terms_max: int = 4,
+) -> Dict[str, Any]:
+    base = re.sub(r"\s+", " ", str(claim or "")).strip()
+    score = _claim_relevance_ratio(rq, base) if base else 0.0
+    return {
+        "rq_alignment_score": round(score, 4),
+        "rq_alignment_terms": _claim_alignment_terms(rq, base, max_terms=anchor_terms_max) if rq else [],
+        "rq_alignment_status": "pass" if score >= float(min_relevance) else "warn",
+    }
+
+
 def _align_claim_to_rq(
     *,
     rq: str,
@@ -95,20 +128,8 @@ def _align_claim_to_rq(
     min_relevance: float = 0.20,
     anchor_terms_max: int = 4,
 ) -> str:
-    base = re.sub(r"\s+", " ", str(claim or "")).strip()
-    if not base:
-        return base
-    if _claim_relevance_ratio(rq, base) >= float(min_relevance):
-        return base
-
-    anchors = _rq_anchor_terms(rq, max_terms=anchor_terms_max)
-    if not anchors:
-        return base
-    anchor_text = ", ".join(anchors)
-    aligned = f"Regarding {anchor_text}, evidence suggests that {base[0].lower() + base[1:]}"
-    if _claim_relevance_ratio(rq, aligned) >= _claim_relevance_ratio(rq, base):
-        return aligned
-    return base
+    del rq, min_relevance, anchor_terms_max
+    return re.sub(r"\s+", " ", str(claim or "")).strip()
 
 
 def _ensure_unique_claim_text(*, claim_text: str, rq: str, used: set[str]) -> str:
@@ -147,16 +168,28 @@ def _build_claim_evidence_map(
     claims: List[Dict[str, Any]] = []
     used_claims: set[str] = set()
     min_required = max(1, int(min_evidence_per_rq))
+
+    def _downgrade_strength(strength: str) -> str:
+        return {"A": "B", "B": "C"}.get(strength, "C")
+
     for rq in research_questions:
         ranked = sorted(analyses, key=lambda a: _analysis_score_for_rq(rq, a), reverse=True)
         if not ranked:
+            claim_text = f"Insufficient evidence collected for: {rq}"
+            alignment = _claim_rq_alignment(
+                rq=rq,
+                claim=claim_text,
+                min_relevance=min_claim_rq_relevance,
+                anchor_terms_max=claim_anchor_terms_max,
+            )
             claims.append(
                 {
                     "research_question": rq,
-                    "claim": f"Insufficient evidence collected for: {rq}",
+                    "claim": claim_text,
                     "evidence": [],
                     "strength": "C",
                     "caveat": "No usable sources were mapped to this question.",
+                    **alignment,
                 }
             )
             continue
@@ -264,13 +297,20 @@ def _build_claim_evidence_map(
                 if cand.lower() not in used_claims:
                     claim_text = cand
                     break
+        claim_text = _align_claim_to_rq(
+            rq=rq,
+            claim=claim_text,
+            min_relevance=min_claim_rq_relevance,
+            anchor_terms_max=claim_anchor_terms_max,
+        )
+        alignment = _claim_rq_alignment(
+            rq=rq,
+            claim=claim_text,
+            min_relevance=min_claim_rq_relevance,
+            anchor_terms_max=claim_anchor_terms_max,
+        )
         if align_claim_to_rq:
-            claim_text = _align_claim_to_rq(
-                rq=rq,
-                claim=claim_text,
-                min_relevance=min_claim_rq_relevance,
-                anchor_terms_max=claim_anchor_terms_max,
-            )
+            claim_text = re.sub(r"\s+", " ", str(claim_text or "")).strip()
         claim_text = _ensure_unique_claim_text(claim_text=claim_text, rq=rq, used=used_claims)
         used_claims.add(claim_text.lower())
 
@@ -312,6 +352,8 @@ def _build_claim_evidence_map(
             strength = "B"
         else:
             strength = "C"
+        if align_claim_to_rq and alignment["rq_alignment_status"] != "pass":
+            strength = _downgrade_strength(strength)
 
         limitations = best.get("limitations", [])
         caveat = limitations[0] if isinstance(limitations, list) and limitations else "Evidence may be domain-specific."
@@ -329,6 +371,7 @@ def _build_claim_evidence_map(
                 "evidence": evidence[:3],
                 "strength": strength,
                 "caveat": caveat,
+                **alignment,
             }
         )
     return claims

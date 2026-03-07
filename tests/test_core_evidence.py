@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.agent.core.evidence import _build_claim_evidence_map
+from src.agent.core.evidence import _align_claim_to_rq, _build_claim_evidence_map
 
 
 class CoreEvidenceTest(unittest.TestCase):
@@ -93,7 +93,17 @@ class CoreEvidenceTest(unittest.TestCase):
         self.assertEqual(len(out[0]["evidence"]), 1)
         self.assertIn("Evidence below minimum (1/2)", out[0].get("caveat", ""))
 
-    def test_build_claim_evidence_map_aligns_claim_with_rq_tokens(self) -> None:
+    def test_align_claim_to_rq_preserves_original_sentence(self) -> None:
+        claim = "PMR mitigates catastrophic forgetting with prototype replay."
+        out = _align_claim_to_rq(
+            rq="How does low-bit quantization of latent embeddings affect precision of prototype selection?",
+            claim=claim,
+            min_relevance=0.2,
+            anchor_terms_max=4,
+        )
+        self.assertEqual(out, claim)
+
+    def test_build_claim_evidence_map_preserves_natural_claim_and_tracks_rq_alignment(self) -> None:
         analyses = [
             {
                 "uid": "arxiv:1",
@@ -125,10 +135,13 @@ class CoreEvidenceTest(unittest.TestCase):
             min_claim_rq_relevance=0.2,
             claim_anchor_terms_max=4,
         )
-        claim = out[0]["claim"].lower()
-        self.assertTrue(claim.startswith("regarding "))
-        self.assertIn("quantization", claim)
-        self.assertIn("latent", claim)
+        item = out[0]
+        claim = item["claim"]
+        self.assertEqual(claim, "PMR mitigates catastrophic forgetting with prototype replay.")
+        self.assertNotIn("Regarding ", claim)
+        self.assertLess(item["rq_alignment_score"], 0.2)
+        self.assertEqual(item["rq_alignment_status"], "warn")
+        self.assertIn("prototype", item["rq_alignment_terms"])
 
 
 if __name__ == "__main__":

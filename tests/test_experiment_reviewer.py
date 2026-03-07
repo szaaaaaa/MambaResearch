@@ -32,6 +32,13 @@ class TestExperimentReviewer(unittest.TestCase):
         review = result.get("review", {}).get("experiment_review", {})
         self.assertEqual(review["verdict"]["status"], "pass")
 
+    def test_empty_generated_plan_retries(self):
+        state = _make_state(experiment_plan={"domain": "deep_learning", "rq_experiments": []})
+        result = review_experiment(state)
+        review = result.get("review", {}).get("experiment_review", {})
+        self.assertEqual(review["verdict"]["status"], "fail")
+        self.assertEqual(review["verdict"]["action"], "retry_upstream")
+
     def test_complete_plan_passes(self):
         plan = {
             "domain": "NLP",
@@ -47,18 +54,25 @@ class TestExperimentReviewer(unittest.TestCase):
                         "baseline": {"lr": 0.001, "batch_size": 32, "epochs": 10},
                         "search_space": {"lr": [0.001, 0.01]},
                     },
+                    "run_commands": {"train": "python train.py", "eval": "python eval.py"},
                     "evaluation": {
                         "metrics": ["accuracy", "f1"],
                         "protocol": "5-fold cross-validation",
                     },
-                    "environment": {"gpu": "A100"},
+                    "split_strategy": "fixed train/validation/test split",
+                    "validation_strategy": "5-fold cross-validation plus domain holdout",
+                    "ablation_plan": "ablate replay buffer and encoder freezing",
+                    "dataset_generalization_plan": "train on IMDB and evaluate on SST-2",
+                    "environment": {"python": "3.10", "cuda": "12.1", "pytorch": "2.3", "gpu": "A100"},
+                    "evidence_refs": [{"uid": "arxiv:1234"}],
                 }
             ],
         }
         state = _make_state(experiment_plan=plan)
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        self.assertIn(review["verdict"]["status"], ("pass", "warn"))
+        self.assertEqual(review["verdict"]["status"], "pass")
+        self.assertEqual(review["verdict"]["action"], "continue")
 
     def test_missing_baseline_flagged(self):
         plan = {
@@ -124,6 +138,25 @@ class TestExperimentReviewer(unittest.TestCase):
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
         self.assertGreater(len(review["leakage_risks"]), 0)
+
+    def test_missing_strategy_fields_trigger_retry_upstream(self):
+        plan = {
+            "rq_experiments": [
+                {
+                    "research_question": "RQ1",
+                    "datasets": [{"name": "Dataset train/test split", "reason": "train/test split"}],
+                    "hyperparameters": {"baseline": {"lr": 0.01}, "search_space": {"lr": [0.001, 0.01]}},
+                    "evaluation": {"metrics": ["accuracy"], "protocol": "holdout"},
+                    "environment": {"gpu": "A100"},
+                }
+            ],
+        }
+        state = _make_state(experiment_plan=plan)
+        result = review_experiment(state)
+        review = result.get("review", {}).get("experiment_review", {})
+        self.assertEqual(review["verdict"]["action"], "retry_upstream")
+        self.assertIn(review["verdict"]["status"], ("warn", "fail"))
+        self.assertGreater(len(review["strategy_issues"]), 0)
 
 
 if __name__ == "__main__":

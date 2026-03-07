@@ -16,8 +16,10 @@ class StageAnalysisTest(unittest.TestCase):
                     "uid": "paper-1",
                     "title": "Paper One",
                     "authors": ["Alice"],
+                    "year": 2024,
                     "abstract": "retrieval quality",
                     "pdf_path": "paper-1.pdf",
+                    "url": "https://arxiv.org/abs/paper-1",
                     "source": "arxiv",
                 }
             ],
@@ -26,6 +28,9 @@ class StageAnalysisTest(unittest.TestCase):
                     "uid": "web-1",
                     "title": "Web One",
                     "url": "https://example.com",
+                    "authors": ["Web Author"],
+                    "year": 2023,
+                    "snippet": "retrieval snippet",
                     "body": "retrieval and generation",
                 }
             ],
@@ -62,6 +67,14 @@ class StageAnalysisTest(unittest.TestCase):
         self.assertEqual(len(out["analyses"]), 3)
         self.assertEqual(out["analyses"][1]["uid"], "paper-1")
         self.assertEqual(out["analyses"][2]["uid"], "web-1")
+        self.assertEqual(out["analyses"][1]["authors"], ["Alice"])
+        self.assertEqual(out["analyses"][1]["year"], 2024)
+        self.assertEqual(out["analyses"][1]["abstract"], "retrieval quality")
+        self.assertEqual(out["analyses"][1]["source_url_canonical"], "https://arxiv.org/abs/paper-1")
+        self.assertEqual(out["analyses"][2]["authors"], ["Web Author"])
+        self.assertEqual(out["analyses"][2]["year"], 2023)
+        self.assertEqual(out["analyses"][2]["abstract"], "retrieval snippet")
+        self.assertEqual(out["analyses"][2]["source_url_canonical"], "https://example.com")
         self.assertIn("[Paper: Paper One] paper finding", out["findings"])
         self.assertIn("[Web: Web One] web finding", out["findings"])
 

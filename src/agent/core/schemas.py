@@ -29,9 +29,13 @@ class AnalysisResult(TypedDict, total=False):
     uid: str
     title: str
     url: str
+    source_url_canonical: str
     source: str
     source_type: str
     source_tier: str
+    authors: List[str]
+    year: int | None
+    abstract: str
     summary: str
     key_findings: List[str]
     methodology: str
@@ -106,6 +110,20 @@ class EvidenceRef(TypedDict, total=False):
     url: str
 
 
+ClaimRQAlignmentStatus = Literal["pass", "warn"]
+
+
+class ClaimEvidenceEntry(TypedDict, total=False):
+    research_question: str
+    claim: str
+    evidence: List[Dict[str, Any]]
+    strength: str
+    caveat: str
+    rq_alignment_score: float
+    rq_alignment_terms: List[str]
+    rq_alignment_status: ClaimRQAlignmentStatus
+
+
 class RQExperiment(TypedDict, total=False):
     research_question: str
     task: str
@@ -116,6 +134,10 @@ class RQExperiment(TypedDict, total=False):
     run_commands: RunCommands
     evaluation: EvaluationProtocol
     evidence_refs: List[EvidenceRef]
+    split_strategy: str
+    validation_strategy: str
+    ablation_plan: str
+    dataset_generalization_plan: str
 
 
 class ExperimentPlan(TypedDict, total=False):
@@ -213,6 +235,12 @@ class SourceDiversityStats(TypedDict, total=False):
     unique_domains: List[str]
     year_range: List[int]
     year_distribution: Dict[str, int]
+    semantic_purity_ratio: float
+    background_ratio: float
+    reject_ratio: float
+    semantic_core_count: int
+    semantic_background_count: int
+    semantic_reject_count: int
 
 
 class RetrievalReview(TypedDict, total=False):
@@ -262,6 +290,8 @@ class ExperimentReview(TypedDict, total=False):
     baseline_issues: List[str]
     metric_issues: List[str]
     ablation_issues: List[str]
+    strategy_issues: List[str]
+    schema_issues: List[str]
     leakage_risks: List[str]
     compute_risks: List[str]
 
@@ -278,7 +308,7 @@ class ReviewNamespace(TypedDict, total=False):
 
 
 class EvidenceNamespace(TypedDict, total=False):
-    claim_evidence_map: List[Dict[str, Any]]
+    claim_evidence_map: List[ClaimEvidenceEntry]
     evidence_audit_log: List[Dict[str, Any]]
     gaps: List[str]
 
@@ -323,7 +353,7 @@ class ResearchState(TypedDict, total=False):
     analyses: List[AnalysisResult]
     findings: List[str]
     gaps: List[str]
-    claim_evidence_map: List[Dict[str, Any]]
+    claim_evidence_map: List[ClaimEvidenceEntry]
     evidence_audit_log: List[Dict[str, Any]]
     synthesis: str
     experiment_plan: ExperimentPlan

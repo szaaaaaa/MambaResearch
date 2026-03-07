@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+from src.agent.core.report_helpers import _validate_experiment_plan
 from src.agent.core.schemas import (
     ExperimentReview,
     ResearchState,
@@ -22,6 +23,22 @@ from src.agent.core.schemas import (
 from src.agent.core.state_access import sget, to_namespaced_update
 
 logger = logging.getLogger(__name__)
+
+
+def _check_strategy_fields(rq_experiments: List[Dict[str, Any]]) -> List[str]:
+    """Check for reviewer-required planning fields that control experimental rigor."""
+    issues: List[str] = []
+    for i, exp in enumerate(rq_experiments):
+        rq = str(exp.get("research_question") or f"RQ{i + 1}")[:60]
+        if not str(exp.get("split_strategy") or "").strip():
+            issues.append(f"[{rq}] Missing split strategy")
+        if not str(exp.get("validation_strategy") or "").strip():
+            issues.append(f"[{rq}] Missing validation strategy")
+        if not str(exp.get("ablation_plan") or "").strip():
+            issues.append(f"[{rq}] Missing ablation plan")
+        if not str(exp.get("dataset_generalization_plan") or "").strip():
+            issues.append(f"[{rq}] Missing dataset generalization plan")
+    return issues
 
 
 def _check_baselines(rq_experiments: List[Dict[str, Any]]) -> List[str]:
@@ -144,7 +161,7 @@ def review_experiment(state: ResearchState) -> Dict[str, Any]:
     if not isinstance(rq_experiments, list):
         rq_experiments = []
 
-    if not rq_experiments:
+    if not rq_experiments and not experiment_plan:
         verdict = ReviewerVerdict(
             reviewer="experiment_reviewer",
             status="pass",
@@ -162,31 +179,77 @@ def review_experiment(state: ResearchState) -> Dict[str, Any]:
                     baseline_issues=[],
                     metric_issues=[],
                     ablation_issues=[],
+                    strategy_issues=[],
+                    schema_issues=[],
                     leakage_risks=[],
                     compute_risks=[],
                 )),
                 "reviewer_log": existing_log,
             },
             "status": "Experiment review: no plan to review",
+            "_experiment_review_retries": 0,
+        })
+    if not rq_experiments:
+        verdict = ReviewerVerdict(
+            reviewer="experiment_reviewer",
+            status="fail",
+            action="retry_upstream",
+            issues=["Experiment plan is missing rq_experiments"],
+            suggested_fix=["Regenerate the experiment plan with at least one experiment group per research question"],
+            confidence=0.6,
+        )
+        existing_log = list(sget(state, "reviewer_log", []))
+        existing_log.append(dict(verdict))
+        return to_namespaced_update({
+            "review": {
+                "experiment_review": dict(ExperimentReview(
+                    verdict=verdict,
+                    baseline_issues=[],
+                    metric_issues=[],
+                    ablation_issues=[],
+                    strategy_issues=[],
+                    schema_issues=["no_rq_experiments"],
+                    leakage_risks=[],
+                    compute_risks=[],
+                )),
+                "reviewer_log": existing_log,
+            },
+            "status": "Experiment review: fail (missing rq_experiments)",
+            "_experiment_review_retries": int(state.get("_experiment_review_retries", 0)) + 1,
         })
 
+    schema_issues = _validate_experiment_plan(experiment_plan)
+    strategy_issues = _check_strategy_fields(rq_experiments)
     baseline_issues = _check_baselines(rq_experiments)
     metric_issues = _check_metrics(rq_experiments)
     ablation_issues = _check_ablation(rq_experiments)
     leakage_risks = _check_leakage(rq_experiments)
     compute_risks = _check_compute(rq_experiments)
 
-    all_issues = baseline_issues + metric_issues + ablation_issues + leakage_risks + compute_risks
+    all_issues = (
+        schema_issues
+        + strategy_issues
+        + baseline_issues
+        + metric_issues
+        + ablation_issues
+        + leakage_risks
+        + compute_risks
+    )
     critical = len(baseline_issues) + len(metric_issues)
+    retry_needed = bool(strategy_issues or ablation_issues or leakage_risks or schema_issues)
 
     if not all_issues:
         status = "pass"
         action = "continue"
         confidence = 0.9
-    elif critical > len(rq_experiments):
+    elif critical > len(rq_experiments) or len(schema_issues) >= max(2, len(rq_experiments) * 2):
         status = "fail"
         action = "retry_upstream"
         confidence = 0.65
+    elif retry_needed:
+        status = "warn"
+        action = "retry_upstream"
+        confidence = 0.72
     else:
         status = "warn"
         action = "continue"
@@ -199,6 +262,17 @@ def review_experiment(state: ResearchState) -> Dict[str, Any]:
         suggested_fixes.append("Define concrete evaluation metrics (not placeholders)")
     if leakage_risks:
         suggested_fixes.append("Declare data split strategy to avoid leakage")
+    if strategy_issues:
+        suggested_fixes.append(
+            "Add split_strategy, validation_strategy, ablation_plan, and dataset_generalization_plan"
+        )
+    if ablation_issues:
+        suggested_fixes.append("Describe explicit ablation comparisons for each experiment group")
+    if any("dataset_generalization_plan" in issue for issue in schema_issues) or any(
+        "dataset generalization" in issue.lower() for issue in strategy_issues
+    ):
+        suggested_fixes.append("Include cross-dataset validation or out-of-domain generalization checks")
+    suggested_fixes = list(dict.fromkeys(suggested_fixes))
 
     verdict = ReviewerVerdict(
         reviewer="experiment_reviewer",
@@ -214,6 +288,8 @@ def review_experiment(state: ResearchState) -> Dict[str, Any]:
         baseline_issues=baseline_issues,
         metric_issues=metric_issues,
         ablation_issues=ablation_issues,
+        strategy_issues=strategy_issues,
+        schema_issues=schema_issues,
         leakage_risks=leakage_risks,
         compute_risks=compute_risks,
     )
@@ -232,4 +308,7 @@ def review_experiment(state: ResearchState) -> Dict[str, Any]:
             "reviewer_log": existing_log,
         },
         "status": f"Experiment review: {status} ({len(all_issues)} issues)",
+        "_experiment_review_retries": (
+            int(state.get("_experiment_review_retries", 0)) + 1 if action == "retry_upstream" else 0
+        ),
     })

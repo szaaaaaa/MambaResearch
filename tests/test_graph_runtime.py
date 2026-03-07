@@ -55,16 +55,42 @@ class GraphRuntimeTest(unittest.TestCase):
 
     def test_route_after_review_experiment(self) -> None:
         self.assertEqual(
-            graph._route_after_review_experiment({"await_experiment_results": True}),
+            graph._route_after_review_experiment(
+                {"await_experiment_results": True, "review": {"experiment_review": {"verdict": {"action": "continue"}}}}
+            ),
             "ingest_experiment_results",
         )
         self.assertEqual(
-            graph._route_after_review_experiment({"await_experiment_results": False}),
+            graph._route_after_review_experiment(
+                {"await_experiment_results": False, "review": {"experiment_review": {"verdict": {"action": "continue"}}}}
+            ),
             "evaluate_progress",
         )
         self.assertEqual(
             graph._route_after_review_experiment({}),
             "evaluate_progress",
+        )
+
+    def test_route_after_review_experiment_retries_then_blocks(self) -> None:
+        self.assertEqual(
+            graph._route_after_review_experiment(
+                {
+                    "_experiment_review_retries": 1,
+                    "_cfg": {"reviewer": {"experiment": {"max_retries": 1}}},
+                    "review": {"experiment_review": {"verdict": {"action": "retry_upstream"}}},
+                }
+            ),
+            "recommend_experiments",
+        )
+        self.assertEqual(
+            graph._route_after_review_experiment(
+                {
+                    "_experiment_review_retries": 2,
+                    "_cfg": {"reviewer": {"experiment": {"max_retries": 1}}},
+                    "review": {"experiment_review": {"verdict": {"action": "retry_upstream"}}},
+                }
+            ),
+            "block",
         )
 
     def test_route_after_ingest_experiment_results(self) -> None:
@@ -133,8 +159,10 @@ class GraphRuntimeTest(unittest.TestCase):
         self.assertEqual(
             cond_map["review_experiment"],
             {
+                "recommend_experiments": "recommend_experiments",
                 "ingest_experiment_results": "ingest_experiment_results",
                 "evaluate_progress": "evaluate_progress",
+                "block": graph.END,
             },
         )
         self.assertEqual(

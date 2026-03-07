@@ -187,6 +187,11 @@ EXPERIMENT_PLAN_SYSTEM = (
     "- Hyperparameters MUST include a concrete baseline AND a search space.\n"
     "- Run commands MUST be executable shell commands (train + eval).\n"
     "- Evaluation MUST specify metrics and statistical protocol (e.g. seed count, bootstrap).\n"
+    "- Every experiment group MUST include split_strategy, validation_strategy, ablation_plan, and dataset_generalization_plan.\n"
+    "- split_strategy MUST explicitly describe train/validation/test or holdout protocol.\n"
+    "- validation_strategy MUST explicitly describe how robustness or generalization is validated.\n"
+    "- ablation_plan MUST describe what component or factor will be ablated.\n"
+    "- dataset_generalization_plan MUST describe cross-dataset or out-of-domain evaluation thinking.\n"
     "- evidence_refs MUST link back to paper UIDs/DOIs from the provided analyses.\n"
     "- Do NOT invent datasets or repos that do not exist.\n"
     "- Output valid JSON only, no markdown fences.\n\n"
@@ -208,6 +213,10 @@ EXPERIMENT_PLAN_SYSTEM = (
     "      },\n"
     '      "run_commands": {"train":"python train.py ...","eval":"python eval.py ..."},\n'
     '      "evaluation": {"metrics":["..."],"protocol":"3 seeds + paired bootstrap"},\n'
+    '      "split_strategy": "stratified train/validation/test split with fixed seed",\n'
+    '      "validation_strategy": "5 seeds plus cross-domain holdout validation",\n'
+    '      "ablation_plan": "remove retrieval reranker and vary memory budget",\n'
+    '      "dataset_generalization_plan": "train on dataset A and evaluate on dataset B/C",\n'
     '      "evidence_refs": [{"uid":"...","url":"..."}]\n'
     "    }\n"
     "  ]\n"
@@ -223,7 +232,8 @@ EXPERIMENT_PLAN_USER = (
     "Claim-Evidence Map:\n{claim_evidence_map}\n\n"
     "Source analyses (key papers with methodology and findings):\n{analyses}\n\n"
     "Generate a concrete, reproducible experiment plan for each research question. "
-    "Ensure every field in the schema is populated with real, verifiable information."
+    "Ensure every field in the schema is populated with real, verifiable information. "
+    "Do not omit split_strategy, validation_strategy, ablation_plan, or dataset_generalization_plan."
 )
 
 DOMAIN_DETECT_SYSTEM = (

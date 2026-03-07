@@ -27,6 +27,7 @@ from src.agent.core.source_ranking import (
     _ACADEMIC_DOMAINS,
     _STOPWORDS,
     _extract_domain,
+    _semantic_reference_profile,
     _source_tier,
     _tokenize,
 )
@@ -42,6 +43,9 @@ _DEFAULT_MIN_UNIQUE_VENUES = 2
 _DEFAULT_MAX_SINGLE_VENUE_RATIO = 0.6
 _DEFAULT_MIN_YEAR_SPREAD = 2
 _DEFAULT_RECENT_YEAR_WINDOW = 3  # at least one source within last N years
+_DEFAULT_MIN_SEMANTIC_PURITY_RATIO = 0.5
+_DEFAULT_MAX_BACKGROUND_RATIO = 0.5
+_DEFAULT_MAX_REJECT_RATIO = 0.25
 
 
 def _extract_year(paper: Dict[str, Any]) -> int | None:
@@ -140,6 +144,11 @@ def review_retrieval(state: ResearchState) -> Dict[str, Any]:
     max_single_venue_ratio = float(reviewer_cfg.get("max_single_venue_ratio", _DEFAULT_MAX_SINGLE_VENUE_RATIO))
     min_year_spread = int(reviewer_cfg.get("min_year_spread", _DEFAULT_MIN_YEAR_SPREAD))
     recent_window = int(reviewer_cfg.get("recent_year_window", _DEFAULT_RECENT_YEAR_WINDOW))
+    min_semantic_purity_ratio = float(
+        reviewer_cfg.get("min_semantic_purity_ratio", _DEFAULT_MIN_SEMANTIC_PURITY_RATIO)
+    )
+    max_background_ratio = float(reviewer_cfg.get("max_background_ratio", _DEFAULT_MAX_BACKGROUND_RATIO))
+    max_reject_ratio = float(reviewer_cfg.get("max_reject_ratio", _DEFAULT_MAX_REJECT_RATIO))
 
     import datetime
     current_year = datetime.datetime.now().year
@@ -242,7 +251,46 @@ def review_retrieval(state: ResearchState) -> Dict[str, Any]:
         suggested_fixes.append("Prioritize arxiv/openalex queries for tier-A coverage")
 
     # ── 8. Determine verdict ──────────────────────────────────────────
-    critical_issues = sum(1 for i in issues if "No source covers RQ" in i or "Only" in i)
+    semantic_profile = _semantic_reference_profile(
+        analyses,
+        research_questions=rqs,
+        claim_map=list(sget(state, "claim_evidence_map", [])),
+    ) if analyses else []
+    semantic_counts = Counter(str(item.get("semantic_reference_label") or "reject") for item in semantic_profile)
+    semantic_total = max(1, len(semantic_profile))
+    semantic_purity_ratio = semantic_counts.get("core", 0) / semantic_total if semantic_profile else 0.0
+    background_ratio = semantic_counts.get("background", 0) / semantic_total if semantic_profile else 0.0
+    reject_ratio = semantic_counts.get("reject", 0) / semantic_total if semantic_profile else 0.0
+    diversity["semantic_purity_ratio"] = round(semantic_purity_ratio, 4)
+    diversity["background_ratio"] = round(background_ratio, 4)
+    diversity["reject_ratio"] = round(reject_ratio, 4)
+    diversity["semantic_core_count"] = semantic_counts.get("core", 0)
+    diversity["semantic_background_count"] = semantic_counts.get("background", 0)
+    diversity["semantic_reject_count"] = semantic_counts.get("reject", 0)
+
+    if len(semantic_profile) >= 3:
+        if semantic_purity_ratio < min_semantic_purity_ratio:
+            issues.append(
+                f"Semantic purity ratio {semantic_purity_ratio:.0%} below threshold {min_semantic_purity_ratio:.0%}"
+            )
+            suggested_fixes.append("Tighten retrieval to sources that directly answer the research questions")
+        if background_ratio > max_background_ratio:
+            issues.append(
+                f"Background ratio {background_ratio:.0%} above threshold {max_background_ratio:.0%}"
+            )
+            suggested_fixes.append("Reduce background-only sources in the ranked analysis set")
+        if reject_ratio > max_reject_ratio:
+            issues.append(
+                f"Reject ratio {reject_ratio:.0%} above threshold {max_reject_ratio:.0%}"
+            )
+            suggested_fixes.append("Remove off-topic or weakly related sources before reporting")
+
+    suggested_fixes = list(dict.fromkeys(suggested_fixes))
+    critical_issues = sum(
+        1
+        for i in issues
+        if "No source covers RQ" in i or "Only" in i or "Reject ratio" in i
+    )
 
     if not issues:
         status = "pass"

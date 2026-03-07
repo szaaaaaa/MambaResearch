@@ -195,6 +195,31 @@ class TestDiversityStats(unittest.TestCase):
         self.assertEqual(stats["academic_count"], 2)
         self.assertIn("NeurIPS", stats["unique_venues"])
         self.assertIn("ICML", stats["unique_venues"])
+        self.assertIn("semantic_purity_ratio", stats)
+        self.assertGreaterEqual(stats["semantic_purity_ratio"], 0.0)
+
+
+class TestSemanticPurity(unittest.TestCase):
+    def test_off_topic_analyses_raise_reject_ratio_issue(self):
+        papers = [
+            _paper(f"arxiv:{i}", f"Paper about reinforcement learning {i}", 2020 + i, venue=f"V{i}")
+            for i in range(6)
+        ]
+        analyses = [
+            _analysis(f"arxiv:{i}", f"Analysis about reinforcement learning {i}", venue=f"V{i}")
+            for i in range(6)
+        ]
+        state = _make_state(
+            papers=papers,
+            analyses=analyses,
+            research_questions=["How does concept drift affect model performance?"],
+            search_queries=["reinforcement learning"],
+        )
+        result = review_retrieval(state)
+        review = result.get("review", {}).get("retrieval_review", {})
+        stats = review["diversity_stats"]
+        self.assertGreaterEqual(stats["reject_ratio"], 0.8)
+        self.assertTrue(any("Reject ratio" in issue for issue in review["verdict"]["issues"]))
 
 
 if __name__ == "__main__":

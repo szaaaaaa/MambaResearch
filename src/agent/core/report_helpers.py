@@ -78,6 +78,14 @@ def _validate_experiment_plan(plan: Dict[str, Any]) -> List[str]:
         refs = exp.get("evidence_refs", []) if isinstance(exp, dict) else []
         if not isinstance(refs, list) or not refs:
             issues.append(f"{prefix}.evidence_refs: missing")
+        if not str(exp.get("split_strategy") or "").strip():
+            issues.append(f"{prefix}.split_strategy: missing")
+        if not str(exp.get("validation_strategy") or "").strip():
+            issues.append(f"{prefix}.validation_strategy: missing")
+        if not str(exp.get("ablation_plan") or "").strip():
+            issues.append(f"{prefix}.ablation_plan: missing")
+        if not str(exp.get("dataset_generalization_plan") or "").strip():
+            issues.append(f"{prefix}.dataset_generalization_plan: missing")
 
     return issues
 
@@ -473,6 +481,19 @@ def _render_experiment_blueprint(plan: Dict[str, Any], language: str = "en") -> 
                 parts.append(f"- Metrics: {', '.join(str(x) for x in metrics)}")
             if ev.get("protocol"):
                 parts.append(f"- Protocol: {ev.get('protocol')}")
+
+        strategy_fields = [
+            ("Split Strategy", exp_item.get("split_strategy")),
+            ("Validation Strategy", exp_item.get("validation_strategy")),
+            ("Ablation Plan", exp_item.get("ablation_plan")),
+            ("Dataset Generalization Plan", exp_item.get("dataset_generalization_plan")),
+        ]
+        populated_strategy_fields = [(label, value) for label, value in strategy_fields if str(value or "").strip()]
+        if populated_strategy_fields:
+            parts.append("")
+            parts.append("#### Experimental Rigor")
+            for label, value in populated_strategy_fields:
+                parts.append(f"- {label}: {value}")
 
         refs = exp_item.get("evidence_refs", [])
         if isinstance(refs, list) and refs:

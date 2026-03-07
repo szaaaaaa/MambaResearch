@@ -104,6 +104,10 @@ class CoreReportHelpersTest(unittest.TestCase):
                     "environment": {"python": "3.10", "cuda": "12.1", "pytorch": "2.3"},
                     "hyperparameters": {"baseline": {"lr": 2e-5}, "search_space": {"lr": [1e-5, 5e-5]}},
                     "run_commands": {"train": "python train.py", "eval": "python eval.py"},
+                    "split_strategy": "stratified train/validation/test split",
+                    "validation_strategy": "5 seeds plus out-of-domain holdout",
+                    "ablation_plan": "remove memory module and vary retriever depth",
+                    "dataset_generalization_plan": "train on X and evaluate on Y",
                     "evidence_refs": [{"uid": "arxiv:1234"}],
                 }
             ]

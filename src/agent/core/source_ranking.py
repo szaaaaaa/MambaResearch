@@ -178,6 +178,132 @@ def _dedupe_and_rank_analyses(analyses: List[Dict[str, Any]], max_items: int) ->
 # ── Topic relevance ─────────────────────────────────────────────────
 
 
+def _semantic_reference_text(a: Dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(a.get("title") or ""),
+            str(a.get("abstract") or ""),
+            str(a.get("summary") or ""),
+            str(a.get("snippet") or ""),
+            " ".join(a.get("key_findings", []) if isinstance(a.get("key_findings"), list) else []),
+        ]
+    )
+
+
+def _rq_overlap_stats(text: str, research_questions: List[str]) -> tuple[int, float]:
+    text_tokens = set(_tokenize(text))
+    max_hits = 0
+    max_ratio = 0.0
+    for rq in research_questions:
+        rq_tokens = {t for t in _tokenize(rq) if t not in _STOPWORDS}
+        if not rq_tokens:
+            continue
+        hits = len(rq_tokens & text_tokens)
+        ratio = hits / max(1, len(rq_tokens))
+        if hits > max_hits or (hits == max_hits and ratio > max_ratio):
+            max_hits = hits
+            max_ratio = ratio
+    return max_hits, max_ratio
+
+
+def _claim_map_evidence_keys(claim_map: List[Dict[str, Any]] | None = None) -> set[str]:
+    keys: set[str] = set()
+    for claim in claim_map or []:
+        evidence_list = claim.get("evidence", []) if isinstance(claim.get("evidence"), list) else []
+        for evidence in evidence_list:
+            uid = str(evidence.get("uid") or "").strip().lower()
+            url = _normalize_source_url(str(evidence.get("url") or ""))
+            if uid:
+                keys.add(f"uid:{uid}")
+            if url:
+                keys.add(f"url:{url}")
+    return keys
+
+
+def _semantic_reference_profile(
+    analyses: List[Dict[str, Any]],
+    *,
+    research_questions: List[str],
+    claim_map: List[Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    claim_keys = _claim_map_evidence_keys(claim_map)
+    profiled: List[Dict[str, Any]] = []
+    for analysis in analyses:
+        item = dict(analysis)
+        dedupe_key = _source_dedupe_key(item)
+        overlap_hits, overlap_ratio = _rq_overlap_stats(
+            _semantic_reference_text(item),
+            research_questions,
+        )
+        relevance = float(item.get("relevance_score", 0.0) or 0.0)
+
+        if dedupe_key in claim_keys:
+            label = "core"
+        elif overlap_hits >= 2 and (overlap_ratio >= 0.20 or relevance >= 0.45):
+            label = "core"
+        elif overlap_hits >= 1:
+            label = "background"
+        else:
+            label = "reject"
+
+        item["semantic_reference_label"] = label
+        item["semantic_rq_overlap_hits"] = overlap_hits
+        item["semantic_rq_overlap_ratio"] = round(overlap_ratio, 4)
+        profiled.append(item)
+    return profiled
+
+
+def _semantic_reference_filter(
+    analyses: List[Dict[str, Any]],
+    *,
+    research_questions: List[str],
+    claim_map: List[Dict[str, Any]] | None = None,
+    max_background: int = 0,
+    max_items: int | None = None,
+) -> List[Dict[str, Any]]:
+    profiled = _semantic_reference_profile(
+        analyses,
+        research_questions=research_questions,
+        claim_map=claim_map,
+    )
+    claim_keys = _claim_map_evidence_keys(claim_map)
+    selected: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _push(item: Dict[str, Any]) -> bool:
+        key = _source_dedupe_key(item)
+        if key in seen:
+            return False
+        seen.add(key)
+        selected.append(item)
+        return True
+
+    for item in profiled:
+        if _source_dedupe_key(item) in claim_keys and item.get("semantic_reference_label") == "core":
+            _push(item)
+            if max_items is not None and len(selected) >= max_items:
+                return selected[:max_items]
+
+    for item in profiled:
+        if item.get("semantic_reference_label") == "core":
+            _push(item)
+            if max_items is not None and len(selected) >= max_items:
+                return selected[:max_items]
+
+    background_added = 0
+    for item in profiled:
+        if item.get("semantic_reference_label") != "background":
+            continue
+        if background_added >= max(0, int(max_background)):
+            continue
+        if _push(item):
+            background_added += 1
+        if max_items is not None and len(selected) >= max_items:
+            break
+
+    return selected[:max_items] if max_items is not None else selected
+
+
 def _is_topic_relevant(
     *,
     text: str,
