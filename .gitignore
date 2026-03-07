@@ -27,3 +27,5 @@ logs/
 *.sqlite
 *.db
 *.bin
+
+.claude
