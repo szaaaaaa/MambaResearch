@@ -15,7 +15,7 @@ ingest:
     image_dir: ${project.data_dir}/figures
     min_width: 100
     min_height: 100
-    vlm_model: gemini-2.5-flash
+    vlm_model: gemini-3-pro-preview
     vlm_temperature: 0.1
     validation_min_entity_match: 0.5
 fetch:
