@@ -28,8 +28,13 @@ _FIELD_NS_MAP = {
     "report_critic": "report",
     "repair_attempted": "report",
     "acceptance_metrics": "report",
+    "retrieval_review": "review",
+    "citation_validation": "review",
+    "experiment_review": "review",
+    "claim_verdicts": "review",
+    "reviewer_log": "review",
 }
-_NAMESPACES = {"research", "planning", "evidence", "report"}
+_NAMESPACES = {"research", "planning", "evidence", "review", "report"}
 
 
 def sget(state: Dict[str, Any], key: str, default: Any = None) -> Any:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Literal, TypedDict
 
 
 class PaperRecord(TypedDict, total=False):
@@ -185,6 +185,98 @@ class PlanningNamespace(TypedDict, total=False):
     _web_queries: List[str]
 
 
+# ── Reviewer verdict (shared contract for all reviewers) ─────────────
+
+
+ReviewStatus = Literal["pass", "warn", "fail"]
+ReviewAction = Literal["continue", "retry_upstream", "degrade", "block"]
+
+
+class ReviewerVerdict(TypedDict, total=False):
+    """Base contract every reviewer must produce."""
+    reviewer: str
+    status: ReviewStatus
+    action: ReviewAction
+    issues: List[str]
+    suggested_fix: List[str]
+    confidence: float
+
+
+# ── Retrieval Review ─────────────────────────────────────────────────
+
+
+class SourceDiversityStats(TypedDict, total=False):
+    total_sources: int
+    academic_count: int
+    web_count: int
+    unique_venues: List[str]
+    unique_domains: List[str]
+    year_range: List[int]
+    year_distribution: Dict[str, int]
+
+
+class RetrievalReview(TypedDict, total=False):
+    """Artifact produced by the Retrieval Reviewer."""
+    verdict: ReviewerVerdict
+    diversity_stats: SourceDiversityStats
+    missing_key_topics: List[str]
+    year_coverage_gaps: List[str]
+    venue_coverage_gaps: List[str]
+    suggested_queries: List[str]
+
+
+# ── Claim-level support (Phase 2 placeholder) ───────────────────────
+
+
+ClaimSupportStatus = Literal["supported", "partial", "unsupported", "contradicted"]
+
+
+class ClaimSupportVerdict(TypedDict, total=False):
+    claim_id: str
+    claim_text: str
+    status: ClaimSupportStatus
+    supporting_evidence: List[str]
+    confidence: float
+
+
+class CitationValidationEntry(TypedDict, total=False):
+    uid: str
+    doi_valid: bool
+    year_valid: bool
+    author_valid: bool
+    venue_valid: bool
+    url_reachable: bool
+    issues: List[str]
+
+
+class CitationValidationReport(TypedDict, total=False):
+    entries: List[CitationValidationEntry]
+    verdict: ReviewerVerdict
+
+
+# ── Experiment Review (Phase 3 placeholder) ──────────────────────────
+
+
+class ExperimentReview(TypedDict, total=False):
+    verdict: ReviewerVerdict
+    baseline_issues: List[str]
+    metric_issues: List[str]
+    ablation_issues: List[str]
+    leakage_risks: List[str]
+    compute_risks: List[str]
+
+
+# ── Review Namespace (aggregates all reviewer outputs) ───────────────
+
+
+class ReviewNamespace(TypedDict, total=False):
+    retrieval_review: RetrievalReview
+    citation_validation: CitationValidationReport
+    experiment_review: ExperimentReview
+    claim_verdicts: List[ClaimSupportVerdict]
+    reviewer_log: List[ReviewerVerdict]
+
+
 class EvidenceNamespace(TypedDict, total=False):
     claim_evidence_map: List[Dict[str, Any]]
     evidence_audit_log: List[Dict[str, Any]]
@@ -211,6 +303,7 @@ class ResearchState(TypedDict, total=False):
     research: ResearchNamespace
     planning: PlanningNamespace
     evidence: EvidenceNamespace
+    review: ReviewNamespace
     report: ReportNamespace
 
     # Internal/runtime fields used by node orchestration.

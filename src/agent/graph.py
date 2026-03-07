@@ -4,12 +4,15 @@ Graph topology
 ==============
 
     plan_research -> fetch_sources -> index_sources -> analyze_sources
-        -> synthesize -> recommend_experiments
+        -> review_retrieval --(pass/warn)--> synthesize
+                            --(retry & budget ok)--> fetch_sources
+        -> synthesize -> recommend_experiments -> review_experiment
         -> (await_experiment_results=True)  ingest_experiment_results -> END (pause)
         -> (await_experiment_results=False) evaluate_progress
         -> ingest_experiment_results --(results_validated)--> evaluate_progress
         -> evaluate_progress --(loop)--> plan_research
-                           --(done)--> generate_report -> END
+                           --(done)--> generate_report
+        -> generate_report -> review_claims_and_citations -> END
 """
 from __future__ import annotations
 
@@ -26,17 +29,19 @@ from src.agent.core.config import normalize_and_validate_config
 from src.agent.core.events import emit_event, instrument_node
 from src.agent.core.schemas import ResearchState
 from src.agent.core.state_access import sget
-from src.agent.nodes import (
-    analyze_sources,
-    evaluate_progress,
-    fetch_sources,
-    generate_report,
-    ingest_experiment_results,
-    index_sources,
-    plan_research,
-    recommend_experiments,
-    synthesize,
-)
+from src.agent.tracing.trace_grader import grade_trace
+from src.agent.tracing.trace_logger import TraceLogger
+from src.agent.stages.analysis import analyze_sources
+from src.agent.stages.evaluation import evaluate_progress
+from src.agent.stages.experiments import ingest_experiment_results, recommend_experiments
+from src.agent.stages.indexing import index_sources
+from src.agent.stages.planning import plan_research
+from src.agent.stages.retrieval import fetch_sources
+from src.agent.stages.reporting import generate_report
+from src.agent.stages.synthesis import synthesize
+from src.agent.reviewers.experiment_reviewer import review_experiment
+from src.agent.reviewers.post_report_review import review_claims_and_citations
+from src.agent.reviewers.retrieval_reviewer import review_retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +53,33 @@ def _route_after_evaluate(state: ResearchState) -> str:
     return "generate_report"
 
 
-def _route_after_recommend_experiments(state: ResearchState) -> str:
+def _route_after_review_experiment(state: ResearchState) -> str:
     """Route to HITL result ingest when waiting for external experiment runs."""
     if bool(sget(state, "await_experiment_results", False)):
         return "ingest_experiment_results"
     return "evaluate_progress"
+
+
+def _route_after_retrieval_review(state: ResearchState) -> str:
+    """Route based on retrieval reviewer verdict."""
+    review_ns = state.get("review", {})
+    retrieval_review = review_ns.get("retrieval_review", {})
+    verdict = retrieval_review.get("verdict", {})
+    action = verdict.get("action", "continue")
+
+    # Only retry if action says so AND we haven't already retried too many times
+    retrieval_retries = state.get("_retrieval_review_retries", 0)
+    max_retries = state.get("_cfg", {}).get("reviewer", {}).get("retrieval", {}).get("max_retries", 1)
+
+    if action == "retry_upstream" and retrieval_retries < max_retries:
+        logger.info("[RetrievalReviewer] Routing to fetch_sources for supplemental retrieval (retry %d/%d)",
+                     retrieval_retries + 1, max_retries)
+        return "fetch_sources"
+
+    if action == "block":
+        logger.warning("[RetrievalReviewer] Retrieval quality blocked — proceeding with degraded sources")
+
+    return "synthesize"
 
 
 def _route_after_ingest_experiment_results(state: ResearchState) -> str:
@@ -71,14 +98,20 @@ def build_graph(*, checkpointer: Any | None = None) -> StateGraph:
     graph.add_node("fetch_sources", instrument_node("fetch_sources", fetch_sources))
     graph.add_node("index_sources", instrument_node("index_sources", index_sources))
     graph.add_node("analyze_sources", instrument_node("analyze_sources", analyze_sources))
+    graph.add_node("review_retrieval", instrument_node("review_retrieval", review_retrieval))
     graph.add_node("synthesize", instrument_node("synthesize", synthesize))
     graph.add_node("recommend_experiments", instrument_node("recommend_experiments", recommend_experiments))
     graph.add_node(
         "ingest_experiment_results",
         instrument_node("ingest_experiment_results", ingest_experiment_results),
     )
+    graph.add_node("review_experiment", instrument_node("review_experiment", review_experiment))
     graph.add_node("evaluate_progress", instrument_node("evaluate_progress", evaluate_progress))
     graph.add_node("generate_report", instrument_node("generate_report", generate_report))
+    graph.add_node(
+        "review_claims_and_citations",
+        instrument_node("review_claims_and_citations", review_claims_and_citations),
+    )
 
     # ── Edges ────────────────────────────────────────────────────────
     graph.set_entry_point("plan_research")
@@ -86,12 +119,23 @@ def build_graph(*, checkpointer: Any | None = None) -> StateGraph:
     graph.add_edge("plan_research", "fetch_sources")
     graph.add_edge("fetch_sources", "index_sources")
     graph.add_edge("index_sources", "analyze_sources")
-    graph.add_edge("analyze_sources", "synthesize")
-    graph.add_edge("synthesize", "recommend_experiments")
+    graph.add_edge("analyze_sources", "review_retrieval")
 
     graph.add_conditional_edges(
-        "recommend_experiments",
-        _route_after_recommend_experiments,
+        "review_retrieval",
+        _route_after_retrieval_review,
+        {
+            "fetch_sources": "fetch_sources",
+            "synthesize": "synthesize",
+        },
+    )
+
+    graph.add_edge("synthesize", "recommend_experiments")
+    graph.add_edge("recommend_experiments", "review_experiment")
+
+    graph.add_conditional_edges(
+        "review_experiment",
+        _route_after_review_experiment,
         {
             "ingest_experiment_results": "ingest_experiment_results",
             "evaluate_progress": "evaluate_progress",
@@ -115,7 +159,8 @@ def build_graph(*, checkpointer: Any | None = None) -> StateGraph:
         },
     )
 
-    graph.add_edge("generate_report", END)
+    graph.add_edge("generate_report", "review_claims_and_citations")
+    graph.add_edge("review_claims_and_citations", END)
 
     compile_kwargs = {}
     if checkpointer is not None:
@@ -162,6 +207,12 @@ def run_research(
     cfg["_root"] = str(root)
     cfg["_run_id"] = run_id
     cfg["_budget_guard"] = guard
+
+    # Initialize trace logger — writes to run directory if events_file is set
+    events_file = str(cfg.get("_events_file", "") or "").strip()
+    run_dir = Path(events_file).parent if events_file else None
+    trace_logger = TraceLogger(run_dir=run_dir)
+    cfg["_trace_logger"] = trace_logger
     checkpointer = build_checkpointer(cfg, root)
     if resume_run_id and checkpointer is None:
         if checkpointing_enabled(cfg):
@@ -195,6 +246,13 @@ def run_research(
             "gaps": [],
             "claim_evidence_map": [],
             "evidence_audit_log": [],
+        },
+        "review": {
+            "retrieval_review": {},
+            "citation_validation": {},
+            "experiment_review": {},
+            "claim_verdicts": [],
+            "reviewer_log": [],
         },
         "report": {
             "report": "",
@@ -235,4 +293,21 @@ def run_research(
         final_state = app.invoke(None, config=invoke_config)
     else:
         final_state = app.invoke(initial_state, config=invoke_config)
+
+    # Grade the completed run and flush trace
+    try:
+        trace_grade = grade_trace(final_state)
+        final_state["_trace_grade"] = trace_grade
+        emit_event(cfg, {
+            "event": "trace_grade",
+            "run_id": run_id,
+            "overall_score": trace_grade.get("overall_score", 0.0),
+            "primary_failure": trace_grade.get("primary_failure_type", "unknown"),
+            "stage_scores": trace_grade.get("stage_scores", {}),
+        })
+    except Exception as exc:
+        logger.warning("Trace grading failed: %s", exc)
+
+    trace_logger.flush()
+
     return final_state

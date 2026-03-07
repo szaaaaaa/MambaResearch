@@ -35,8 +35,15 @@ def emit_event(cfg: Dict[str, Any], payload: Dict[str, Any]) -> None:
         logger.warning("Failed to write event file '%s': %s", path, exc)
 
 
+_REVIEWER_NODES = frozenset({
+    "review_retrieval",
+    "review_experiment",
+    "review_claims_and_citations",
+})
+
+
 def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
-    """Wrap node execution with start/end/error structured events."""
+    """Wrap node execution with start/end/error structured events and trace logging."""
     def _wrapped(state: Dict[str, Any]) -> Dict[str, Any]:
         cfg = state.get("_cfg", {}) if isinstance(state, dict) else {}
         start = time.perf_counter()
@@ -55,6 +62,7 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]) -
         try:
             out = fn(state)
         except Exception as exc:
+            duration_ms = round((time.perf_counter() - start) * 1000.0, 3)
             emit_event(
                 cfg,
                 {
@@ -63,12 +71,17 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]) -
                     "node": name,
                     "run_id": run_id,
                     "iteration": iteration,
-                    "duration_ms": round((time.perf_counter() - start) * 1000.0, 3),
+                    "duration_ms": duration_ms,
                     "error": str(exc),
                 },
             )
+            # Feed trace logger on error
+            trace_logger = cfg.get("_trace_logger")
+            if trace_logger is not None:
+                trace_logger.log_stage(name, state, duration_ms=duration_ms, error=str(exc))
             raise
 
+        duration_ms = round((time.perf_counter() - start) * 1000.0, 3)
         counts: Dict[str, int] = {}
         for k in ("papers", "web_sources", "analyses", "findings", "search_queries", "research_questions"):
             v = sget(out, k)
@@ -82,11 +95,27 @@ def instrument_node(name: str, fn: Callable[[Dict[str, Any]], Dict[str, Any]]) -
                 "node": name,
                 "run_id": run_id,
                 "iteration": iteration,
-                "duration_ms": round((time.perf_counter() - start) * 1000.0, 3),
+                "duration_ms": duration_ms,
                 "status": out.get("status", ""),
                 **counts,
             },
         )
+
+        # Feed trace logger
+        trace_logger = cfg.get("_trace_logger")
+        if trace_logger is not None:
+            # Merge output into a state view for snapshotting
+            merged = dict(state) if isinstance(state, dict) else {}
+            merged.update(out)
+            if name in _REVIEWER_NODES:
+                # Extract the latest verdict from the review namespace
+                review_ns = out.get("review", {})
+                reviewer_log = review_ns.get("reviewer_log", [])
+                latest_verdict = reviewer_log[-1] if reviewer_log else {}
+                trace_logger.log_reviewer(name, merged, latest_verdict, duration_ms=duration_ms)
+            else:
+                trace_logger.log_stage(name, merged, duration_ms=duration_ms)
+
         return out
 
     return _wrapped

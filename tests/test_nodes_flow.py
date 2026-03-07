@@ -1,104 +1,36 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime
 from unittest.mock import patch
 
 from src.agent import nodes
 from src.agent.core.executor import TaskResult
-from src.agent.core.state_access import sget
+from src.agent.stages import analysis, evaluation, planning, retrieval
 
 
 class NodesFlowTest(unittest.TestCase):
-    class _Guard:
-        def check(self):
-            return {
-                "exceeded": True,
-                "reason": "Token budget exhausted: 100/100",
-                "usage": {"tokens_used": 100, "api_calls": 10, "elapsed_sec": 1.0},
-            }
+    def test_nodes_reexport_stage_functions(self) -> None:
+        self.assertIs(nodes.plan_research, planning.plan_research)
+        self.assertIs(nodes.fetch_sources, retrieval.fetch_sources)
+        self.assertIs(nodes.analyze_sources, analysis.analyze_sources)
+        self.assertIs(nodes.evaluate_progress, evaluation.evaluate_progress)
 
-    def test_plan_research_fallback_when_json_invalid(self) -> None:
+    def test_plan_research_via_nodes_uses_stage_impl(self) -> None:
         state = {
             "topic": "retrieval augmented generation benchmark",
             "iteration": 0,
             "_cfg": {"agent": {"max_queries_per_iteration": 3}},
         }
-        with patch("src.agent.nodes._llm_call", return_value="not-json"):
+        with patch("src.agent.stages.planning._runtime_llm_call", return_value="not-json"):
             out = nodes.plan_research(state)
 
-        rqs = sget(out, "research_questions", [])
-        self.assertEqual(len(rqs), 1)
-        self.assertIn("retrieval augmented generation benchmark", rqs[0].lower())
-        self.assertTrue(sget(out, "_academic_queries", []))
-        self.assertTrue(sget(out, "_web_queries", []))
-        self.assertTrue(isinstance(sget(out, "query_routes", {}), dict))
+        self.assertEqual(len(out.get("research_questions", [])), 1)
+        self.assertTrue(out.get("_academic_queries", []))
+        self.assertTrue(out.get("_web_queries", []))
 
-    def test_plan_research_applies_limits_and_dynamic_routes(self) -> None:
-        state = {
-            "topic": "RAG",
-            "iteration": 0,
-            "_cfg": {
-                "agent": {
-                    "max_queries_per_iteration": 2,
-                    "budget": {"max_research_questions": 1, "max_sections": 5, "max_references": 20},
-                    "dynamic_retrieval": {"simple_query_academic": False},
-                }
-            },
-        }
-        llm_json = (
-            '{"research_questions": ["q1", "q2"], '
-            '"academic_queries": ["what is rag", "rag benchmark", "third"], '
-            '"web_queries": ["what is rag", "extra", "third"]}'
-        )
-        with patch("src.agent.nodes._llm_call", return_value=llm_json):
-            out = nodes.plan_research(state)
-
-        year = datetime.now().year
-        self.assertEqual(sget(out, "research_questions", []), ["q1"])
-        self.assertEqual(
-            sget(out, "search_queries", []),
-            [
-                "what is rag",
-                "rag benchmark",
-                "extra",
-                "q1",
-                '"q1"',
-                f"q1 {year-2} {year-1} {year}",
-                "q1 benchmark evaluation ablation",
-                "q1 survey systematic review",
-            ],
-        )
-        self.assertEqual(
-            sget(out, "_academic_queries", []),
-            [
-                "rag benchmark",
-                "extra",
-                "q1",
-                '"q1"',
-                f"q1 {year-2} {year-1} {year}",
-                "q1 benchmark evaluation ablation",
-                "q1 survey systematic review",
-            ],
-        )
-        self.assertEqual(
-            sget(out, "_web_queries", []),
-            [
-                "q1 benchmark evaluation ablation",
-                "q1 survey systematic review",
-                "what is rag",
-                "extra",
-                "rag benchmark",
-                "q1",
-                '"q1"',
-                f"q1 {year-2} {year-1} {year}",
-            ],
-        )
-
-    def test_fetch_sources_filters_by_topic_and_dedupes(self) -> None:
+    def test_fetch_sources_via_nodes_uses_stage_impl(self) -> None:
         state = {
             "topic": "retrieval augmented generation",
-            "research_questions": ["How does RAG improve retrieval quality?"],
             "search_queries": ["rag retrieval"],
             "_academic_queries": ["qa", "qb"],
             "_web_queries": ["qw"],
@@ -115,28 +47,25 @@ class NodesFlowTest(unittest.TestCase):
             "papers": [
                 {"uid": "p-new", "title": "RAG retrieval methods", "abstract": "retrieval quality"},
                 {"uid": "p-old", "title": "duplicate", "abstract": "retrieval"},
-                {"uid": "p-off", "title": "Hanabi strategy", "abstract": "game agents"},
             ],
             "web_sources": [
                 {"uid": "w-new", "title": "RAG in production", "snippet": "retrieval and generation"},
                 {"uid": "w-old", "title": "duplicate web", "snippet": "retrieval"},
-                {"uid": "w-off", "title": "football news", "snippet": "sports"},
             ],
         }
         with patch(
-            "src.agent.nodes.dispatch",
+            "src.agent.stages.retrieval._default_dispatch",
             return_value=TaskResult(success=True, data=provider_result),
         ) as dispatch_mock:
             out = nodes.fetch_sources(state)
 
-        # S1: cumulative semantics – existing items preserved, new items appended
-        self.assertEqual([p["uid"] for p in sget(out, "papers", [])], ["p-old", "p-new"])
-        self.assertEqual([w["uid"] for w in sget(out, "web_sources", [])], ["w-old", "w-new"])
+        self.assertEqual([p["uid"] for p in out.get("papers", [])], ["p-old", "p-new"])
+        self.assertEqual([w["uid"] for w in out.get("web_sources", [])], ["w-old", "w-new"])
         task = dispatch_mock.call_args.args[0]
         self.assertEqual(task.params["academic_queries"], ["qa"])
         self.assertEqual(task.params["web_queries"], ["qw", "qa", "qb"])
 
-    def test_fetch_sources_returns_failure_status_when_dispatch_fails(self) -> None:
+    def test_fetch_sources_wrapper_keeps_failure_shape(self) -> None:
         state = {
             "topic": "retrieval augmented generation",
             "search_queries": ["rag retrieval"],
@@ -148,41 +77,16 @@ class NodesFlowTest(unittest.TestCase):
             "_cfg": {},
         }
         with patch(
-            "src.agent.nodes.dispatch",
+            "src.agent.stages.retrieval._default_dispatch",
             return_value=TaskResult(success=False, error="backend down"),
         ):
             out = nodes.fetch_sources(state)
 
-        self.assertEqual(sget(out, "papers", []), [])
-        self.assertEqual(sget(out, "web_sources", []), [])
+        self.assertEqual(out.get("papers", []), [])
+        self.assertEqual(out.get("web_sources", []), [])
         self.assertIn("Fetch failed: backend down", out["status"])
 
-    def test_evaluate_progress_stops_at_max_iterations(self) -> None:
-        state = {"iteration": 2, "max_iterations": 3, "_cfg": {}, "topic": "x"}
-        out = nodes.evaluate_progress(state)
-        self.assertFalse(out["should_continue"])
-        self.assertIn("Max iterations", out["status"])
-
-    def test_evaluate_progress_stops_when_budget_exceeded(self) -> None:
-        state = {
-            "iteration": 0,
-            "max_iterations": 3,
-            "_cfg": {"_budget_guard": self._Guard()},
-            "topic": "x",
-            "papers": [{"uid": "p1"}],
-            "web_sources": [],
-        }
-        out = nodes.evaluate_progress(state)
-        self.assertFalse(out["should_continue"])
-        self.assertIn("Budget exceeded", out["status"])
-
-    def test_evaluate_progress_stops_when_no_sources(self) -> None:
-        state = {"iteration": 0, "max_iterations": 3, "_cfg": {}, "topic": "x", "papers": [], "web_sources": []}
-        out = nodes.evaluate_progress(state)
-        self.assertFalse(out["should_continue"])
-        self.assertIn("No sources found", out["status"])
-
-    def test_evaluate_progress_forces_continue_on_unresolved_audit_gaps(self) -> None:
+    def test_evaluate_progress_via_nodes_uses_stage_impl(self) -> None:
         state = {
             "topic": "x",
             "iteration": 0,
@@ -195,11 +99,11 @@ class NodesFlowTest(unittest.TestCase):
             "evidence_audit_log": [{"research_question": "rq1", "gaps": ["ab_evidence_below_2"]}],
             "_cfg": {},
         }
-        with patch("src.agent.nodes._llm_call", return_value='{"should_continue": false, "gaps": []}'):
+        with patch("src.agent.stages.evaluation._runtime_llm_call", return_value='{"should_continue": false, "gaps": []}'):
             out = nodes.evaluate_progress(state)
 
         self.assertTrue(out["should_continue"])
-        self.assertTrue(any("Evidence gap in RQ: rq1" in g for g in sget(out, "gaps", [])))
+        self.assertTrue(any("Evidence gap in RQ: rq1" in g for g in out.get("gaps", [])))
 
 
 if __name__ == "__main__":

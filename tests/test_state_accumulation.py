@@ -1,21 +1,16 @@
-"""Tests for S1: state accumulation semantics.
-
-Verify that fetch_sources, index_sources, and analyze_sources return
-cumulative lists so that later iterations with 0 new items do NOT
-wipe historical data.
-"""
+"""Tests for S1 state accumulation at the stage layer."""
 from __future__ import annotations
 
+import json
 import unittest
-from unittest.mock import patch
 
-from src.agent import nodes
 from src.agent.core.executor import TaskResult
+from src.agent.stages.analysis import analyze_sources
+from src.agent.stages.indexing import index_sources
+from src.agent.stages.retrieval import fetch_sources
 
 
 class FetchSourcesCumulativeTest(unittest.TestCase):
-    """S1: fetch_sources must return existing + new papers."""
-
     def _base_state(self):
         return {
             "topic": "RAG",
@@ -32,59 +27,69 @@ class FetchSourcesCumulativeTest(unittest.TestCase):
             },
         }
 
-    @patch("src.agent.nodes.dispatch")
-    def test_no_new_results_preserves_existing(self, mock_dispatch):
-        """Second iteration with 0 new results must NOT wipe papers/web_sources."""
-        mock_dispatch.return_value = TaskResult(
-            success=True,
-            data={"papers": [], "web_sources": []},
-        )
+    def test_no_new_results_preserves_existing(self):
         state = self._base_state()
-        result = nodes.fetch_sources(state)
-        # Cumulative: should still have the existing paper
-        papers = result.get("papers") or result.get("research", {}).get("papers", [])
-        web = result.get("web_sources") or result.get("research", {}).get("web_sources", [])
+        result = fetch_sources(
+            state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            dispatch=lambda task, cfg: TaskResult(success=True, data={"papers": [], "web_sources": []}),
+            build_topic_keywords=lambda state, cfg: {"rag"},
+            build_topic_anchor_terms=lambda state, cfg: set(),
+            is_topic_relevant=lambda **kwargs: True,
+        )
+        papers = result.get("papers", [])
+        web = result.get("web_sources", [])
         self.assertEqual(len(papers), 1)
         self.assertEqual(papers[0]["uid"], "existing-1")
         self.assertEqual(len(web), 1)
         self.assertEqual(web[0]["uid"], "existing-web-1")
 
-    @patch("src.agent.nodes.dispatch")
-    def test_new_results_merge_with_existing(self, mock_dispatch):
-        """New papers are appended to existing cumulative list."""
-        mock_dispatch.return_value = TaskResult(
-            success=True,
-            data={
-                "papers": [
-                    {"uid": "new-1", "title": "New Paper", "authors": [], "abstract": "RAG stuff", "source": "arxiv"},
-                ],
-                "web_sources": [],
-            },
-        )
+    def test_new_results_merge_with_existing(self):
         state = self._base_state()
-        result = nodes.fetch_sources(state)
-        papers = result.get("papers") or result.get("research", {}).get("papers", [])
+        result = fetch_sources(
+            state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            dispatch=lambda task, cfg: TaskResult(
+                success=True,
+                data={
+                    "papers": [
+                        {"uid": "new-1", "title": "New Paper", "authors": [], "abstract": "RAG stuff", "source": "arxiv"},
+                    ],
+                    "web_sources": [],
+                },
+            ),
+            build_topic_keywords=lambda state, cfg: {"rag"},
+            build_topic_anchor_terms=lambda state, cfg: set(),
+            is_topic_relevant=lambda **kwargs: True,
+        )
+        papers = result.get("papers", [])
         self.assertEqual(len(papers), 2)
         uids = {p["uid"] for p in papers}
         self.assertIn("existing-1", uids)
         self.assertIn("new-1", uids)
 
-    @patch("src.agent.nodes.dispatch")
-    def test_fetch_failure_preserves_existing(self, mock_dispatch):
-        """Fetch failure must NOT wipe existing data."""
-        mock_dispatch.return_value = TaskResult(success=False, error="timeout")
+    def test_fetch_failure_preserves_existing(self):
         state = self._base_state()
-        result = nodes.fetch_sources(state)
-        papers = result.get("papers") or result.get("research", {}).get("papers", [])
+        result = fetch_sources(
+            state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            dispatch=lambda task, cfg: TaskResult(success=False, error="timeout"),
+            build_topic_keywords=lambda state, cfg: {"rag"},
+            build_topic_anchor_terms=lambda state, cfg: set(),
+            is_topic_relevant=lambda **kwargs: True,
+        )
+        papers = result.get("papers", [])
         self.assertEqual(len(papers), 1)
 
 
 class AnalyzeSourcesCumulativeTest(unittest.TestCase):
-    """S1: analyze_sources must return existing + new analyses."""
-
-    @patch("src.agent.nodes._llm_call")
-    @patch("src.agent.nodes.dispatch")
-    def test_no_new_analyses_preserves_existing(self, mock_dispatch, mock_llm):
+    def test_no_new_analyses_preserves_existing(self):
         existing_analysis = {
             "uid": "old-1",
             "title": "Existing",
@@ -100,20 +105,26 @@ class AnalyzeSourcesCumulativeTest(unittest.TestCase):
             "findings": ["old finding"],
             "_cfg": {"agent": {}, "llm": {"model": "gpt-4.1-mini"}, "index": {}},
         }
-        result = nodes.analyze_sources(state)
-        analyses = result.get("analyses") or result.get("research", {}).get("analyses", [])
-        findings = result.get("findings") or result.get("research", {}).get("findings", [])
+        result = analyze_sources(
+            state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            dispatch=lambda task, cfg: TaskResult(success=False, error="unused"),
+            llm_call=lambda *args, **kwargs: json.dumps({}),
+            parse_json=json.loads,
+            extract_table_signals=lambda text: [],
+            source_tier=lambda analysis: "A",
+        )
+        analyses = result.get("analyses", [])
+        findings = result.get("findings", [])
         self.assertEqual(len(analyses), 1)
         self.assertEqual(analyses[0]["uid"], "old-1")
         self.assertEqual(len(findings), 1)
 
 
 class IndexSourcesCumulativeTest(unittest.TestCase):
-    """S1: index_sources must return cumulative indexed IDs."""
-
-    @patch("src.agent.nodes.dispatch")
-    def test_no_new_indexes_preserves_existing_ids(self, mock_dispatch):
-        mock_dispatch.return_value = TaskResult(success=True, data={})
+    def test_no_new_indexes_preserves_existing_ids(self):
         state = {
             "topic": "RAG",
             "papers": [],
@@ -127,15 +138,15 @@ class IndexSourcesCumulativeTest(unittest.TestCase):
                 "metadata_store": {},
             },
         }
-        result = nodes.index_sources(state)
-        paper_ids = (
-            result.get("indexed_paper_ids")
-            or result.get("research", {}).get("indexed_paper_ids", [])
+        result = index_sources(
+            state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            dispatch=lambda task, cfg: TaskResult(success=True, data={}),
         )
-        web_ids = (
-            result.get("indexed_web_ids")
-            or result.get("research", {}).get("indexed_web_ids", [])
-        )
+        paper_ids = result.get("indexed_paper_ids", [])
+        web_ids = result.get("indexed_web_ids", [])
         self.assertIn("old-paper-id", paper_ids)
         self.assertIn("old-web-id", web_ids)
 

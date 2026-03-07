@@ -5,9 +5,8 @@ import json
 import sys
 import types
 import unittest
-from unittest.mock import patch
 
-from src.agent import nodes
+from src.agent.stages.experiments import ingest_experiment_results, recommend_experiments
 
 
 def _import_graph_module():
@@ -50,8 +49,7 @@ graph = _import_graph_module()
 
 
 class ExperimentIntegrationTest(unittest.TestCase):
-    @patch("src.agent.nodes._llm_call")
-    def test_ml_topic_pause_then_resume(self, mock_llm) -> None:
+    def test_ml_topic_pause_then_resume(self) -> None:
         mock_plan = {
             "domain": "deep_learning",
             "subfield": "nlp",
@@ -68,26 +66,49 @@ class ExperimentIntegrationTest(unittest.TestCase):
                 }
             ],
         }
-        mock_llm.side_effect = [
-            json.dumps({"domain": "deep_learning", "subfield": "nlp", "task_type": "classification"}),
-            json.dumps(mock_plan),
-        ]
+        responses = iter(
+            [
+                json.dumps({"domain": "deep_learning", "subfield": "nlp", "task_type": "classification"}),
+                json.dumps(mock_plan),
+            ]
+        )
 
         base_state = {
             "topic": "Fine-tuning transformer models for text classification",
             "research_questions": ["RQ1"],
             "_cfg": {"llm": {"model": "gpt-4.1-mini"}, "agent": {"experiment_plan": {"require_human_results": True}}},
         }
-        recommend_update = nodes.recommend_experiments(base_state)
+        recommend_update = recommend_experiments(
+            base_state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            llm_call=lambda *args, **kwargs: next(responses),
+            parse_json=json.loads,
+            detect_domain_by_rules=lambda topic, rqs: True,
+            detect_domain_by_llm=lambda topic, rqs, cfg: json.loads(next(responses)),
+            format_claim_map=lambda claim_map: "",
+            uid_to_resolvable_url=lambda uid: "",
+            limit_experiment_groups_per_rq=lambda plan, **kwargs: (plan, 0),
+            validate_experiment_plan=lambda plan: [],
+            eligible_domains={"machine_learning", "deep_learning", "cv", "nlp", "rl"},
+        )
         self.assertTrue(bool(recommend_update.get("await_experiment_results", False)))
         self.assertEqual(
-            graph._route_after_recommend_experiments(recommend_update),
+            graph._route_after_review_experiment(recommend_update),
             "ingest_experiment_results",
         )
 
         paused_state = dict(base_state)
         paused_state.update(recommend_update)
-        ingest_wait = nodes.ingest_experiment_results(paused_state)
+        ingest_wait = ingest_experiment_results(
+            paused_state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            normalize_experiment_results_with_llm=lambda **kwargs: {},
+            validate_experiment_results=lambda results, rqs: [],
+        )
         self.assertTrue(bool(ingest_wait.get("await_experiment_results", False)))
         self.assertEqual(
             graph._route_after_ingest_experiment_results(ingest_wait),
@@ -106,25 +127,44 @@ class ExperimentIntegrationTest(unittest.TestCase):
             ],
             "summaries": [],
         }
-        ingest_ok = nodes.ingest_experiment_results(resumed_state)
+        ingest_ok = ingest_experiment_results(
+            resumed_state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            normalize_experiment_results_with_llm=lambda **kwargs: {},
+            validate_experiment_results=lambda results, rqs: [],
+        )
         self.assertFalse(bool(ingest_ok.get("await_experiment_results", True)))
         self.assertEqual(
             graph._route_after_ingest_experiment_results(ingest_ok),
             "evaluate_progress",
         )
 
-    @patch("src.agent.nodes._llm_call")
-    def test_non_ml_topic_noop_continues_to_evaluate(self, mock_llm) -> None:
+    def test_non_ml_topic_noop_continues_to_evaluate(self) -> None:
         state = {
             "topic": "History of medieval architecture",
             "research_questions": ["What styles emerged in 12th century?"],
             "_cfg": {"llm": {"model": "gpt-4.1-mini"}},
         }
-        update = nodes.recommend_experiments(state)
-        mock_llm.assert_not_called()
+        update = recommend_experiments(
+            state,
+            state_view=lambda x: x,
+            get_cfg=lambda x: x.get("_cfg", {}),
+            ns=lambda x: x,
+            llm_call=lambda *args, **kwargs: "",
+            parse_json=json.loads,
+            detect_domain_by_rules=lambda topic, rqs: False,
+            detect_domain_by_llm=lambda topic, rqs, cfg: {"domain": "other", "subfield": "", "task_type": ""},
+            format_claim_map=lambda claim_map: "",
+            uid_to_resolvable_url=lambda uid: "",
+            limit_experiment_groups_per_rq=lambda plan, **kwargs: (plan, 0),
+            validate_experiment_plan=lambda plan: [],
+            eligible_domains={"machine_learning", "deep_learning", "cv", "nlp", "rl"},
+        )
         self.assertEqual(update.get("experiment_plan", {}), {})
         self.assertEqual(
-            graph._route_after_recommend_experiments(update),
+            graph._route_after_review_experiment(update),
             "evaluate_progress",
         )
 

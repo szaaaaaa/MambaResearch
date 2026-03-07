@@ -53,17 +53,17 @@ class GraphRuntimeTest(unittest.TestCase):
         self.assertEqual(graph._route_after_evaluate({"should_continue": False}), "generate_report")
         self.assertEqual(graph._route_after_evaluate({}), "generate_report")
 
-    def test_route_after_recommend_experiments(self) -> None:
+    def test_route_after_review_experiment(self) -> None:
         self.assertEqual(
-            graph._route_after_recommend_experiments({"await_experiment_results": True}),
+            graph._route_after_review_experiment({"await_experiment_results": True}),
             "ingest_experiment_results",
         )
         self.assertEqual(
-            graph._route_after_recommend_experiments({"await_experiment_results": False}),
+            graph._route_after_review_experiment({"await_experiment_results": False}),
             "evaluate_progress",
         )
         self.assertEqual(
-            graph._route_after_recommend_experiments({}),
+            graph._route_after_review_experiment({}),
             "evaluate_progress",
         )
 
@@ -116,17 +116,22 @@ class GraphRuntimeTest(unittest.TestCase):
         self.assertEqual(calls["compile_kwargs"], {"checkpointer": "cp"})
         self.assertEqual(calls["entry"], "plan_research")
         self.assertIn("recommend_experiments", calls["nodes"])
+        self.assertIn("review_experiment", calls["nodes"])
+        self.assertIn("review_retrieval", calls["nodes"])
+        self.assertIn("review_claims_and_citations", calls["nodes"])
         self.assertIn("ingest_experiment_results", calls["nodes"])
         self.assertIn(("synthesize", "recommend_experiments"), calls["edges"])
+        self.assertIn(("recommend_experiments", "review_experiment"), calls["edges"])
 
         cond_nodes = [x[0] for x in calls["conditional"]]
-        self.assertIn("recommend_experiments", cond_nodes)
+        self.assertIn("review_experiment", cond_nodes)
+        self.assertIn("review_retrieval", cond_nodes)
         self.assertIn("ingest_experiment_results", cond_nodes)
         self.assertIn("evaluate_progress", cond_nodes)
 
         cond_map = {node: mapping for node, mapping in calls["conditional"]}
         self.assertEqual(
-            cond_map["recommend_experiments"],
+            cond_map["review_experiment"],
             {
                 "ingest_experiment_results": "ingest_experiment_results",
                 "evaluate_progress": "evaluate_progress",
@@ -157,7 +162,9 @@ class GraphRuntimeTest(unittest.TestCase):
                     with patch("src.agent.graph.uuid.uuid4", return_value="fixed-run-id"):
                         out = graph.run_research(topic="test-topic", cfg=cfg, root=".")
 
-        self.assertEqual(out, {"final": True, "run_id": "fixed-run-id"})
+        self.assertTrue(out.get("final"))
+        self.assertEqual(out["run_id"], "fixed-run-id")
+        self.assertIn("_trace_grade", out)
         state = captured["state"]
         self.assertEqual(captured["config"], {"configurable": {"thread_id": "fixed-run-id"}})
         self.assertEqual(state["topic"], "test-topic")
@@ -195,7 +202,9 @@ class GraphRuntimeTest(unittest.TestCase):
                         resume_run_id="resume-run-id",
                     )
 
-        self.assertEqual(out, {"final": True, "run_id": "resume-run-id"})
+        self.assertTrue(out.get("final"))
+        self.assertEqual(out["run_id"], "resume-run-id")
+        self.assertIn("_trace_grade", out)
         self.assertIsNone(captured["state"])
         self.assertEqual(captured["config"], {"configurable": {"thread_id": "resume-run-id"}})
 
