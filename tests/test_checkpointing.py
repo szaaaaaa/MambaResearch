@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import types
 import unittest
 from unittest.mock import patch
@@ -35,7 +36,9 @@ class CheckpointingTest(unittest.TestCase):
             saver = build_checkpointer(cfg, ".")
 
         self.assertEqual(saver, {"checkpointer": captured["conn_string"]})
-        self.assertTrue(captured["conn_string"].endswith("data\\runtime\\test-checkpoints.sqlite"))
+        self.assertTrue(
+            Path(captured["conn_string"]).as_posix().endswith("data/runtime/test-checkpoints.sqlite")
+        )
 
 
 if __name__ == "__main__":

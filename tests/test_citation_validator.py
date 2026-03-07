@@ -1,7 +1,7 @@
 """Tests for citation validator reviewer."""
 from __future__ import annotations
 
-import pytest
+import unittest
 
 from src.agent.reviewers.citation_validator import validate_citations, _validate_single_analysis
 
@@ -24,7 +24,7 @@ def _make_state(*, analyses=None, report="", claim_map=None):
     }
 
 
-class TestSingleAnalysisValidation:
+class TestSingleAnalysisValidation(unittest.TestCase):
     def test_valid_arxiv_entry(self):
         a = {
             "uid": "arxiv:2401.00001",
@@ -35,30 +35,30 @@ class TestSingleAnalysisValidation:
             "source": "arxiv",
         }
         entry = _validate_single_analysis(a)
-        assert entry["doi_valid"] is True
-        assert entry["year_valid"] is True
-        assert entry["author_valid"] is True
-        assert entry["url_reachable"] is True
-        assert len(entry["issues"]) == 0
+        self.assertTrue(entry["doi_valid"])
+        self.assertTrue(entry["year_valid"])
+        self.assertTrue(entry["author_valid"])
+        self.assertTrue(entry["url_reachable"])
+        self.assertEqual(len(entry["issues"]), 0)
 
     def test_missing_url_flagged(self):
         a = {"uid": "", "title": "No URL", "year": 2024, "source": "web"}
         entry = _validate_single_analysis(a)
-        assert entry["url_reachable"] is False
-        assert any("missing_url" in i for i in entry["issues"])
+        self.assertFalse(entry["url_reachable"])
+        self.assertTrue(any("missing_url" in i for i in entry["issues"]))
 
     def test_invalid_year_flagged(self):
         a = {"uid": "arxiv:2401.00001", "year": 1800, "url": "https://arxiv.org/abs/2401.00001"}
         entry = _validate_single_analysis(a)
-        assert entry["year_valid"] is False
+        self.assertFalse(entry["year_valid"])
 
     def test_malformed_doi(self):
         a = {"uid": "doi:invalid", "url": "https://doi.org/invalid", "year": 2024}
         entry = _validate_single_analysis(a)
-        assert entry["doi_valid"] is False
+        self.assertFalse(entry["doi_valid"])
 
 
-class TestCitationValidator:
+class TestCitationValidator(unittest.TestCase):
     def test_valid_citations_pass(self):
         analyses = [
             {
@@ -82,7 +82,7 @@ class TestCitationValidator:
         state = _make_state(analyses=analyses)
         result = validate_citations(state)
         review = result.get("review", {}).get("citation_validation", {})
-        assert review["verdict"]["status"] == "pass"
+        self.assertEqual(review["verdict"]["status"], "pass")
 
     def test_phantom_refs_detected(self):
         analyses = [
@@ -99,6 +99,10 @@ class TestCitationValidator:
         state = _make_state(analyses=analyses, report=report)
         result = validate_citations(state)
         review = result.get("review", {}).get("citation_validation", {})
-        assert review["verdict"]["status"] in ("warn", "fail")
+        self.assertIn(review["verdict"]["status"], ("warn", "fail"))
         issues = review["verdict"]["issues"]
-        assert any("phantom" in i for i in issues)
+        self.assertTrue(any("phantom" in i for i in issues))
+
+
+if __name__ == "__main__":
+    unittest.main()

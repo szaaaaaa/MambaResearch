@@ -3,8 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from src.rag.embeddings import DEFAULT_BACKEND, DEFAULT_MODEL, embed_text
 from src.rag.reranker_backends import rerank_hits as rerank_hits_with_backend
+
+DEFAULT_MODEL = "all-MiniLM-L6-v2"
+DEFAULT_BACKEND = "local_st"
 
 _VISUAL_INTENT_TERMS = {
     "figure", "fig", "diagram", "architecture", "plot", "chart",
@@ -175,6 +177,8 @@ class Retriever:
         n_results = max(top_k, candidate_k or top_k)
 
         # --- Dense retrieval via Chroma ---
+        from src.rag.embeddings import embed_text
+
         q_emb = embed_text(
             query,
             model_name=self.model_name,

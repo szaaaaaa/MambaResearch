@@ -4,8 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-
-import pytest
+import unittest
 
 from src.agent.tracing.trace_logger import TraceLogger, _snapshot_state
 from src.agent.tracing.trace_grader import grade_trace, FailureType
@@ -85,15 +84,15 @@ def _make_state(
 # ── TraceLogger Tests ────────────────────────────────────────────────
 
 
-class TestTraceLogger:
+class TestTraceLogger(unittest.TestCase):
     def test_log_stage_appends_entry(self):
         tl = TraceLogger()
         state = _make_state()
         tl.log_stage("plan_research", state, duration_ms=100)
-        assert len(tl.entries) == 1
-        assert tl.entries[0]["stage"] == "plan_research"
-        assert tl.entries[0]["type"] == "node"
-        assert tl.entries[0]["duration_ms"] == 100
+        self.assertEqual(len(tl.entries), 1)
+        self.assertEqual(tl.entries[0]["stage"], "plan_research")
+        self.assertEqual(tl.entries[0]["type"], "node")
+        self.assertEqual(tl.entries[0]["duration_ms"], 100)
 
     def test_log_reviewer_appends_verdict(self):
         tl = TraceLogger()
@@ -101,9 +100,9 @@ class TestTraceLogger:
         verdict = {"reviewer": "retrieval_reviewer", "status": "pass", "action": "continue",
                     "issues": [], "confidence": 0.9}
         tl.log_reviewer("review_retrieval", state, verdict, duration_ms=50)
-        assert len(tl.entries) == 1
-        assert tl.entries[0]["type"] == "reviewer"
-        assert tl.entries[0]["verdict"]["status"] == "pass"
+        self.assertEqual(len(tl.entries), 1)
+        self.assertEqual(tl.entries[0]["type"], "reviewer")
+        self.assertEqual(tl.entries[0]["verdict"]["status"], "pass")
 
     def test_writes_to_disk(self):
         tmpdir = Path("tests/.tmp_trace_logger/run_dir")
@@ -116,16 +115,16 @@ class TestTraceLogger:
             tl.log_stage("test_node2", state, duration_ms=20)
 
             trace_file = tmpdir / "trace.jsonl"
-            assert trace_file.exists()
+            self.assertTrue(trace_file.exists())
             lines = trace_file.read_text(encoding="utf-8").strip().split("\n")
-            assert len(lines) == 2
+            self.assertEqual(len(lines), 2)
 
             summary_path = tl.flush()
-            assert summary_path is not None
-            assert summary_path.exists()
+            self.assertIsNotNone(summary_path)
+            self.assertTrue(summary_path.exists())
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            assert summary["total_stages"] == 2
-            assert summary["total_duration_ms"] == 30
+            self.assertEqual(summary["total_stages"], 2)
+            self.assertEqual(summary["total_duration_ms"], 30)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -133,41 +132,41 @@ class TestTraceLogger:
         tl = TraceLogger(run_dir=None)
         state = _make_state()
         tl.log_stage("test", state, duration_ms=5)
-        assert tl.flush() is None
+        self.assertIsNone(tl.flush())
 
 
-class TestSnapshotState:
+class TestSnapshotState(unittest.TestCase):
     def test_captures_counts(self):
         state = _make_state(papers_count=10, analyses_count=8)
         snap = _snapshot_state(state)
-        assert snap["papers_count"] == 10
-        assert snap["analyses_count"] == 8
-        assert snap["claim_count"] == 3
+        self.assertEqual(snap["papers_count"], 10)
+        self.assertEqual(snap["analyses_count"], 8)
+        self.assertEqual(snap["claim_count"], 3)
 
     def test_captures_report_length(self):
         state = _make_state(report="# Report\n\nContent here.\n")
         snap = _snapshot_state(state)
-        assert snap["report_chars"] > 0
-        assert snap["report_lines"] > 0
+        self.assertGreater(snap["report_chars"], 0)
+        self.assertGreater(snap["report_lines"], 0)
 
 
 # ── TraceGrader Tests ────────────────────────────────────────────────
 
 
-class TestTraceGrader:
+class TestTraceGrader(unittest.TestCase):
     def test_all_pass_scores_high(self):
         state = _make_state()
         grade = grade_trace(state)
-        assert grade["overall_score"] >= 0.7
-        assert grade["primary_failure_type"] == "none"
-        assert len(grade["fix_recommendations"]) == 0
+        self.assertGreaterEqual(grade["overall_score"], 0.7)
+        self.assertEqual(grade["primary_failure_type"], "none")
+        self.assertEqual(len(grade["fix_recommendations"]), 0)
 
     def test_retrieval_failure_classified(self):
         state = _make_state(retrieval_status="fail")
         grade = grade_trace(state)
-        assert grade["stage_scores"]["retrieval"] < 0.5
-        assert grade["primary_failure_type"] == "retrieval"
-        assert len(grade["fix_recommendations"]) > 0
+        self.assertLess(grade["stage_scores"]["retrieval"], 0.5)
+        self.assertEqual(grade["primary_failure_type"], "retrieval")
+        self.assertGreater(len(grade["fix_recommendations"]), 0)
 
     def test_reasoning_failure_classified(self):
         verdicts = [
@@ -177,8 +176,8 @@ class TestTraceGrader:
         ]
         state = _make_state(claim_verdicts=verdicts)
         grade = grade_trace(state)
-        assert grade["stage_scores"]["reasoning"] < 0.3
-        assert grade["primary_failure_type"] == "reasoning"
+        self.assertLess(grade["stage_scores"]["reasoning"], 0.3)
+        self.assertEqual(grade["primary_failure_type"], "reasoning")
 
     def test_citation_failure_classified(self):
         state = _make_state(citation_status="fail")
@@ -186,8 +185,8 @@ class TestTraceGrader:
         for entry in state["review"]["citation_validation"]["entries"]:
             entry["issues"] = ["missing_url"]
         grade = grade_trace(state)
-        assert grade["stage_scores"]["citation"] < 0.7
-        assert grade["primary_failure_type"] == "citation"
+        self.assertLess(grade["stage_scores"]["citation"], 0.7)
+        self.assertEqual(grade["primary_failure_type"], "citation")
 
     def test_experiment_failure_classified(self):
         state = _make_state(experiment_status="fail")
@@ -196,7 +195,7 @@ class TestTraceGrader:
             "rq_experiments": [{"research_question": "RQ1"}]
         }
         grade = grade_trace(state)
-        assert grade["stage_scores"]["experiment"] < 0.5
+        self.assertLess(grade["stage_scores"]["experiment"], 0.5)
 
     def test_no_reviews_gives_neutral(self):
         state = _make_state()
@@ -208,25 +207,26 @@ class TestTraceGrader:
             "reviewer_log": [],
         }
         grade = grade_trace(state)
-        assert 0.3 <= grade["overall_score"] <= 0.7
+        self.assertGreaterEqual(grade["overall_score"], 0.3)
+        self.assertLessEqual(grade["overall_score"], 0.7)
 
 
 # ── Benchmark Tests ──────────────────────────────────────────────────
 
 
-class TestBenchmark:
+class TestBenchmark(unittest.TestCase):
     def test_builtin_tasks_exist(self):
-        assert len(BENCHMARK_TASKS) >= 3
+        self.assertGreaterEqual(len(BENCHMARK_TASKS), 3)
         for task in BENCHMARK_TASKS:
-            assert task.task_id
-            assert task.topic
-            assert task.expected_rq_keywords
+            self.assertTrue(task.task_id)
+            self.assertTrue(task.topic)
+            self.assertTrue(task.expected_rq_keywords)
 
     def test_task_to_dict(self):
         task = BENCHMARK_TASKS[0]
         d = task.to_dict()
-        assert d["task_id"] == task.task_id
-        assert d["topic"] == task.topic
+        self.assertEqual(d["task_id"], task.task_id)
+        self.assertEqual(d["topic"], task.topic)
 
     def test_evaluate_passing_run(self):
         task = BenchmarkTask(
@@ -240,9 +240,9 @@ class TestBenchmark:
         state = _make_state()
         grade = grade_trace(state)
         result = evaluate_against_benchmark(task, state, grade)
-        assert result["pass"] is True
-        assert result["checks"]["rq_keyword_coverage"]["pass"] is True
-        assert result["checks"]["min_sources"]["pass"] is True
+        self.assertTrue(result["pass"])
+        self.assertTrue(result["checks"]["rq_keyword_coverage"]["pass"])
+        self.assertTrue(result["checks"]["min_sources"]["pass"])
 
     def test_evaluate_failing_run(self):
         task = BenchmarkTask(
@@ -257,4 +257,8 @@ class TestBenchmark:
         grade = grade_trace(state)
         result = evaluate_against_benchmark(task, state, grade)
         # Should fail on at least one criterion
-        assert result["pass"] is False
+        self.assertFalse(result["pass"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,7 +1,7 @@
 """Tests for the retrieval reviewer gate."""
 from __future__ import annotations
 
-import pytest
+import unittest
 
 from src.agent.reviewers.retrieval_reviewer import review_retrieval
 
@@ -89,7 +89,7 @@ def _analysis(uid, title="Test Analysis", source="arxiv", relevance=0.8, venue="
     }
 
 
-class TestRetrievalReviewerPass:
+class TestRetrievalReviewerPass(unittest.TestCase):
     def test_sufficient_diverse_sources_pass(self):
         papers = [
             _paper(f"arxiv:{i}", f"Paper about concept drift {i}", 2020 + i, venue=f"Venue{i}")
@@ -107,11 +107,11 @@ class TestRetrievalReviewerPass:
         )
         result = review_retrieval(state)
         review = result.get("review", {}).get("retrieval_review", {})
-        assert review["verdict"]["status"] == "pass"
-        assert review["verdict"]["action"] == "continue"
+        self.assertEqual(review["verdict"]["status"], "pass")
+        self.assertEqual(review["verdict"]["action"], "continue")
 
 
-class TestRetrievalReviewerWarn:
+class TestRetrievalReviewerWarn(unittest.TestCase):
     def test_low_source_count_warns(self):
         papers = [_paper("arxiv:1", "Concept drift paper", 2024)]
         analyses = [_analysis("arxiv:1", "Concept drift analysis")]
@@ -123,11 +123,11 @@ class TestRetrievalReviewerWarn:
         )
         result = review_retrieval(state)
         review = result.get("review", {}).get("retrieval_review", {})
-        assert review["verdict"]["status"] in ("warn", "fail")
-        assert len(review["verdict"]["issues"]) > 0
+        self.assertIn(review["verdict"]["status"], ("warn", "fail"))
+        self.assertGreater(len(review["verdict"]["issues"]), 0)
 
 
-class TestRetrievalReviewerFail:
+class TestRetrievalReviewerFail(unittest.TestCase):
     def test_empty_sources_fail(self):
         state = _make_state(
             papers=[],
@@ -141,9 +141,9 @@ class TestRetrievalReviewerFail:
         )
         result = review_retrieval(state)
         review = result.get("review", {}).get("retrieval_review", {})
-        assert review["verdict"]["status"] == "fail"
-        assert review["verdict"]["action"] == "retry_upstream"
-        assert len(review["suggested_queries"]) > 0
+        self.assertEqual(review["verdict"]["status"], "fail")
+        self.assertEqual(review["verdict"]["action"], "retry_upstream")
+        self.assertGreater(len(review["suggested_queries"]), 0)
 
     def test_retry_injects_queries(self):
         state = _make_state(
@@ -155,10 +155,10 @@ class TestRetrievalReviewerFail:
         result = review_retrieval(state)
         # Should have supplemental queries in state update
         if "search_queries" in result:
-            assert len(result["search_queries"]) > 1
+            self.assertGreater(len(result["search_queries"]), 1)
 
 
-class TestRQCoverage:
+class TestRQCoverage(unittest.TestCase):
     def test_uncovered_rq_detected(self):
         papers = [
             _paper(f"arxiv:{i}", f"Paper about reinforcement learning {i}", 2020 + i, venue=f"V{i}")
@@ -178,10 +178,10 @@ class TestRQCoverage:
         )
         result = review_retrieval(state)
         review = result.get("review", {}).get("retrieval_review", {})
-        assert len(review["missing_key_topics"]) > 0
+        self.assertGreater(len(review["missing_key_topics"]), 0)
 
 
-class TestDiversityStats:
+class TestDiversityStats(unittest.TestCase):
     def test_stats_computed(self):
         papers = [
             _paper("arxiv:1", "Paper A", 2022, venue="NeurIPS"),
@@ -191,7 +191,11 @@ class TestDiversityStats:
         result = review_retrieval(state)
         review = result.get("review", {}).get("retrieval_review", {})
         stats = review["diversity_stats"]
-        assert stats["total_sources"] == 2
-        assert stats["academic_count"] == 2
-        assert "NeurIPS" in stats["unique_venues"]
-        assert "ICML" in stats["unique_venues"]
+        self.assertEqual(stats["total_sources"], 2)
+        self.assertEqual(stats["academic_count"], 2)
+        self.assertIn("NeurIPS", stats["unique_venues"])
+        self.assertIn("ICML", stats["unique_venues"])
+
+
+if __name__ == "__main__":
+    unittest.main()

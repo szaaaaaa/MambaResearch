@@ -1,7 +1,7 @@
 """Tests for experiment reviewer."""
 from __future__ import annotations
 
-import pytest
+import unittest
 
 from src.agent.reviewers.experiment_reviewer import review_experiment
 
@@ -25,12 +25,12 @@ def _make_state(*, experiment_plan=None):
     }
 
 
-class TestExperimentReviewer:
+class TestExperimentReviewer(unittest.TestCase):
     def test_no_plan_passes(self):
         state = _make_state()
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        assert review["verdict"]["status"] == "pass"
+        self.assertEqual(review["verdict"]["status"], "pass")
 
     def test_complete_plan_passes(self):
         plan = {
@@ -58,7 +58,7 @@ class TestExperimentReviewer:
         state = _make_state(experiment_plan=plan)
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        assert review["verdict"]["status"] in ("pass", "warn")
+        self.assertIn(review["verdict"]["status"], ("pass", "warn"))
 
     def test_missing_baseline_flagged(self):
         plan = {
@@ -75,7 +75,7 @@ class TestExperimentReviewer:
         state = _make_state(experiment_plan=plan)
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        assert len(review["baseline_issues"]) > 0
+        self.assertGreater(len(review["baseline_issues"]), 0)
 
     def test_missing_metrics_flagged(self):
         plan = {
@@ -91,7 +91,7 @@ class TestExperimentReviewer:
         state = _make_state(experiment_plan=plan)
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        assert len(review["metric_issues"]) > 0
+        self.assertGreater(len(review["metric_issues"]), 0)
 
     def test_placeholder_metric_flagged(self):
         plan = {
@@ -107,7 +107,7 @@ class TestExperimentReviewer:
         state = _make_state(experiment_plan=plan)
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        assert len(review["metric_issues"]) > 0
+        self.assertGreater(len(review["metric_issues"]), 0)
 
     def test_single_dataset_leakage_warning(self):
         plan = {
@@ -123,4 +123,8 @@ class TestExperimentReviewer:
         state = _make_state(experiment_plan=plan)
         result = review_experiment(state)
         review = result.get("review", {}).get("experiment_review", {})
-        assert len(review["leakage_risks"]) > 0
+        self.assertGreater(len(review["leakage_risks"]), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

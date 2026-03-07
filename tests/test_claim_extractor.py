@@ -1,7 +1,7 @@
 """Tests for claim extractor reviewer."""
 from __future__ import annotations
 
-import pytest
+import unittest
 
 from src.agent.reviewers.claim_extractor import extract_and_assess_claims
 
@@ -24,14 +24,14 @@ def _make_state(*, claim_map=None, analyses=None, report=""):
     }
 
 
-class TestClaimExtractor:
+class TestClaimExtractor(unittest.TestCase):
     def test_no_claims_warns(self):
         state = _make_state()
         result = extract_and_assess_claims(state)
         review = result.get("review", {})
-        assert review["claim_verdicts"] == []
+        self.assertEqual(review["claim_verdicts"], [])
         log = review["reviewer_log"]
-        assert any(v["status"] == "warn" for v in log)
+        self.assertTrue(any(v["status"] == "warn" for v in log))
 
     def test_supported_claims(self):
         analyses = [
@@ -64,8 +64,8 @@ class TestClaimExtractor:
         state = _make_state(claim_map=claim_map, analyses=analyses)
         result = extract_and_assess_claims(state)
         verdicts = result.get("review", {}).get("claim_verdicts", [])
-        assert len(verdicts) == 1
-        assert verdicts[0]["status"] == "supported"
+        self.assertEqual(len(verdicts), 1)
+        self.assertEqual(verdicts[0]["status"], "supported")
 
     def test_unsupported_claim_detected(self):
         claim_map = [
@@ -81,5 +81,9 @@ class TestClaimExtractor:
         state = _make_state(claim_map=claim_map, analyses=[])
         result = extract_and_assess_claims(state)
         verdicts = result.get("review", {}).get("claim_verdicts", [])
-        assert len(verdicts) == 1
-        assert verdicts[0]["status"] == "unsupported"
+        self.assertEqual(len(verdicts), 1)
+        self.assertEqual(verdicts[0]["status"], "unsupported")
+
+
+if __name__ == "__main__":
+    unittest.main()
