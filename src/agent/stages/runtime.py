@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+from src.agent.core.config import apply_role_llm_overrides
 from src.agent.plugins.bootstrap import ensure_plugins_registered
 from src.agent.providers.llm_adapter import ModelRequest, get_llm_provider, parse_structured_output
 
@@ -30,7 +31,10 @@ def llm_call(
     temperature: float = 0.3,
 ) -> str:
     """Thin wrapper around direct provider-adapter LLM calls."""
-    resolved_cfg = dict(cfg or {})
+    resolved_cfg = apply_role_llm_overrides(
+        dict(cfg or {}),
+        str((cfg or {}).get("_active_role", "")).strip().lower() or None,
+    )
     ensure_plugins_registered()
     adapter = get_llm_provider(_resolve_provider_name(resolved_cfg))
     response = adapter.generate(

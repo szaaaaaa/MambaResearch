@@ -141,6 +141,7 @@ _DEFAULT_LLM_MODEL_BY_PROVIDER = {
     "openai": "gpt-4.1-mini",
     "claude": "claude-sonnet-4-5",
 }
+_ROLE_LLM_IDS = ("conductor", "researcher", "critic")
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -180,6 +181,34 @@ def _has_nested_key(data: Dict[str, Any] | None, *path: str) -> bool:
     return True
 
 
+def apply_role_llm_overrides(cfg: Dict[str, Any], role_id: str | None) -> Dict[str, Any]:
+    if not role_id:
+        return deepcopy(cfg)
+
+    out = deepcopy(cfg)
+    llm_cfg = out.setdefault("llm", {})
+    role_models = llm_cfg.get("role_models", {})
+    role_cfg = role_models.get(role_id, {}) if isinstance(role_models, dict) else {}
+    if not isinstance(role_cfg, dict):
+        return out
+
+    provider_override = str(role_cfg.get("provider", "")).strip().lower()
+    model_override = str(role_cfg.get("model", "")).strip()
+    temperature_override = role_cfg.get("temperature")
+
+    if provider_override in _LLM_BACKEND_BY_PROVIDER:
+        llm_cfg["provider"] = provider_override
+        out.setdefault("providers", {}).setdefault("llm", {})["backend"] = _LLM_BACKEND_BY_PROVIDER[provider_override]
+
+    if model_override:
+        llm_cfg["model"] = model_override
+
+    if temperature_override not in (None, ""):
+        llm_cfg["temperature"] = float(temperature_override)
+
+    return out
+
+
 def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     """Normalize config shape and enforce baseline defaults."""
     raw_cfg: Dict[str, Any] = deepcopy(cfg or {})
@@ -197,6 +226,27 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     llm_cfg["provider"] = llm_provider
     llm_cfg.setdefault("model", _DEFAULT_LLM_MODEL_BY_PROVIDER[llm_provider])
     llm_cfg.setdefault("temperature", 0.3)
+    role_models_cfg = llm_cfg.setdefault("role_models", {})
+    if not isinstance(role_models_cfg, dict):
+        role_models_cfg = {}
+        llm_cfg["role_models"] = role_models_cfg
+    for role_id in _ROLE_LLM_IDS:
+        role_cfg = role_models_cfg.setdefault(role_id, {})
+        if not isinstance(role_cfg, dict):
+            role_cfg = {}
+            role_models_cfg[role_id] = role_cfg
+        provider_override = str(role_cfg.get("provider", "")).strip().lower()
+        if provider_override and provider_override not in {"gemini", "openai", "claude"}:
+            provider_override = ""
+        role_cfg["provider"] = provider_override
+        model_override = str(role_cfg.get("model", "")).strip()
+        if provider_override and not model_override:
+            model_override = _DEFAULT_LLM_MODEL_BY_PROVIDER[provider_override]
+        role_cfg["model"] = model_override
+        if role_cfg.get("temperature") in (None, ""):
+            role_cfg.pop("temperature", None)
+        else:
+            role_cfg["temperature"] = float(role_cfg["temperature"])
 
     providers_cfg = out.setdefault("providers", {})
     providers_llm_cfg = providers_cfg.setdefault("llm", {})
@@ -284,6 +334,12 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
     if reranker_backend not in {"local_crossencoder", "disabled"}:
         reranker_backend = DEFAULT_RETRIEVAL_RERANKER_BACKEND
     retrieval_cfg["reranker_backend"] = reranker_backend
+
+    index_cfg = out.setdefault("index", {})
+    index_backend = str(index_cfg.get("backend", "chroma")).strip().lower()
+    if index_backend not in {"chroma", "faiss"}:
+        index_backend = "chroma"
+    index_cfg["backend"] = index_backend
 
     agent_cfg = out.setdefault("agent", {})
     agent_cfg["max_iterations"] = int(agent_cfg.get("max_iterations", DEFAULT_MAX_ITERATIONS))

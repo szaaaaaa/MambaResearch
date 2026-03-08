@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Any, Dict
 
+from src.agent.core.config import apply_role_llm_overrides
 from src.agent.core.events import emit_event
 from src.agent.core.failure import FailureAction, classify_failure
 from src.agent.plugins.bootstrap import ensure_plugins_registered
@@ -46,6 +47,7 @@ def call_llm(
 
     Nodes should only call this function and never call SDKs directly.
     """
+    cfg = apply_role_llm_overrides(cfg, str(cfg.get("_active_role", "")).strip().lower() or None)
     llm_cfg = cfg.get("llm", {})
     provider_cfg = cfg.get("providers", {}).get("llm", {})
     provider_name = _resolve_provider_name(cfg)

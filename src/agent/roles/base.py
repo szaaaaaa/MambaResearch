@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.agent.artifacts.base import Artifact
+from src.agent.core.config import apply_role_llm_overrides
 from src.agent.plugins.bootstrap import ensure_plugins_registered
 from src.agent.skills.registry import get_skill_registry
 
@@ -34,7 +35,8 @@ class RoleAgent:
             raise ValueError(f"Skill {skill_id} is not allowed for role {self.policy.role_id}")
 
         ensure_plugins_registered()
-        cfg = dict(self.state.get("_cfg", {}))
+        cfg = apply_role_llm_overrides(dict(self.state.get("_cfg", {})), self.policy.role_id)
+        cfg["_active_role"] = self.policy.role_id
         cfg["_skill_state"] = self.state
         result = get_skill_registry().invoke(skill_id, list(artifacts), cfg)
         if not result.success:
