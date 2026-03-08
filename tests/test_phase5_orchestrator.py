@@ -32,11 +32,40 @@ class Phase5OrchestratorTest(unittest.TestCase):
                     _artifact("TopicBrief", {"topic": "t", "scope": {}}),
                     _artifact("SearchPlan", {"research_questions": ["rq"], "search_queries": ["q"], "query_routes": {}}),
                     _artifact("CorpusSnapshot", {"papers": [], "web_sources": [], "indexed_paper_ids": []}),
-                    _artifact("PaperNote", {"uid": "p1", "title": "Paper"}),
+                    _artifact(
+                        "PaperNote",
+                        {
+                            "uid": "p1",
+                            "title": "Paper",
+                            "source": "arxiv",
+                            "source_type": "paper",
+                            "summary": "This paper argues for modular agent evaluation pipelines.",
+                            "key_findings": ["Explicit metrics improve comparability across runs."],
+                            "methodology": "case study",
+                            "credibility": "high",
+                            "relevance_score": 0.91,
+                        },
+                    ),
                     _artifact("RelatedWorkMatrix", {"narrative": "narrative", "claims": []}),
                     _artifact("GapMap", {"gaps": ["g1"]}),
                 ]
                 self.state["_artifact_objects"] = output
+                self.state["research_questions"] = ["rq"]
+                self.state["analyses"] = [
+                    {
+                        "uid": "p1",
+                        "title": "Paper",
+                        "source": "arxiv",
+                        "source_type": "paper",
+                        "summary": "This paper argues for modular agent evaluation pipelines.",
+                        "key_findings": ["Explicit metrics improve comparability across runs."],
+                        "methodology": "case study",
+                        "credibility": "high",
+                        "relevance_score": 0.91,
+                    }
+                ]
+                self.state["findings"] = ["Explicit metrics improve comparability across runs."]
+                self.state["gaps"] = ["g1"]
                 self.state["synthesis"] = "narrative"
                 return output
 
@@ -54,7 +83,13 @@ class Phase5OrchestratorTest(unittest.TestCase):
                         orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
                         state = orchestrator.run(topic="topic")
         self.assertEqual(state["status"], "Research OS orchestration completed")
-        self.assertEqual(state["report"]["report"], "narrative")
+        report = state["report"]["report"]
+        self.assertIn("# Stage Research Brief: topic", report)
+        self.assertIn("## Current Synthesis", report)
+        self.assertIn("narrative", report)
+        self.assertIn("## Source-by-Source Conclusions", report)
+        self.assertIn("## Cross-Source View", report)
+        self.assertIn("### Gaps and Next Ideas", report)
         self.assertIn("artifacts", state)
 
     def test_orchestrator_revise_then_pass(self) -> None:
@@ -80,6 +115,9 @@ class Phase5OrchestratorTest(unittest.TestCase):
                     _artifact("RelatedWorkMatrix", {"narrative": f"n{type(self).calls}", "claims": []})
                 ]
                 self.state["_artifact_objects"] = output
+                self.state["analyses"] = []
+                self.state["findings"] = [f"finding-{type(self).calls}"]
+                self.state["gaps"] = [f"gap-{type(self).calls}"]
                 self.state["synthesis"] = f"n{type(self).calls}"
                 return output
 
@@ -105,6 +143,7 @@ class Phase5OrchestratorTest(unittest.TestCase):
                         state = orchestrator.run(topic="topic")
         self.assertEqual(state["status"], "Research OS orchestration completed")
         self.assertEqual(state["iteration"], 1)
+        self.assertIn("n2", state["report"]["report"])
         self.assertEqual(_Conductor.calls, 2)
         self.assertEqual(_Researcher.calls, 2)
         self.assertEqual(_Critic.calls, 2)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,142 @@ def _build_initial_state(*, topic: str, cfg: dict[str, Any], run_id: str, max_it
         "_academic_queries": [],
         "_web_queries": [],
     }
+
+
+def _clean_line(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _truncate(value: str, *, limit: int = 240) -> str:
+    text = _clean_line(value)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _extract_tension_sentences(text: str, *, limit: int = 3) -> list[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r"(?<=[.!?。；;])\s+", raw)
+    markers = ("however", "but", "whereas", "while", "in contrast", "on the other hand", "然而", "但是", "但", "相反")
+    hits: list[str] = []
+    for part in parts:
+        sentence = _clean_line(part)
+        low = sentence.lower()
+        if sentence and any(marker in low for marker in markers):
+            hits.append(sentence)
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        key = _clean_line(value).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(_clean_line(value))
+    return out
+
+
+def _render_stage_report(state: ResearchState, *, terminal_label: str, critic_decision: str) -> str:
+    topic = _clean_line(state.get("topic", "Untitled Topic")) or "Untitled Topic"
+    synthesis = str(state.get("synthesis", "") or "").strip()
+    analyses = [item for item in state.get("analyses", []) if isinstance(item, dict)]
+    research_questions = [item for item in state.get("research_questions", []) if _clean_line(item)]
+    gaps = _dedupe_keep_order([str(item) for item in state.get("gaps", [])])
+    findings = _dedupe_keep_order([str(item) for item in state.get("findings", [])])
+    papers = list(state.get("papers", []))
+    web_sources = list(state.get("web_sources", []))
+    review = state.get("review", {}) if isinstance(state.get("review", {}), dict) else {}
+    retrieval_review = review.get("retrieval_review", {}) if isinstance(review.get("retrieval_review", {}), dict) else {}
+    suggested_queries = _dedupe_keep_order([str(item) for item in retrieval_review.get("suggested_queries", [])])
+    reviewer_issues = _dedupe_keep_order([str(item) for item in retrieval_review.get("issues", [])])
+    tension_points = _extract_tension_sentences(synthesis)
+
+    lines: list[str] = [
+        f"# Stage Research Brief: {topic}",
+        "",
+        f"- Status: {terminal_label}",
+        f"- Critic decision: {critic_decision}",
+        f"- Iteration: {int(state.get('iteration', 0))} / {int(state.get('max_iterations', 0))}",
+        f"- Sources analyzed: {len(analyses)} ({len(papers)} papers, {len(web_sources)} web sources)",
+        "",
+        "## Current Synthesis",
+        "",
+        synthesis or "No synthesis narrative is available yet.",
+        "",
+    ]
+
+    if research_questions:
+        lines.extend(["## Research Questions", ""])
+        lines.extend([f"- {question}" for question in research_questions])
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Source-by-Source Conclusions",
+            "",
+        ]
+    )
+    if analyses:
+        for analysis in analyses[:8]:
+            title = _clean_line(analysis.get("title", "Unknown Source")) or "Unknown Source"
+            source_type = _clean_line(analysis.get("source_type") or analysis.get("source") or "source")
+            lines.append(f"### {title}")
+            lines.append(f"- Source type: {source_type}")
+            summary = _truncate(str(analysis.get("summary", "") or ""))
+            if summary:
+                lines.append(f"- Summary: {summary}")
+            key_findings = [item for item in analysis.get("key_findings", []) if _clean_line(item)]
+            if key_findings:
+                lines.append("- Key points:")
+                lines.extend([f"  - {_truncate(str(item), limit=180)}" for item in key_findings[:4]])
+            methodology = _clean_line(analysis.get("methodology", ""))
+            if methodology:
+                lines.append(f"- Methodology: {methodology}")
+            credibility = _clean_line(analysis.get("credibility", ""))
+            if credibility:
+                lines.append(f"- Credibility: {credibility}")
+            relevance = analysis.get("relevance_score")
+            if relevance is not None:
+                lines.append(f"- Relevance: {relevance}")
+            lines.append("")
+    else:
+        lines.extend(["No analyzed source cards are available yet.", ""])
+
+    lines.extend(["## Cross-Source View", ""])
+    if findings:
+        lines.append("### Emerging Consensus and Trends")
+        lines.append("")
+        lines.extend([f"- {_truncate(item, limit=220)}" for item in findings[:6]])
+        lines.append("")
+
+    lines.append("### Tensions or Contradictions")
+    lines.append("")
+    if tension_points:
+        lines.extend([f"- {point}" for point in tension_points])
+    else:
+        lines.append("- No explicit contradiction was surfaced in the current synthesis pass.")
+    lines.append("")
+
+    lines.append("### Gaps and Next Ideas")
+    lines.append("")
+    if gaps:
+        lines.extend([f"- Gap: {gap}" for gap in gaps[:6]])
+    else:
+        lines.append("- No major gap has been recorded yet.")
+    if suggested_queries:
+        lines.extend([f"- Next query idea: {query}" for query in suggested_queries[:4]])
+    if reviewer_issues:
+        lines.extend([f"- Reviewer concern: {issue}" for issue in reviewer_issues[:4]])
+    lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 class ResearchOrchestrator:
@@ -133,7 +270,11 @@ class ResearchOrchestrator:
                 state["status"] = "Research OS orchestration completed"
                 report_ns = state.setdefault("report", {})
                 if isinstance(report_ns, dict) and not str(report_ns.get("report", "")).strip():
-                    report_ns["report"] = str(state.get("synthesis", ""))
+                    report_ns["report"] = _render_stage_report(
+                        state,
+                        terminal_label=state["status"],
+                        critic_decision=decision,
+                    )
                 return state
 
             if decision == "block":
@@ -141,7 +282,11 @@ class ResearchOrchestrator:
                 state["error"] = "Blocked by critic"
                 report_ns = state.setdefault("report", {})
                 if isinstance(report_ns, dict) and not str(report_ns.get("report", "")).strip():
-                    report_ns["report"] = str(state.get("synthesis", ""))
+                    report_ns["report"] = _render_stage_report(
+                        state,
+                        terminal_label=state["status"],
+                        critic_decision=decision,
+                    )
                 return state
 
             if hitl_gate(state):
@@ -153,7 +298,11 @@ class ResearchOrchestrator:
                 state["error"] = "Critic requested revise after retry budget exhaustion"
                 report_ns = state.setdefault("report", {})
                 if isinstance(report_ns, dict) and not str(report_ns.get("report", "")).strip():
-                    report_ns["report"] = str(state.get("synthesis", ""))
+                    report_ns["report"] = _render_stage_report(
+                        state,
+                        terminal_label=state["status"],
+                        critic_decision=decision,
+                    )
                 return state
 
             retries += 1
