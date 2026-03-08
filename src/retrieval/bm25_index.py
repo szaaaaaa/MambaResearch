@@ -34,6 +34,20 @@ def build_bm25_sidecar(
                 f.write(json.dumps({"id": cid, "tokens": _tokenize(text)}, ensure_ascii=False) + "\n")
 
 
+def rebuild_bm25_sidecar(
+    persist_dir: str,
+    collection_name: str,
+    chunk_ids: List[str],
+    chunk_texts: List[str],
+) -> None:
+    path = _sidecar_path(persist_dir, collection_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(path, "w", encoding="utf-8") as f:
+        for cid, text in zip(chunk_ids, chunk_texts):
+            f.write(json.dumps({"id": cid, "tokens": _tokenize(text)}, ensure_ascii=False) + "\n")
+
+
 def search_bm25(
     persist_dir: str,
     collection_name: str,
@@ -78,4 +92,3 @@ def search_bm25(
 
 def _sidecar_path(persist_dir: str, collection_name: str) -> Path:
     return Path(persist_dir) / f"{collection_name}_bm25.jsonl"
-

@@ -33,6 +33,17 @@ def persist_dir(root: Path, cfg: Dict[str, Any], override: str | None = None) ->
     )
 
 
+def index_backend(cfg: Dict[str, Any], override: str | None = None) -> str:
+    raw = pick_str(
+        override,
+        get_by_dotted(cfg, "index.backend"),
+        default="chroma",
+    ).lower()
+    if raw not in {"chroma", "faiss"}:
+        return "chroma"
+    return raw
+
+
 def outputs_dir(root: Path, cfg: Dict[str, Any]) -> Path:
     return resolve_path(root, pick_str(get_by_dotted(cfg, "paths.outputs_dir"), default="outputs"), cfg)
 

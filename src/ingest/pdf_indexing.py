@@ -47,6 +47,16 @@ def _delete_old_chunks(persist_dir: str, collection_name: str, doc_id: str) -> N
     col.delete(where={"doc_id": doc_id})
 
 
+def _delete_old_faiss_chunks(persist_dir: str, collection_name: str, doc_id: str) -> None:
+    from src.ingest.faiss_indexer import delete_doc_chunks
+
+    delete_doc_chunks(
+        persist_dir=persist_dir,
+        collection_name=collection_name,
+        doc_id=doc_id,
+    )
+
+
 def index_pdfs(
     *,
     persist_dir: str,
@@ -66,6 +76,7 @@ def index_pdfs(
     ingest_overrides: Dict[str, Any] | None = None,
     allow_existing_doc_updates: bool = False,
     include_text_chunks: bool = True,
+    index_backend: str = "chroma",
 ) -> Dict[str, Any]:
     from src.ingest.chunking import chunk_text
     from src.ingest.figure_captioner import figure_data_to_chunks, process_figures
@@ -74,6 +85,7 @@ def index_pdfs(
         build_figure_contexts_from_text,
         extract_figures,
     )
+    from src.ingest.faiss_indexer import build_faiss_index
     from src.ingest.indexer import build_chroma_index
     from src.ingest.latex_loader import parse_latex
     from src.ingest.pdf_loader import load_pdf_text
@@ -164,20 +176,37 @@ def index_pdfs(
                 logger.warning("Figure processing failed for %s: %s", doc_id, exc)
 
         if not run_id and not keep_old:
-            _delete_old_chunks(persist_dir, collection_name, doc_id)
+            if index_backend == "faiss":
+                _delete_old_faiss_chunks(persist_dir, collection_name, doc_id)
+            else:
+                _delete_old_chunks(persist_dir, collection_name, doc_id)
 
-        added = build_chroma_index(
-            persist_dir=persist_dir,
-            collection_name=collection_name,
-            chunks=all_chunks,
-            doc_id=doc_id,
-            run_id=run_id,
-            embedding_model=effective_embedding_model,
-            embedding_backend=embedding_backend,
-            build_bm25=build_bm25,
-            cfg=cfg,
-            allow_existing_doc_updates=allow_existing_doc_updates,
-        )
+        if index_backend == "faiss":
+            added = build_faiss_index(
+                persist_dir=persist_dir,
+                collection_name=collection_name,
+                chunks=all_chunks,
+                doc_id=doc_id,
+                run_id=run_id,
+                embedding_model=effective_embedding_model,
+                embedding_backend=embedding_backend,
+                build_bm25=build_bm25,
+                cfg=cfg,
+                allow_existing_doc_updates=allow_existing_doc_updates,
+            )
+        else:
+            added = build_chroma_index(
+                persist_dir=persist_dir,
+                collection_name=collection_name,
+                chunks=all_chunks,
+                doc_id=doc_id,
+                run_id=run_id,
+                embedding_model=effective_embedding_model,
+                embedding_backend=embedding_backend,
+                build_bm25=build_bm25,
+                cfg=cfg,
+                allow_existing_doc_updates=allow_existing_doc_updates,
+            )
 
         rows.append(
             {

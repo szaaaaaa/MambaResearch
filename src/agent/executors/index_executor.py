@@ -5,15 +5,16 @@ from typing import Any, Dict, List
 
 from src.agent.core.executor import TaskRequest, TaskResult
 from src.agent.core.executor_router import register_executor
-from src.agent.infra.indexing.chroma_indexing import (
-    build_web_index,
-    chunk_text,
-    index_pdf_documents,
-    init_run_tracking,
-    upsert_run_doc_records,
-    upsert_run_session_record,
-)
-from src.common.rag_config import retrieval_effective_embedding_model, retrieval_embedding_backend
+from src.common.rag_config import index_backend, retrieval_effective_embedding_model, retrieval_embedding_backend
+
+
+def _resolve_indexing_backend(cfg: Dict[str, Any]):
+    backend = index_backend(cfg)
+    if backend == "faiss":
+        from src.agent.infra.indexing import faiss_indexing as backend_module
+        return backend_module
+    from src.agent.infra.indexing import chroma_indexing as backend_module
+    return backend_module
 
 
 class IndexExecutor:
@@ -31,13 +32,14 @@ class IndexExecutor:
         try:
             action = task.action
             params = task.params
+            backend_module = _resolve_indexing_backend(cfg)
 
             if action == "init_run_tracking":
-                init_run_tracking(str(params["sqlite_path"]))
+                backend_module.init_run_tracking(str(params["sqlite_path"]))
                 return TaskResult(success=True, data={"ok": True})
 
             if action == "upsert_run_session_record":
-                upsert_run_session_record(
+                backend_module.upsert_run_session_record(
                     str(params["sqlite_path"]),
                     run_id=str(params["run_id"]),
                     topic=str(params.get("topic", "")),
@@ -47,7 +49,7 @@ class IndexExecutor:
             if action == "index_pdf_documents":
                 pdf_paths = [Path(p) for p in params.get("pdfs", [])]
                 retrieval_cfg = cfg.get("retrieval", {})
-                result = index_pdf_documents(
+                result = backend_module.index_pdf_documents(
                     persist_dir=str(params["persist_dir"]),
                     collection_name=str(params["collection_name"]),
                     pdfs=pdf_paths,
@@ -69,7 +71,7 @@ class IndexExecutor:
                 return TaskResult(success=True, data=dict(result))
 
             if action == "chunk_text":
-                chunks = chunk_text(
+                chunks = backend_module.chunk_text(
                     str(params.get("text", "")),
                     chunk_size=int(params["chunk_size"]),
                     overlap=int(params["overlap"]),
@@ -78,7 +80,7 @@ class IndexExecutor:
 
             if action == "build_web_index":
                 retrieval_cfg = cfg.get("retrieval", {})
-                build_web_index(
+                backend_module.build_web_index(
                     persist_dir=str(params["persist_dir"]),
                     collection_name=str(params["collection_name"]),
                     chunks=list(params.get("chunks", [])),
@@ -95,7 +97,7 @@ class IndexExecutor:
                 return TaskResult(success=True, data={"ok": True})
 
             if action == "upsert_run_doc_records":
-                upsert_run_doc_records(
+                backend_module.upsert_run_doc_records(
                     str(params["sqlite_path"]),
                     run_id=str(params["run_id"]),
                     doc_uids=list(params.get("doc_uids", [])),

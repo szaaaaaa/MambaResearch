@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from src.agent.infra.retrieval.chroma_retriever import retrieve_chunks as infra_retrieve_chunks
 from src.agent.plugins.registry import register_retriever_backend
+from src.common.rag_config import index_backend
 from src.common.rag_config import (
     retrieval_effective_embedding_model,
     retrieval_embedding_backend,
     retrieval_reranker_backend,
 )
 from src.retrieval.embeddings import DEFAULT_MODEL
+
+
+def _resolve_retriever(cfg: Dict[str, Any]):
+    backend = index_backend(cfg)
+    if backend == "faiss":
+        from src.agent.infra.retrieval.faiss_retriever import retrieve_chunks as infra_retrieve_chunks
+        return infra_retrieve_chunks
+    from src.agent.infra.retrieval.chroma_retriever import retrieve_chunks as infra_retrieve_chunks
+    return infra_retrieve_chunks
 
 
 class DefaultRetrieverBackend:
@@ -33,7 +42,7 @@ class DefaultRetrieverBackend:
         embedding_backend = retrieval_embedding_backend(cfg)
         reranker_backend = retrieval_reranker_backend(cfg)
         hybrid = bool(retrieval_cfg.get("hybrid", False))
-        return infra_retrieve_chunks(
+        return _resolve_retriever(cfg)(
             persist_dir=persist_dir,
             collection_name=collection_name,
             query=query,
