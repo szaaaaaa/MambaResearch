@@ -158,6 +158,7 @@ export interface ProviderModelCatalog {
 export interface AppState {
   credentials: Credentials;
   credentialStatus: CredentialStatusMap;
+  runtimeMode: string;
   projectConfig: ProjectConfig;
   runOverrides: RunOverrides;
   runLogs: string[];

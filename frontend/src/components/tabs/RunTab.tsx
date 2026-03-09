@@ -38,6 +38,15 @@ function getCatalogStatus(provider: string, catalog?: ProviderModelCatalog): str
   return `${providerLabel} 已加载 ${catalog.vendorCount} 个厂商，${catalog.modelCount} 个模型。`;
 }
 
+function formatResearchOsLabel(runtimeMode: string): string {
+  const normalized = String(runtimeMode || '').trim();
+  if (!normalized) {
+    return 'Research OS';
+  }
+  const displayMode = normalized.replace(/^(\d+)[-_ ]?agent$/i, '$1-Agent');
+  return `Research OS (${displayMode})`;
+}
+
 export const RunTab: React.FC = () => {
   const { state, updateRunOverrides, startRun } = useAppContext();
   const {
@@ -49,8 +58,10 @@ export const RunTab: React.FC = () => {
     openrouterCatalog,
     siliconflowCatalog,
     projectConfig,
+    runtimeMode,
   } = state;
   const catalogs = { openaiCatalog, geminiCatalog, openrouterCatalog, siliconflowCatalog };
+  const researchOsLabel = formatResearchOsLabel(runtimeMode);
 
   const provider = projectConfig.llm.provider;
   const globalModelOptions = getModelOptionsForProvider(provider, catalogs);
@@ -100,7 +111,7 @@ export const RunTab: React.FC = () => {
               <Select
                 label="执行模式"
                 options={[
-                  { value: 'os', label: 'Research OS (3-Agent)' },
+                  { value: 'os', label: researchOsLabel },
                   { value: 'legacy', label: 'Legacy Graph' },
                 ]}
                 value={runOverrides.mode}

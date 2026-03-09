@@ -185,6 +185,8 @@ const defaultModelCatalog = {
   modelCount: 0,
 };
 
+const defaultRuntimeMode = '6-agent';
+
 type ProviderCatalogState = Pick<
   AppState,
   'openaiCatalog' | 'geminiCatalog' | 'openrouterCatalog' | 'siliconflowCatalog'
@@ -312,6 +314,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [state, setState] = useState<AppState>({
     credentials: defaultCredentials,
     credentialStatus: defaultCredentialStatus,
+    runtimeMode: defaultRuntimeMode,
     projectConfig: defaultProjectConfig,
     runOverrides: defaultRunOverrides,
     runLogs: ['> 就绪'],
@@ -378,21 +381,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     fetch(`${API_BASE}/api/config`)
       .then((res) => res.json())
       .then((data) => {
-        if (!data || Object.keys(data).length === 0) {
-          return;
-        }
-        const mergedConfig = mergeDeep(defaultProjectConfig, data);
-        const normalized = normalizeModelSelections(mergedConfig, defaultRunOverrides, {
-          openaiCatalog: defaultModelCatalog,
-          geminiCatalog: defaultModelCatalog,
-          openrouterCatalog: defaultModelCatalog,
-          siliconflowCatalog: defaultModelCatalog,
+        const payload = isRecord(data) ? data : {};
+        const runtimeMode = typeof payload.runtime_mode === 'string' ? payload.runtime_mode : undefined;
+        const configPayload = { ...payload };
+        delete configPayload.runtime_mode;
+
+        setState((prev) => {
+          if (Object.keys(configPayload).length === 0) {
+            return runtimeMode ? { ...prev, runtimeMode } : prev;
+          }
+
+          const mergedConfig = mergeDeep(defaultProjectConfig, configPayload);
+          const normalized = normalizeModelSelections(mergedConfig, defaultRunOverrides, {
+            openaiCatalog: defaultModelCatalog,
+            geminiCatalog: defaultModelCatalog,
+            openrouterCatalog: defaultModelCatalog,
+            siliconflowCatalog: defaultModelCatalog,
+          });
+          return {
+            ...prev,
+            runtimeMode: runtimeMode ?? prev.runtimeMode,
+            projectConfig: normalized.projectConfig,
+            runOverrides: normalized.runOverrides,
+          };
         });
-        setState((prev) => ({
-          ...prev,
-          projectConfig: normalized.projectConfig,
-          runOverrides: normalized.runOverrides,
-        }));
       })
       .catch((err) => console.error('Failed to load config', err));
 

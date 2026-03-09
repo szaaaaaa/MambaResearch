@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "configs" / "agent.yaml"
 ENV_PATH = ROOT / ".env"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
+APP_RUNTIME_MODE = "6-agent"
 OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -467,14 +468,17 @@ def get_siliconflow_models():
 @app.get("/api/config")
 def get_config():
     if not CONFIG_PATH.exists():
-        return {}
+        return {"runtime_mode": APP_RUNTIME_MODE}
     with CONFIG_PATH.open("r", encoding="utf-8") as file:
-        return yaml.safe_load(file) or {}
+        config = yaml.safe_load(file) or {}
+    return {**config, "runtime_mode": APP_RUNTIME_MODE}
 
 
 @app.post("/api/config")
 async def save_config(request: Request):
     new_config = await request.json()
+    if isinstance(new_config, dict):
+        new_config = {key: value for key, value in new_config.items() if key != "runtime_mode"}
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with CONFIG_PATH.open("w", encoding="utf-8") as file:
         yaml.safe_dump(new_config, file, allow_unicode=True, sort_keys=False)
