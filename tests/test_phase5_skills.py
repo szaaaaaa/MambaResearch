@@ -62,6 +62,25 @@ class Phase5SkillsTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual([artifact.artifact_type for artifact in result.output_artifacts], ["CorpusSnapshot"])
 
+    def test_parse_paper_bundle_wrapper_passes_topic_and_iteration(self) -> None:
+        corpus_snapshot = _artifact("CorpusSnapshot", {"papers": [], "web_sources": [], "indexed_paper_ids": []})
+        captured: dict[str, object] = {}
+
+        def _fake_index_sources(state):
+            captured["topic"] = state.get("topic")
+            captured["iteration"] = state.get("iteration")
+            return {"_artifacts": [corpus_snapshot]}
+
+        with patch.object(parse_paper_bundle, "index_sources", side_effect=_fake_index_sources):
+            result = parse_paper_bundle.handle(
+                [corpus_snapshot],
+                {"_skill_state": {"topic": "rag", "iteration": 2}},
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(captured["topic"], "rag")
+        self.assertEqual(captured["iteration"], 2)
+
     def test_parse_paper_bundle_wrapper_surfaces_stage_failure(self) -> None:
         corpus_snapshot = _artifact("CorpusSnapshot", {"papers": [], "web_sources": [], "indexed_paper_ids": []})
         with patch.object(parse_paper_bundle, "index_sources", return_value={"status": "Index failed: chroma unavailable"}):

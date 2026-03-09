@@ -219,6 +219,47 @@ class GraphRuntimeTest(unittest.TestCase):
             },
         )
 
+    def test_build_graph_phase1_nodes_use_skill_wrappers(self) -> None:
+        recorded_nodes = {}
+
+        class _RecordingGraph:
+            def __init__(self, *args, **kwargs):
+                return None
+
+            def add_node(self, name, fn):
+                recorded_nodes[name] = fn
+                return None
+
+            def set_entry_point(self, name):
+                return None
+
+            def add_edge(self, start, end):
+                return None
+
+            def add_conditional_edges(self, node, route_fn, mapping):
+                return None
+
+            def compile(self, **kwargs):
+                return self
+
+        with patch("src.agent.graph.StateGraph", _RecordingGraph):
+            with patch("src.agent.graph.instrument_node", side_effect=lambda name, fn: fn):
+                with patch("src.agent.graph._with_artifact_persistence", side_effect=lambda fn: fn):
+                    graph.build_graph()
+
+        self.assertEqual(recorded_nodes["plan_research"].__name__, "_skill_plan_research")
+        self.assertEqual(recorded_nodes["fetch_sources"].__name__, "_skill_fetch_sources")
+        self.assertEqual(recorded_nodes["index_sources"].__name__, "_skill_index_sources")
+        self.assertEqual(recorded_nodes["analyze_sources"].__name__, "_skill_analyze_sources")
+        self.assertEqual(recorded_nodes["review_retrieval"].__name__, "_skill_review_retrieval")
+        self.assertEqual(recorded_nodes["synthesize"].__name__, "_skill_synthesize")
+        self.assertEqual(recorded_nodes["recommend_experiments"].__name__, "recommend_experiments")
+        self.assertEqual(recorded_nodes["ingest_experiment_results"].__name__, "ingest_experiment_results")
+        self.assertEqual(recorded_nodes["review_experiment"].__name__, "review_experiment")
+        self.assertEqual(recorded_nodes["evaluate_progress"].__name__, "evaluate_progress")
+        self.assertEqual(recorded_nodes["generate_report"].__name__, "generate_report")
+        self.assertEqual(recorded_nodes["review_claims_and_citations"].__name__, "review_claims_and_citations")
+
     def test_run_research_injects_state_and_calls_app(self) -> None:
         captured = {}
 

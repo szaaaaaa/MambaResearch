@@ -22,6 +22,8 @@ def handle(input_artifacts: list[Any], cfg: dict[str, Any]) -> SkillResult:
     base_state = get_base_state(cfg)
     payload = dict(corpus_snapshot.payload)
     state = {
+        "topic": str(base_state.get("topic", "") or ""),
+        "iteration": int(base_state.get("iteration", 0) or 0),
         "papers": list(payload.get("papers", [])),
         "web_sources": list(payload.get("web_sources", [])),
         "indexed_paper_ids": list(payload.get("indexed_paper_ids", [])),
