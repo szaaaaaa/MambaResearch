@@ -94,6 +94,7 @@ def ensure_plugins_registered() -> None:
         "src.agent.skills.wrappers.build_related_work",
         "src.agent.skills.wrappers.critique_retrieval",
         "src.agent.skills.wrappers.design_experiment",
+        "src.agent.skills.wrappers.analyze_results",
         "src.agent.skills.wrappers.generate_report",
         "src.agent.skills.wrappers.critique_experiment",
         "src.agent.skills.wrappers.critique_claims",
