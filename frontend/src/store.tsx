@@ -1,8 +1,20 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { AgentRoleId, AppState, Credentials, CredentialStatusMap, ProjectConfig, RunOverrides } from './types';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+  AgentRoleId,
+  AppState,
+  ChatSession,
+  Credentials,
+  CredentialStatusMap,
+  ProjectConfig,
+  RoutePlan,
+  RunOverrides,
+} from './types';
 import { getFirstModelForProvider, getModelOptionsForProvider } from './modelOptions';
 
 export const API_BASE = window.location.port === '3000' ? 'http://localhost:8000' : '';
+
+const UI_SESSIONS_KEY = 'research-agent-chat-sessions';
+const RUN_STATE_PREFIX = '[[RUN_STATE]]';
 
 const LLM_BACKEND_BY_PROVIDER: Record<string, string> = {
   openai: 'openai_chat',
@@ -62,11 +74,14 @@ const defaultProjectConfig: ProjectConfig = {
   },
   llm: {
     provider: 'openai',
-    model: 'gpt-4o',
+    model: 'gpt-5.4',
     temperature: 0.2,
     role_models: {
       conductor: { provider: 'openai', model: 'gpt-5.4' },
       researcher: { provider: 'gemini', model: 'gemini-3-pro-preview' },
+      experimenter: { provider: 'gemini', model: 'gemini-3-pro-preview' },
+      analyst: { provider: 'openai', model: 'gpt-5.4' },
+      writer: { provider: 'openai', model: 'gpt-5.4' },
       critic: { provider: 'openai', model: 'gpt-5.4' },
     },
   },
@@ -163,12 +178,11 @@ const defaultProjectConfig: ProjectConfig = {
 };
 
 const defaultRunOverrides: RunOverrides = {
-  topic: '',
+  prompt: '',
   resume_run_id: '',
   mode: 'os',
   output_dir: './outputs',
   language: 'zh',
-  model: 'gpt-4o',
   max_iter: 5,
   papers_per_query: 5,
   sources: ['arxiv', 'semantic_scholar', 'web'],
@@ -192,7 +206,169 @@ type ProviderCatalogState = Pick<
   'openaiCatalog' | 'geminiCatalog' | 'openrouterCatalog' | 'siliconflowCatalog'
 >;
 
+const defaultProviderCatalogs: ProviderCatalogState = {
+  openaiCatalog: defaultModelCatalog,
+  geminiCatalog: defaultModelCatalog,
+  openrouterCatalog: defaultModelCatalog,
+  siliconflowCatalog: defaultModelCatalog,
+};
+
 type ProviderCatalogKey = keyof ProviderCatalogState;
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function createSessionId(): string {
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyRoutePlan(): RoutePlan {
+  return {
+    mode: 'auto',
+    nodes: [],
+    edges: [],
+    planned_skills: [],
+    rationale: [],
+  };
+}
+
+function createEmptySession(): ChatSession {
+  const timestamp = nowIso();
+  return {
+    id: createSessionId(),
+    title: '新会话',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archived: false,
+    runId: '',
+    status: '',
+    routePlan: null,
+    messages: [
+      {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: '输入你的研究问题、任务或主题，开始一个新会话。',
+      },
+    ],
+  };
+}
+
+function normalizeRoutePlan(value: unknown): RoutePlan | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const nodes = Array.isArray(value.nodes) ? value.nodes.map((item) => String(item)) : [];
+  const edges = Array.isArray(value.edges)
+    ? value.edges
+        .filter((item) => isRecord(item))
+        .map((item) => ({
+          source: String(item.source || ''),
+          target: String(item.target || ''),
+        }))
+        .filter((item) => item.source && item.target)
+    : [];
+
+  return {
+    mode: String(value.mode || 'auto'),
+    nodes,
+    edges,
+    planned_skills: Array.isArray(value.planned_skills) ? value.planned_skills.map((item) => String(item)) : [],
+    rationale: Array.isArray(value.rationale) ? value.rationale.map((item) => String(item)) : [],
+  };
+}
+
+function normalizeSession(value: unknown): ChatSession | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const messages = Array.isArray(value.messages)
+    ? value.messages
+        .filter((item) => isRecord(item))
+        .map((item) => ({
+          id: String(item.id || ''),
+          role: (item.role === 'user' || item.role === 'system' ? item.role : 'assistant') as
+            | 'user'
+            | 'assistant'
+            | 'system',
+          content: String(item.content || ''),
+          streaming: Boolean(item.streaming),
+        }))
+        .filter((item) => item.id)
+    : [];
+
+  const createdAt = String(value.createdAt || nowIso());
+  const updatedAt = String(value.updatedAt || createdAt);
+
+  return {
+    id: String(value.id || createSessionId()),
+    title: String(value.title || '新会话'),
+    createdAt,
+    updatedAt,
+    archived: Boolean(value.archived),
+    runId: String(value.runId || ''),
+    status: String(value.status || ''),
+    routePlan: normalizeRoutePlan(value.routePlan),
+    messages: messages.length > 0 ? messages : createEmptySession().messages,
+  };
+}
+
+function nextActiveConversationId(conversations: ChatSession[], fallbackId: string): string {
+  const firstUnarchived = conversations.find((session) => !session.archived);
+  if (firstUnarchived) {
+    return firstUnarchived.id;
+  }
+
+  const firstConversation = conversations[0];
+  if (firstConversation) {
+    return firstConversation.id;
+  }
+
+  return fallbackId;
+}
+
+function loadSavedSessions(): { conversations: ChatSession[]; activeConversationId: string } {
+  const fallback = createEmptySession();
+
+  if (typeof window === 'undefined') {
+    return { conversations: [fallback], activeConversationId: fallback.id };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(UI_SESSIONS_KEY);
+    if (!raw) {
+      return { conversations: [fallback], activeConversationId: fallback.id };
+    }
+
+    const payload = JSON.parse(raw) as {
+      conversations?: unknown[];
+      activeConversationId?: string;
+    };
+    const conversations = Array.isArray(payload.conversations)
+      ? payload.conversations.map(normalizeSession).filter((item): item is ChatSession => Boolean(item))
+      : [];
+
+    if (conversations.length === 0) {
+      return { conversations: [fallback], activeConversationId: fallback.id };
+    }
+
+    const requestedId = String(payload.activeConversationId || '');
+    const activeConversationId = conversations.some((item) => item.id === requestedId) ? requestedId : conversations[0].id;
+    return { conversations, activeConversationId };
+  } catch {
+    return { conversations: [fallback], activeConversationId: fallback.id };
+  }
+}
+
+function buildConversationTitle(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+  return '新会话';
+  }
+  return normalized.slice(0, 48);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -228,6 +404,39 @@ function updateNestedValue(config: ProjectConfig, path: string, value: unknown):
   return nextConfig;
 }
 
+function syncFallbackLlmConfig(projectConfig: ProjectConfig): ProjectConfig {
+  const nextConfig = structuredClone(projectConfig);
+  const conductorRole = nextConfig.llm.role_models.conductor;
+  const provider = String(conductorRole.provider || nextConfig.llm.provider || '').trim();
+  const model = String(conductorRole.model || nextConfig.llm.model || '').trim();
+
+  if (provider) {
+    nextConfig.llm.provider = provider;
+    nextConfig.providers.llm.backend = LLM_BACKEND_BY_PROVIDER[provider] ?? nextConfig.providers.llm.backend;
+  }
+  if (model) {
+    nextConfig.llm.model = model;
+  }
+
+  if (isRecord(nextConfig.agent)) {
+    const agentConfig = nextConfig.agent as Record<string, unknown>;
+    const routingConfig = isRecord(agentConfig.routing) ? (agentConfig.routing as Record<string, unknown>) : {};
+    const plannerConfig = isRecord(routingConfig.planner_llm) ? (routingConfig.planner_llm as Record<string, unknown>) : {};
+
+    if (provider) {
+      plannerConfig.provider = provider;
+    }
+    if (model) {
+      plannerConfig.model = model;
+    }
+
+    routingConfig.planner_llm = plannerConfig;
+    agentConfig.routing = routingConfig;
+  }
+
+  return nextConfig;
+}
+
 function normalizeModelForProvider(
   provider: string,
   model: string,
@@ -246,26 +455,28 @@ function normalizeModelSelections(
   runOverrides: RunOverrides,
   catalogs: ProviderCatalogState,
 ): { projectConfig: ProjectConfig; runOverrides: RunOverrides } {
-  const nextConfig = structuredClone(projectConfig);
-  nextConfig.llm.model = normalizeModelForProvider(nextConfig.llm.provider, nextConfig.llm.model, catalogs);
+  const nextConfig = syncFallbackLlmConfig(projectConfig);
 
-  (['conductor', 'researcher', 'critic'] as const).forEach((roleId) => {
+  (['conductor', 'researcher', 'experimenter', 'analyst', 'writer', 'critic'] as const).forEach((roleId) => {
     const roleConfig = nextConfig.llm.role_models[roleId];
     const roleProvider = roleConfig.provider || nextConfig.llm.provider;
+    if (!roleConfig.provider) {
+      roleConfig.provider = roleProvider;
+    }
     roleConfig.model = normalizeModelForProvider(roleProvider, roleConfig.model, catalogs);
   });
 
-  nextConfig.ingest.figure.vlm_model = normalizeModelForProvider(
+  const syncedConfig = syncFallbackLlmConfig(nextConfig);
+  syncedConfig.ingest.figure.vlm_model = normalizeModelForProvider(
     'gemini',
-    nextConfig.ingest.figure.vlm_model,
+    syncedConfig.ingest.figure.vlm_model,
     catalogs,
   );
 
-  const nextRunOverrides = {
-    ...runOverrides,
-    model: normalizeModelForProvider(nextConfig.llm.provider, runOverrides.model, catalogs) || nextConfig.llm.model,
+  return {
+    projectConfig: syncedConfig,
+    runOverrides: { ...runOverrides, mode: 'os' },
   };
-  return { projectConfig: nextConfig, runOverrides: nextRunOverrides };
 }
 
 function parseProviderCatalog(data: unknown): AppState['openaiCatalog'] {
@@ -300,31 +511,63 @@ interface AppContextType {
   state: AppState;
   updateCredentials: (updates: Partial<Credentials>) => void;
   saveCredentials: () => Promise<void>;
+  saveProjectConfig: () => Promise<void>;
   updateProjectConfig: (path: string, value: unknown) => void;
-  setGlobalLlmProvider: (provider: string) => void;
   updateRoleModel: (roleId: AgentRoleId, updates: Partial<ProjectConfig['llm']['role_models'][AgentRoleId]>) => void;
   updateRunOverrides: (updates: Partial<RunOverrides>) => void;
   startRun: () => Promise<void>;
+  stopRun: () => Promise<void>;
+  createConversation: () => void;
+  selectConversation: (conversationId: string) => void;
+  renameConversation: (conversationId: string, title: string) => void;
+  duplicateConversation: (conversationId: string) => void;
+  archiveConversation: (conversationId: string) => void;
+  deleteConversation: (conversationId: string) => void;
   toggleAdvancedMode: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const savedSessions = loadSavedSessions();
+  const projectConfigRef = useRef<ProjectConfig>(syncFallbackLlmConfig(defaultProjectConfig));
+  const runOverridesRef = useRef<RunOverrides>(defaultRunOverrides);
+  const credentialsRef = useRef<Credentials>(defaultCredentials);
+  const catalogsRef = useRef<ProviderCatalogState>(defaultProviderCatalogs);
   const [state, setState] = useState<AppState>({
-    credentials: defaultCredentials,
+    credentials: credentialsRef.current,
     credentialStatus: defaultCredentialStatus,
     runtimeMode: defaultRuntimeMode,
-    projectConfig: defaultProjectConfig,
-    runOverrides: defaultRunOverrides,
-    runLogs: ['> 就绪'],
+    projectConfig: projectConfigRef.current,
+    hasUnsavedModelChanges: false,
+    runOverrides: runOverridesRef.current,
+    conversations: savedSessions.conversations,
+    activeConversationId: savedSessions.activeConversationId,
     isRunInProgress: false,
-    openaiCatalog: defaultModelCatalog,
-    geminiCatalog: defaultModelCatalog,
-    openrouterCatalog: defaultModelCatalog,
-    siliconflowCatalog: defaultModelCatalog,
+    openaiCatalog: defaultProviderCatalogs.openaiCatalog,
+    geminiCatalog: defaultProviderCatalogs.geminiCatalog,
+    openrouterCatalog: defaultProviderCatalogs.openrouterCatalog,
+    siliconflowCatalog: defaultProviderCatalogs.siliconflowCatalog,
     isAdvancedMode: false,
   });
+  const activeConversationIdRef = useRef<string>(savedSessions.activeConversationId);
+  const activeRunAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const activeRunRequestIdsRef = useRef<Map<string, string>>(new Map());
+  const manuallyStoppedRequestIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    activeConversationIdRef.current = state.activeConversationId;
+  }, [state.activeConversationId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      UI_SESSIONS_KEY,
+      JSON.stringify({
+        conversations: state.conversations,
+        activeConversationId: state.activeConversationId,
+      }),
+    );
+  }, [state.conversations, state.activeConversationId]);
 
   const refreshProviderCatalog = async (
     key: ProviderCatalogKey,
@@ -347,6 +590,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           [key]: catalog,
         };
         const normalized = normalizeModelSelections(prev.projectConfig, prev.runOverrides, nextCatalogs);
+        catalogsRef.current = nextCatalogs;
+        projectConfigRef.current = normalized.projectConfig;
+        runOverridesRef.current = normalized.runOverrides;
         return {
           ...prev,
           projectConfig: normalized.projectConfig,
@@ -398,10 +644,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             openrouterCatalog: defaultModelCatalog,
             siliconflowCatalog: defaultModelCatalog,
           });
+          projectConfigRef.current = normalized.projectConfig;
+          runOverridesRef.current = normalized.runOverrides;
           return {
             ...prev,
             runtimeMode: runtimeMode ?? prev.runtimeMode,
             projectConfig: normalized.projectConfig,
+            hasUnsavedModelChanges: false,
             runOverrides: normalized.runOverrides,
           };
         });
@@ -416,9 +665,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         const values = isRecord(data.values) ? data.values : {};
         const status = isRecord(data.status) ? data.status : {};
+        const nextCredentials = { ...defaultCredentials, ...(values as Partial<Credentials>) };
+        credentialsRef.current = nextCredentials;
         setState((prev) => ({
           ...prev,
-          credentials: { ...defaultCredentials, ...(values as Partial<Credentials>) },
+          credentials: nextCredentials,
           credentialStatus: mergeDeep(defaultCredentialStatus, status),
         }));
       })
@@ -435,17 +686,136 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const saveProjectConfig = async () => {
+    await saveConfigToBackend(projectConfigRef.current);
+    setState((prev) => ({
+      ...prev,
+      hasUnsavedModelChanges: false,
+    }));
+  };
+
+  const updateSession = (conversationId: string, updater: (session: ChatSession) => ChatSession) => {
+    setState((prev) => ({
+      ...prev,
+      conversations: prev.conversations.map((session) => (session.id === conversationId ? updater(session) : session)),
+    }));
+  };
+
+  const createConversation = () => {
+    const session = createEmptySession();
+    activeConversationIdRef.current = session.id;
+    setState((prev) => ({
+      ...prev,
+      conversations: [session, ...prev.conversations],
+      activeConversationId: session.id,
+    }));
+  };
+
+  const selectConversation = (conversationId: string) => {
+    activeConversationIdRef.current = conversationId;
+    setState((prev) => ({ ...prev, activeConversationId: conversationId }));
+  };
+
+  const renameConversation = (conversationId: string, title: string) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      return;
+    }
+
+    updateSession(conversationId, (session) => ({
+      ...session,
+      title: nextTitle,
+      updatedAt: nowIso(),
+    }));
+  };
+
+  const duplicateConversation = (conversationId: string) => {
+    setState((prev) => {
+      const source = prev.conversations.find((session) => session.id === conversationId);
+      if (!source) {
+        return prev;
+      }
+
+      const timestamp = nowIso();
+      const clone: ChatSession = {
+        ...structuredClone(source),
+        id: createSessionId(),
+        title: `${source.title} 副本`,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        archived: false,
+        status: '',
+        runId: '',
+        messages: source.messages.map((message) => ({
+          ...message,
+          id: `${message.id}-copy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          streaming: false,
+        })),
+      };
+
+      activeConversationIdRef.current = clone.id;
+      return {
+        ...prev,
+        conversations: [clone, ...prev.conversations],
+        activeConversationId: clone.id,
+      };
+    });
+  };
+
+  const archiveConversation = (conversationId: string) => {
+    setState((prev) => {
+      let archivedAfterToggle = false;
+      const conversations = prev.conversations.map((session) => {
+        if (session.id !== conversationId) {
+          return session;
+        }
+        archivedAfterToggle = !session.archived;
+        return { ...session, archived: archivedAfterToggle, updatedAt: nowIso() };
+      });
+      const activeConversationId =
+        prev.activeConversationId === conversationId && archivedAfterToggle
+          ? nextActiveConversationId(conversations, prev.activeConversationId)
+          : prev.activeConversationId;
+      activeConversationIdRef.current = activeConversationId;
+      return {
+        ...prev,
+        conversations,
+        activeConversationId,
+      };
+    });
+  };
+
+  const deleteConversation = (conversationId: string) => {
+    setState((prev) => {
+      const remaining = prev.conversations.filter((session) => session.id !== conversationId);
+      const conversations = remaining.length > 0 ? remaining : [createEmptySession()];
+      const activeConversationId =
+        prev.activeConversationId === conversationId
+          ? nextActiveConversationId(conversations, conversations[0].id)
+          : prev.activeConversationId;
+      activeConversationIdRef.current = activeConversationId;
+      return {
+        ...prev,
+        conversations,
+        activeConversationId,
+      };
+    });
+  };
+
   const updateCredentials = (updates: Partial<Credentials>) => {
-    setState((prev) => ({ ...prev, credentials: { ...prev.credentials, ...updates } }));
+    const nextCredentials = { ...credentialsRef.current, ...updates };
+    credentialsRef.current = nextCredentials;
+    setState((prev) => ({ ...prev, credentials: nextCredentials }));
   };
 
   const saveCredentials = async () => {
     const response = await fetch(`${API_BASE}/api/credentials`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state.credentials),
+      body: JSON.stringify(credentialsRef.current),
     });
     const data = await response.json();
+    credentialsRef.current = defaultCredentials;
     setState((prev) => ({
       ...prev,
       credentials: defaultCredentials,
@@ -455,43 +825,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateProjectConfig = (path: string, value: unknown) => {
-    setState((prev) => {
-      const nextConfig = updateNestedValue(prev.projectConfig, path, value);
-      void saveConfigToBackend(nextConfig).catch((err) => console.error('Failed to save config', err));
-      return { ...prev, projectConfig: nextConfig };
-    });
-  };
+    const nextConfig = updateNestedValue(projectConfigRef.current, path, value);
+    const normalized = normalizeModelSelections(nextConfig, runOverridesRef.current, catalogsRef.current);
+    projectConfigRef.current = normalized.projectConfig;
+    runOverridesRef.current = normalized.runOverrides;
 
-  const setGlobalLlmProvider = (provider: string) => {
     setState((prev) => {
-      const nextConfig = structuredClone(prev.projectConfig);
-      const validModels = getModelOptionsForProvider(provider, {
-        openaiCatalog: prev.openaiCatalog,
-        geminiCatalog: prev.geminiCatalog,
-        openrouterCatalog: prev.openrouterCatalog,
-        siliconflowCatalog: prev.siliconflowCatalog,
-      });
-      const currentModel = String(nextConfig.llm.model || '').trim();
-      const nextModel =
-        validModels.some((option) => option.value === currentModel)
-          ? currentModel
-          : (getFirstModelForProvider(provider, {
-            openaiCatalog: prev.openaiCatalog,
-            geminiCatalog: prev.geminiCatalog,
-            openrouterCatalog: prev.openrouterCatalog,
-            siliconflowCatalog: prev.siliconflowCatalog,
-          }) || currentModel);
-      nextConfig.llm.provider = provider;
-      nextConfig.llm.model = nextModel;
-      nextConfig.providers.llm.backend = LLM_BACKEND_BY_PROVIDER[provider] ?? nextConfig.providers.llm.backend;
-      void saveConfigToBackend(nextConfig).catch((err) => console.error('Failed to save config', err));
+      void saveConfigToBackend(normalized.projectConfig).catch((err) => console.error('Failed to save config', err));
       return {
         ...prev,
-        projectConfig: nextConfig,
-        runOverrides: {
-          ...prev.runOverrides,
-          model: nextModel || prev.runOverrides.model,
-        },
+        projectConfig: normalized.projectConfig,
+        hasUnsavedModelChanges: false,
+        runOverrides: normalized.runOverrides,
       };
     });
   };
@@ -500,44 +845,145 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     roleId: AgentRoleId,
     updates: Partial<ProjectConfig['llm']['role_models'][AgentRoleId]>,
   ) => {
-    setState((prev) => {
-      const nextConfig = structuredClone(prev.projectConfig);
-      nextConfig.llm.role_models[roleId] = {
-        ...nextConfig.llm.role_models[roleId],
-        ...updates,
-      };
-      void saveConfigToBackend(nextConfig).catch((err) => console.error('Failed to save config', err));
-      return { ...prev, projectConfig: nextConfig };
-    });
-  };
-
-  const updateRunOverrides = (updates: Partial<RunOverrides>) => {
-    setState((prev) => ({ ...prev, runOverrides: { ...prev.runOverrides, ...updates } }));
-  };
-
-  const startRun = async () => {
-    const requestBody = JSON.stringify({
-      runOverrides: state.runOverrides,
-      credentials: state.credentials,
-    });
-    const runTopic = state.runOverrides.topic;
+    const nextConfig = structuredClone(projectConfigRef.current);
+    nextConfig.llm.role_models[roleId] = {
+      ...nextConfig.llm.role_models[roleId],
+      ...updates,
+    };
+    const normalized = normalizeModelSelections(nextConfig, runOverridesRef.current, catalogsRef.current);
+    projectConfigRef.current = normalized.projectConfig;
+    runOverridesRef.current = normalized.runOverrides;
 
     setState((prev) => {
       return {
         ...prev,
-        isRunInProgress: true,
-        runLogs: [
-          '> 开始执行 agent',
-          runTopic ? `> 研究主题：${runTopic}` : '> 继续已有运行',
-        ],
+        projectConfig: normalized.projectConfig,
+        hasUnsavedModelChanges: true,
+        runOverrides: normalized.runOverrides,
       };
     });
+  };
+
+  const updateRunOverrides = (updates: Partial<RunOverrides>) => {
+    const nextRunOverrides = { ...runOverridesRef.current, ...updates, mode: 'os' };
+    runOverridesRef.current = nextRunOverrides;
+    setState((prev) => ({
+      ...prev,
+      runOverrides: nextRunOverrides,
+    }));
+  };
+
+  const appendAssistantChunk = (conversationId: string, assistantId: string, text: string) => {
+    if (!text) {
+      return;
+    }
+
+    updateSession(conversationId, (session) => ({
+      ...session,
+      updatedAt: nowIso(),
+      messages: session.messages.map((message) =>
+        message.id === assistantId ? { ...message, content: `${message.content}${text}` } : message,
+      ),
+    }));
+  };
+
+  const applyRunStateEvent = (
+    conversationId: string,
+    event: { run_id?: string; status?: string; route_plan?: RoutePlan | null },
+  ) => {
+    updateSession(conversationId, (session) => ({
+      ...session,
+      updatedAt: nowIso(),
+      runId: String(event.run_id || session.runId || ''),
+      status: String(event.status || session.status || ''),
+      routePlan: normalizeRoutePlan(event.route_plan) || session.routePlan || emptyRoutePlan(),
+    }));
+  };
+
+  const startRun = async () => {
+    const latestRunOverrides = runOverridesRef.current;
+    const latestProjectConfig = projectConfigRef.current;
+    const latestCredentials = credentialsRef.current;
+    const prompt = latestRunOverrides.prompt.trim();
+    const resumeRunId = latestRunOverrides.resume_run_id.trim();
+    const activeConversationId = activeConversationIdRef.current;
+
+    if (!prompt && !resumeRunId) {
+      updateSession(activeConversationId, (session) => ({
+        ...session,
+        updatedAt: nowIso(),
+        messages: [
+          ...session.messages,
+          {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: '请输入问题，或填写要继续的运行 ID。',
+          },
+        ],
+      }));
+      return;
+    }
+
+    const assistantId = `assistant-${Date.now()}`;
+    const clientRequestId = `runreq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userMessage = prompt || `继续运行 ${resumeRunId}`;
+    const controller = new AbortController();
+    activeRunAbortControllersRef.current.set(activeConversationId, controller);
+    activeRunRequestIdsRef.current.set(activeConversationId, clientRequestId);
+    const requestBody = JSON.stringify({
+      client_request_id: clientRequestId,
+      runOverrides: {
+        prompt,
+        user_request: prompt,
+        resume_run_id: resumeRunId,
+        mode: 'os',
+      },
+      projectConfig: latestProjectConfig,
+      credentials: latestCredentials,
+    });
+
+    setState((prev) => ({
+      ...prev,
+      isRunInProgress: true,
+      conversations: prev.conversations.map((session) => {
+        if (session.id !== activeConversationId) {
+          return session;
+        }
+
+        const nextTitle =
+          session.title === '新会话' || session.messages.every((message) => message.role !== 'user')
+            ? buildConversationTitle(userMessage)
+            : session.title;
+
+        return {
+          ...session,
+          title: nextTitle,
+          updatedAt: nowIso(),
+          status: 'Running',
+          messages: [
+            ...session.messages,
+            {
+              id: `user-${Date.now()}`,
+              role: 'user',
+              content: userMessage,
+            },
+            {
+              id: assistantId,
+              role: 'assistant',
+              content: '',
+              streaming: true,
+            },
+          ],
+        };
+      }),
+    }));
 
     try {
       const response = await fetch(`${API_BASE}/api/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: requestBody,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -547,33 +993,130 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) {
-        setState((prev) => ({
-          ...prev,
-          runLogs: [...prev.runLogs, '> 当前环境不支持流式读取输出'],
-        }));
-        return;
+        throw new Error('response body missing');
       }
 
+      let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
           break;
         }
-        const text = decoder.decode(value, { stream: true });
-        if (text) {
-          setState((prev) => ({
-            ...prev,
-            runLogs: [...prev.runLogs, text],
-          }));
+
+        const chunk = decoder.decode(value, { stream: true }).replace(/\r/g, '');
+        if (!chunk) {
+          continue;
+        }
+
+        buffer += chunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (line.startsWith(RUN_STATE_PREFIX)) {
+            const event = JSON.parse(line.slice(RUN_STATE_PREFIX.length)) as {
+              run_id?: string;
+              status?: string;
+              route_plan?: RoutePlan | null;
+            };
+            applyRunStateEvent(activeConversationId, event);
+            continue;
+          }
+          appendAssistantChunk(activeConversationId, assistantId, `${line}\n`);
+        }
+      }
+
+      const tail = buffer.trimEnd();
+      if (tail) {
+        if (tail.startsWith(RUN_STATE_PREFIX)) {
+          const event = JSON.parse(tail.slice(RUN_STATE_PREFIX.length)) as {
+            run_id?: string;
+            status?: string;
+            route_plan?: RoutePlan | null;
+          };
+          applyRunStateEvent(activeConversationId, event);
+        } else {
+          appendAssistantChunk(activeConversationId, assistantId, tail);
         }
       }
     } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        runLogs: [...prev.runLogs, `> 运行失败：${String(error)}`],
+      const wasStopped = manuallyStoppedRequestIdsRef.current.has(clientRequestId);
+      updateSession(activeConversationId, (session) => ({
+        ...session,
+        updatedAt: nowIso(),
+        status: wasStopped ? 'Stopped' : 'Failed',
+        messages: session.messages.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: wasStopped ? message.content || '运行已手动停止。' : `运行失败：${String(error)}`,
+                streaming: false,
+              }
+            : message,
+        ),
       }));
     } finally {
-      setState((prev) => ({ ...prev, isRunInProgress: false }));
+      const wasStopped = manuallyStoppedRequestIdsRef.current.has(clientRequestId);
+      activeRunAbortControllersRef.current.delete(activeConversationId);
+      activeRunRequestIdsRef.current.delete(activeConversationId);
+      manuallyStoppedRequestIdsRef.current.delete(clientRequestId);
+      setState((prev) => ({
+        ...prev,
+        runOverrides: { ...prev.runOverrides, prompt: '', mode: 'os' },
+        conversations: prev.conversations.map((session) => {
+          if (session.id !== activeConversationId) {
+            return session;
+          }
+
+          const nextStatus = session.status || 'Completed';
+          return {
+            ...session,
+            updatedAt: nowIso(),
+            status: wasStopped ? 'Stopped' : nextStatus === 'Running' || nextStatus === 'Stopping' ? 'Completed' : nextStatus,
+            messages: session.messages.map((message) =>
+              message.id === assistantId
+                ? {
+                    ...message,
+                    streaming: false,
+                    content: wasStopped ? message.content || '运行已手动停止。' : message.content || '运行已完成，但没有可显示的流式输出。',
+                  }
+                : message,
+            ),
+          };
+        }),
+        isRunInProgress: prev.conversations.some(
+          (session) => session.id !== activeConversationId && (session.status === 'Running' || session.status === 'Stopping'),
+        ),
+      }));
+    }
+  };
+
+  const stopRun = async () => {
+    const activeConversationId = activeConversationIdRef.current;
+    const clientRequestId = activeRunRequestIdsRef.current.get(activeConversationId);
+    const controller = activeRunAbortControllersRef.current.get(activeConversationId);
+
+    if (!clientRequestId) {
+      return;
+    }
+
+    manuallyStoppedRequestIdsRef.current.add(clientRequestId);
+    updateSession(activeConversationId, (session) => ({
+      ...session,
+      updatedAt: nowIso(),
+      status: 'Stopping',
+    }));
+
+    try {
+      await fetch(`${API_BASE}/api/run/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_request_id: clientRequestId }),
+      });
+    } catch (error) {
+      console.error('Failed to stop run', error);
+    } finally {
+      controller?.abort();
     }
   };
 
@@ -587,11 +1130,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         state,
         updateCredentials,
         saveCredentials,
+        saveProjectConfig,
         updateProjectConfig,
-        setGlobalLlmProvider,
         updateRoleModel,
         updateRunOverrides,
         startRun,
+        stopRun,
+        createConversation,
+        selectConversation,
+        renameConversation,
+        duplicateConversation,
+        archiveConversation,
+        deleteConversation,
         toggleAdvancedMode,
       }}
     >

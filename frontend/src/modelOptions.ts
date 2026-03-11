@@ -9,7 +9,7 @@ type CatalogBundle = {
 
 export const LLM_PROVIDER_OPTIONS = [
   { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Google Gemini' },
+  { value: 'gemini', label: 'Gemini' },
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'siliconflow', label: 'SiliconFlow' },
 ];
@@ -32,7 +32,7 @@ const VENDOR_LABELS: Record<string, string> = {
   nvidia: 'NVIDIA',
   openai: 'OpenAI',
   openbmb: 'OpenBMB',
-  other: 'Other',
+  other: '其他',
   perplexity: 'Perplexity',
   qwen: 'Qwen',
   stabilityai: 'Stability AI',
@@ -45,9 +45,7 @@ function titleCaseVendor(vendor: string): string {
   return vendor.replace(/[-_]/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function resolveCatalogBundle(
-  maybeCatalogOrBundle?: CatalogBundle,
-): CatalogBundle {
+function resolveCatalogBundle(maybeCatalogOrBundle?: CatalogBundle): CatalogBundle {
   if (!maybeCatalogOrBundle) {
     return {};
   }
@@ -65,10 +63,7 @@ function getDynamicModelsByVendor(catalog?: ProviderModelCatalog): Record<string
   return catalog.modelsByVendor;
 }
 
-function getModelsByVendorForProvider(
-  provider: string,
-  bundle: CatalogBundle,
-): Record<string, SelectOption[]> {
+function getModelsByVendorForProvider(provider: string, bundle: CatalogBundle): Record<string, SelectOption[]> {
   if (provider === 'openai') {
     return getDynamicModelsByVendor(bundle.openaiCatalog);
   }
@@ -143,7 +138,10 @@ export function getFirstModelForProvider(
 }
 
 export const AGENT_ROLE_LABELS: Record<AgentRoleId, string> = {
-  conductor: 'Conductor',
-  researcher: 'Researcher',
-  critic: 'Critic',
+  conductor: '统筹agent',
+  researcher: '研究agent',
+  experimenter: '实验agent',
+  analyst: '分析agent',
+  writer: '写作agent',
+  critic: '评审agent',
 };

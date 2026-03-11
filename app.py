@@ -1,10 +1,14 @@
 import json
 import os
+import platform
 import subprocess
 import sys
+import tempfile
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from src.agent.core.config import normalize_and_validate_config
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "configs" / "agent.yaml"
@@ -37,7 +42,12 @@ CREDENTIAL_KEYS = (
     "GITHUB_TOKEN",
 )
 
+if platform.system() == "Windows":
+    import winreg
+
 app = FastAPI()
+_ACTIVE_RUNS_LOCK = threading.RLock()
+_ACTIVE_RUNS: dict[str, subprocess.Popen[str]] = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -318,10 +328,14 @@ def _build_gemini_catalog(items: list[Any]) -> dict[str, Any]:
 
 
 def _first_secret_value(*keys: str) -> str:
+    saved_values = _read_env_file()
     for key in keys:
         env_value = str(os.environ.get(key, "")).strip()
         if env_value:
             return env_value
+        file_value = str(saved_values.get(key, "")).strip()
+        if file_value:
+            return file_value
     return ""
 
 
@@ -471,7 +485,8 @@ def get_config():
         return {"runtime_mode": APP_RUNTIME_MODE}
     with CONFIG_PATH.open("r", encoding="utf-8") as file:
         config = yaml.safe_load(file) or {}
-    return {**config, "runtime_mode": APP_RUNTIME_MODE}
+    normalized = normalize_and_validate_config(config)
+    return {**normalized, "runtime_mode": APP_RUNTIME_MODE}
 
 
 @app.post("/api/config")
@@ -501,6 +516,36 @@ def _read_env_file() -> dict[str, str]:
     return values
 
 
+def _read_windows_env_registry() -> dict[str, str]:
+    if platform.system() != "Windows":
+        return {}
+
+    values: dict[str, str] = {}
+    registry_locations = (
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    )
+
+    for root_key, sub_key in registry_locations:
+        try:
+            with winreg.OpenKey(root_key, sub_key) as key:
+                index = 0
+                while True:
+                    try:
+                        name, value, _ = winreg.EnumValue(key, index)
+                    except OSError:
+                        break
+                    index += 1
+                    if name in CREDENTIAL_KEYS:
+                        text = str(value).strip()
+                        if text and name not in values:
+                            values[name] = text
+        except OSError:
+            continue
+
+    return values
+
+
 def _merge_runtime_credentials(
     *,
     base_env: dict[str, str],
@@ -508,6 +553,12 @@ def _merge_runtime_credentials(
     request_credentials: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     merged = dict(base_env)
+    registry_credentials = _read_windows_env_registry()
+
+    for key, value in registry_credentials.items():
+        text = str(value).strip()
+        if key in CREDENTIAL_KEYS and text and not str(merged.get(key, "")).strip():
+            merged[key] = text
 
     for key, value in (saved_credentials or {}).items():
         text = str(value).strip()
@@ -531,12 +582,25 @@ def _write_env_file(values: dict[str, str]) -> None:
 
 
 def _credential_status(values: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
+    saved_values = values if values is not None else _read_env_file()
+    registry_values = _read_windows_env_registry()
     status: dict[str, dict[str, Any]] = {}
     for key in CREDENTIAL_KEYS:
         in_env = bool(str(os.environ.get(key, "")).strip())
-        source = "environment" if in_env else "missing"
+        in_registry = bool(str(registry_values.get(key, "")).strip())
+        in_file = bool(str(saved_values.get(key, "")).strip())
+        if (in_env or in_registry) and in_file:
+            source = "both"
+        elif in_env:
+            source = "environment"
+        elif in_registry:
+            source = "environment"
+        elif in_file:
+            source = "dotenv"
+        else:
+            source = "missing"
         status[key] = {
-            "present": in_env,
+            "present": in_env or in_registry or in_file,
             "source": source,
         }
     return status
@@ -544,25 +608,57 @@ def _credential_status(values: dict[str, str] | None = None) -> dict[str, dict[s
 
 @app.get("/api/credentials")
 def get_credentials():
+    saved_values = _read_env_file()
     return {
         "values": {key: "" for key in CREDENTIAL_KEYS},
-        "status": _credential_status(),
+        "status": _credential_status(saved_values),
     }
 
 
 @app.post("/api/credentials")
 async def save_credentials(request: Request):
-    await request.json()
+    payload = await request.json()
+    current_values = _read_env_file()
+    next_values = dict(current_values)
+    if isinstance(payload, dict):
+        for key in CREDENTIAL_KEYS:
+            if key not in payload:
+                continue
+            text = str(payload.get(key, "")).strip()
+            if text:
+                next_values[key] = text
+    _write_env_file(next_values)
     return {
         "status": "success",
         "values": {key: "" for key in CREDENTIAL_KEYS},
-        "status_map": _credential_status(),
+        "status_map": _credential_status(next_values),
     }
 
 
-def _build_run_command(payload: dict[str, Any]) -> list[str]:
+def _write_temp_run_config(payload: dict[str, Any]) -> Path | None:
+    project_config = payload.get("projectConfig")
+    if not isinstance(project_config, dict):
+        return None
+
+    tmp_dir = ROOT / ".tmp" / "run_configs"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".yaml",
+        prefix="run_config_",
+        dir=tmp_dir,
+        delete=False,
+    ) as file:
+        yaml.safe_dump(project_config, file, allow_unicode=True, sort_keys=False)
+        return Path(file.name)
+
+
+def _build_run_command(payload: dict[str, Any], *, config_path: Path | None = None) -> list[str]:
     run_overrides = payload.get("runOverrides", payload)
-    topic = str(run_overrides.get("topic", "") or "").strip()
+    prompt = str(run_overrides.get("prompt", "") or "").strip()
+    topic = prompt or str(run_overrides.get("topic", "") or "").strip()
+    user_request = str(run_overrides.get("user_request", "") or "").strip() or prompt
     resume_run_id = str(run_overrides.get("resume_run_id", "") or "").strip()
 
     if not topic and not resume_run_id:
@@ -570,8 +666,13 @@ def _build_run_command(payload: dict[str, Any]) -> list[str]:
 
     command = [sys.executable, "-u", "scripts/run_agent.py"]
 
+    if config_path is not None:
+        command.extend(["--config", str(config_path)])
+
     if topic:
         command.extend(["--topic", topic])
+    if user_request:
+        command.extend(["--user_request", user_request])
     if resume_run_id:
         command.extend(["--resume-run-id", resume_run_id])
 
@@ -593,6 +694,12 @@ def _build_run_command(payload: dict[str, Any]) -> list[str]:
         if selected:
             command.extend(["--sources", ",".join(selected)])
 
+    route_roles = run_overrides.get("route_roles")
+    if isinstance(route_roles, list) and route_roles:
+        selected_roles = [str(item).strip() for item in route_roles if str(item).strip()]
+        if selected_roles:
+            command.extend(["--route_roles", ",".join(selected_roles)])
+
     if bool(run_overrides.get("no_web", False)):
         command.append("--no-web")
     if bool(run_overrides.get("no_scrape", False)):
@@ -600,11 +707,94 @@ def _build_run_command(payload: dict[str, Any]) -> list[str]:
     if bool(run_overrides.get("verbose", False)):
         command.append("--verbose")
 
-    mode = str(run_overrides.get("mode", "") or "os").strip().lower()
-    if mode:
-        command.extend(["--mode", mode])
+    command.extend(["--mode", "os"])
 
     return command
+
+
+def _resolve_run_output_dir(payload: dict[str, Any]) -> Path:
+    run_overrides = payload.get("runOverrides", payload)
+    raw_path = str(run_overrides.get("output_dir", "") or "").strip() or "outputs"
+    output_dir = Path(raw_path)
+    if not output_dir.is_absolute():
+        output_dir = (ROOT / output_dir).resolve()
+    return output_dir
+
+
+def _collect_run_dirs(output_dir: Path) -> list[Path]:
+    if not output_dir.exists():
+        return []
+    return [path for path in output_dir.glob("run_*") if path.is_dir()]
+
+
+def _load_latest_run_state(output_dir: Path, known_run_dirs: set[str]) -> dict[str, Any] | None:
+    candidates = [path for path in _collect_run_dirs(output_dir) if path.name not in known_run_dirs]
+    if not candidates:
+        candidates = _collect_run_dirs(output_dir)
+    if not candidates:
+        return None
+
+    latest_run_dir = max(candidates, key=lambda path: path.stat().st_mtime)
+    state_path = latest_run_dir / "research_state.json"
+    if not state_path.exists():
+        return None
+
+    with state_path.open("r", encoding="utf-8") as file:
+        state = json.load(file)
+
+    return {
+        "run_id": state.get("run_id", ""),
+        "status": state.get("status", ""),
+        "route_plan": state.get("route_plan", {}),
+    }
+
+
+def _register_active_run(client_request_id: str, process: subprocess.Popen[str]) -> None:
+    with _ACTIVE_RUNS_LOCK:
+        _ACTIVE_RUNS[client_request_id] = process
+
+
+def _unregister_active_run(client_request_id: str, process: subprocess.Popen[str] | None = None) -> None:
+    with _ACTIVE_RUNS_LOCK:
+        current = _ACTIVE_RUNS.get(client_request_id)
+        if process is not None and current is not process:
+            return
+        _ACTIVE_RUNS.pop(client_request_id, None)
+
+
+def _terminate_process(process: subprocess.Popen[str], *, timeout_sec: float = 5.0) -> str:
+    if process.poll() is not None:
+        return "already_exited"
+
+    process.terminate()
+    try:
+        process.wait(timeout=timeout_sec)
+        return "terminated"
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            pass
+        return "killed"
+
+
+@app.post("/api/run/stop")
+async def stop_run(request: Request):
+    payload = await request.json()
+    client_request_id = str((payload or {}).get("client_request_id", "")).strip() if isinstance(payload, dict) else ""
+    if not client_request_id:
+        raise HTTPException(status_code=400, detail="client_request_id is required")
+
+    with _ACTIVE_RUNS_LOCK:
+        process = _ACTIVE_RUNS.get(client_request_id)
+
+    if process is None:
+        return {"status": "not_found"}
+
+    result = _terminate_process(process)
+    _unregister_active_run(client_request_id, process)
+    return {"status": result}
 
 
 @app.post("/api/run")
@@ -617,8 +807,22 @@ async def run_agent(request: Request):
             payload = json.loads(raw_body)
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="invalid JSON body") from exc
-    command = _build_run_command(payload)
-    env = os.environ.copy()
+    runtime_config_path = _write_temp_run_config(payload)
+    try:
+        command = _build_run_command(payload, config_path=runtime_config_path)
+    except Exception:
+        if runtime_config_path is not None:
+            runtime_config_path.unlink(missing_ok=True)
+        raise
+    saved_credentials = _read_env_file()
+    env = _merge_runtime_credentials(
+        base_env=os.environ.copy(),
+        saved_credentials=saved_credentials,
+        request_credentials=payload.get("credentials"),
+    )
+    output_dir = _resolve_run_output_dir(payload)
+    known_run_dirs = {path.name for path in _collect_run_dirs(output_dir)}
+    client_request_id = str(payload.get("client_request_id", "") or "").strip() or uuid.uuid4().hex
 
     def generate_output():
         process = None
@@ -633,19 +837,26 @@ async def run_agent(request: Request):
                 bufsize=1,
                 universal_newlines=True,
             )
+            _register_active_run(client_request_id, process)
             if process.stdout is not None:
                 for line in process.stdout:
                     yield line
             exit_code = process.wait()
+            run_state = _load_latest_run_state(output_dir, known_run_dirs)
+            if run_state is not None:
+                yield f"{'[[RUN_STATE]]'}{json.dumps(run_state, ensure_ascii=False)}\n"
             if exit_code != 0:
                 yield f"\n[run_agent exited with code {exit_code}]\n"
         except Exception as exc:
             yield f"\n[api run error] {exc}\n"
         finally:
+            if process is not None and process.poll() is None:
+                _terminate_process(process, timeout_sec=1.0)
+            _unregister_active_run(client_request_id, process)
+            if runtime_config_path is not None:
+                runtime_config_path.unlink(missing_ok=True)
             if process is not None and process.stdout is not None:
                 process.stdout.close()
-            if process is not None and process.poll() is None:
-                process.wait()
 
     return StreamingResponse(generate_output(), media_type="text/plain")
 

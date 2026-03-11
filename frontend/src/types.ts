@@ -1,4 +1,5 @@
-export type AgentRoleId = 'conductor' | 'researcher' | 'critic';
+export type AgentRoleId = 'conductor' | 'researcher' | 'experimenter' | 'analyst' | 'writer' | 'critic';
+export type ChatMessageRole = 'user' | 'assistant' | 'system';
 
 export interface SelectOption {
   value: string;
@@ -131,18 +132,49 @@ export interface ProjectConfig {
 }
 
 export interface RunOverrides {
-  topic: string;
+  prompt: string;
   resume_run_id: string;
   mode: string;
   output_dir: string;
   language: string;
-  model: string;
   max_iter: number;
   papers_per_query: number;
   sources: string[];
   no_web: boolean;
   no_scrape: boolean;
   verbose: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: ChatMessageRole;
+  content: string;
+  streaming?: boolean;
+}
+
+export interface RouteEdge {
+  source: string;
+  target: string;
+}
+
+export interface RoutePlan {
+  mode: string;
+  nodes: string[];
+  edges: RouteEdge[];
+  planned_skills: string[];
+  rationale: string[];
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  archived: boolean;
+  messages: ChatMessage[];
+  runId: string;
+  status: string;
+  routePlan: RoutePlan | null;
 }
 
 export interface ProviderModelCatalog {
@@ -160,8 +192,10 @@ export interface AppState {
   credentialStatus: CredentialStatusMap;
   runtimeMode: string;
   projectConfig: ProjectConfig;
+  hasUnsavedModelChanges: boolean;
   runOverrides: RunOverrides;
-  runLogs: string[];
+  conversations: ChatSession[];
+  activeConversationId: string;
   isRunInProgress: boolean;
   openaiCatalog: ProviderModelCatalog;
   geminiCatalog: ProviderModelCatalog;

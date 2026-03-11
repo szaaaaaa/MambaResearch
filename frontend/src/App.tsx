@@ -1,44 +1,78 @@
-import React, { useState } from 'react';
-import { AppProvider } from './store';
+import React from 'react';
+import { AppProvider, useAppContext } from './store';
 import { Sidebar } from './components/Sidebar';
 import { RunTab } from './components/tabs/RunTab';
-import { CredentialsTab } from './components/tabs/CredentialsTab';
-import { DataSourcesTab } from './components/tabs/DataSourcesTab';
-import { RetrievalTab } from './components/tabs/RetrievalTab';
-import { StrategyTab } from './components/tabs/StrategyTab';
-import { MultimodalTab } from './components/tabs/MultimodalTab';
-import { PathsTab } from './components/tabs/PathsTab';
-import { SafetyTab } from './components/tabs/SafetyTab';
-import { AdvancedTab } from './components/tabs/AdvancedTab';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { UiPreferences } from './components/settings/types';
+
+const UI_PREFERENCES_KEY = 'research-agent-ui-preferences';
+
+const DEFAULT_UI_PREFERENCES: UiPreferences = {
+  theme: 'system',
+  density: 'comfortable',
+  chatWidth: 'standard',
+  messageFont: 'base',
+  showWelcomeHints: true,
+};
+
+function loadUiPreferences(): UiPreferences {
+  if (typeof window === 'undefined') {
+    return DEFAULT_UI_PREFERENCES;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(UI_PREFERENCES_KEY);
+    if (!raw) {
+      return DEFAULT_UI_PREFERENCES;
+    }
+    return { ...DEFAULT_UI_PREFERENCES, ...(JSON.parse(raw) as Partial<UiPreferences>) };
+  } catch {
+    return DEFAULT_UI_PREFERENCES;
+  }
+}
 
 const AppContent: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('run');
+  const {
+    state,
+    createConversation,
+    selectConversation,
+    renameConversation,
+    duplicateConversation,
+    archiveConversation,
+    deleteConversation,
+  } = useAppContext();
+  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(() => loadUiPreferences());
 
-  const renderTab = () => {
-    switch (activeTab) {
-      case 'run': return <RunTab />;
-      case 'credentials': return <CredentialsTab />;
-      case 'datasources': return <DataSourcesTab />;
-      case 'retrieval': return <RetrievalTab />;
-      case 'strategy': return <StrategyTab />;
-      case 'multimodal': return <MultimodalTab />;
-      case 'paths': return <PathsTab />;
-      case 'safety': return <SafetyTab />;
-      case 'advanced': return <AdvancedTab />;
-      default: return <RunTab />;
-    }
-  };
+  React.useEffect(() => {
+    window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
+  }, [uiPreferences]);
 
   return (
-    <div className="flex h-screen bg-[#f8fafc] text-slate-900 font-sans overflow-hidden selection:bg-blue-100 selection:text-blue-900">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <main className="flex-1 overflow-y-auto relative">
-        {/* Modern subtle gradient background */}
-        <div className="absolute top-0 left-0 right-0 h-[500px] bg-gradient-to-b from-blue-50/60 via-white/30 to-transparent -z-10 pointer-events-none" />
-        <div className="p-8 lg:p-12 max-w-5xl mx-auto">
-          {renderTab()}
-        </div>
+    <div className="min-h-screen bg-[var(--app-bg)] text-slate-900 lg:flex">
+      <Sidebar
+        conversations={state.conversations}
+        activeConversationId={state.activeConversationId}
+        onSelectConversation={selectConversation}
+        onCreateConversation={createConversation}
+        onRenameConversation={renameConversation}
+        onDuplicateConversation={duplicateConversation}
+        onArchiveConversation={archiveConversation}
+        onDeleteConversation={deleteConversation}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
+
+      <main className="min-h-screen flex-1">
+        <RunTab uiPreferences={uiPreferences} />
       </main>
+
+      {isSettingsOpen ? (
+        <SettingsModal
+          uiPreferences={uiPreferences}
+          onUiPreferencesChange={setUiPreferences}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      ) : null}
     </div>
   );
 };

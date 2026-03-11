@@ -1,5 +1,5 @@
 {
-  "name": "ResearchAgent UI",
-  "description": "A configuration and execution interface for ResearchAgent.",
+  "name": "ResearchAgent 研究界面",
+  "description": "ResearchAgent 的配置与运行界面。",
   "requestFramePermissions": []
 }

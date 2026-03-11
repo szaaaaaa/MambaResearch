@@ -29,65 +29,83 @@ export const RetrievalTab: React.FC = () => {
   return (
     <div className="space-y-8">
       <div className="pb-6 border-b border-slate-200/60">
-        <h2 className="text-3xl font-bold text-slate-800 tracking-tight">检索与索引 (Retrieval)</h2>
-        <p className="text-sm text-slate-500 mt-2">配置速度、成本和检索质量的平衡。</p>
+        <h2 className="text-3xl font-bold tracking-tight text-slate-800">检索与索引</h2>
+        <p className="mt-2 text-sm text-slate-500">配置速度、成本和检索质量之间的平衡。</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <button
           onClick={() => handlePresetChange('lite')}
-          className={`p-6 rounded-2xl border text-left transition-all duration-200 ${
+          className={`rounded-2xl border p-6 text-left transition-all duration-200 ${
             projectConfig.retrieval.runtime_mode === 'lite'
-              ? 'bg-blue-50/50 border-blue-200 ring-2 ring-blue-500/20 shadow-sm'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 shadow-sm'
+              ? 'border-blue-200 bg-blue-50/50 ring-2 ring-blue-500/20 shadow-sm'
+              : 'border-slate-200 bg-white shadow-sm hover:border-slate-300 hover:bg-slate-50/50'
           }`}
         >
-          <div className={`p-2.5 rounded-xl inline-block mb-4 ${projectConfig.retrieval.runtime_mode === 'lite' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-            <Zap className="w-5 h-5" />
+          <div
+            className={`mb-4 inline-block rounded-xl p-2.5 ${
+              projectConfig.retrieval.runtime_mode === 'lite' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            <Zap className="h-5 w-5" />
           </div>
-          <h3 className="font-semibold text-slate-800">Lite (轻量)</h3>
-          <p className="text-xs text-slate-500 mt-2 leading-relaxed">偏好远程嵌入，禁用重排器和图表提取，使用 PyMuPDF。速度最快，成本最低。</p>
+          <h3 className="font-semibold text-slate-800">轻量模式</h3>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">
+            偏好远程嵌入，禁用重排器和图表提取，使用 PyMuPDF。速度最快，成本最低。
+          </p>
         </button>
 
         <button
           onClick={() => handlePresetChange('standard')}
-          className={`p-6 rounded-2xl border text-left transition-all duration-200 ${
+          className={`rounded-2xl border p-6 text-left transition-all duration-200 ${
             projectConfig.retrieval.runtime_mode === 'standard'
-              ? 'bg-blue-50/50 border-blue-200 ring-2 ring-blue-500/20 shadow-sm'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 shadow-sm'
+              ? 'border-blue-200 bg-blue-50/50 ring-2 ring-blue-500/20 shadow-sm'
+              : 'border-slate-200 bg-white shadow-sm hover:border-slate-300 hover:bg-slate-50/50'
           }`}
         >
-          <div className={`p-2.5 rounded-xl inline-block mb-4 ${projectConfig.retrieval.runtime_mode === 'standard' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-            <Layers className="w-5 h-5" />
+          <div
+            className={`mb-4 inline-block rounded-xl p-2.5 ${
+              projectConfig.retrieval.runtime_mode === 'standard' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            <Layers className="h-5 w-5" />
           </div>
-          <h3 className="font-semibold text-slate-800">Standard (标准)</h3>
-          <p className="text-xs text-slate-500 mt-2 leading-relaxed">平衡的默认设置。使用远程嵌入和本地重排器，自动选择文本提取方式。</p>
+          <h3 className="font-semibold text-slate-800">标准模式</h3>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">
+            平衡的默认设置。使用远程嵌入和本地重排器，并自动选择文本提取方式。
+          </p>
         </button>
 
         <button
           onClick={() => handlePresetChange('heavy')}
-          className={`p-6 rounded-2xl border text-left transition-all duration-200 ${
+          className={`rounded-2xl border p-6 text-left transition-all duration-200 ${
             projectConfig.retrieval.runtime_mode === 'heavy'
-              ? 'bg-blue-50/50 border-blue-200 ring-2 ring-blue-500/20 shadow-sm'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 shadow-sm'
+              ? 'border-blue-200 bg-blue-50/50 ring-2 ring-blue-500/20 shadow-sm'
+              : 'border-slate-200 bg-white shadow-sm hover:border-slate-300 hover:bg-slate-50/50'
           }`}
         >
-          <div className={`p-2.5 rounded-xl inline-block mb-4 ${projectConfig.retrieval.runtime_mode === 'heavy' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-            <Cpu className="w-5 h-5" />
+          <div
+            className={`mb-4 inline-block rounded-xl p-2.5 ${
+              projectConfig.retrieval.runtime_mode === 'heavy' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            <Cpu className="h-5 w-5" />
           </div>
-          <h3 className="font-semibold text-slate-800">Heavy (重度)</h3>
-          <p className="text-xs text-slate-500 mt-2 leading-relaxed">高质量提取和更丰富的索引。使用本地嵌入和重排器，启用图表提取和 LaTeX 优先。</p>
+          <h3 className="font-semibold text-slate-800">重度模式</h3>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">
+            提供更高质量的提取和更丰富的索引。使用本地嵌入与重排器，并启用图表提取和 LaTeX 优先。
+          </p>
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         <div className="space-y-8">
-          <Card title="嵌入配置 (Embeddings)" description="选择如何将文本转换为向量。">
+          <Card title="嵌入配置" description="选择如何将文本转换为向量。">
             <Select
-              label="嵌入后端 (Embedding Backend)"
+              label="嵌入后端"
               options={[
-                { value: 'openai_embedding', label: 'OpenAI Embedding (Remote)' },
-                { value: 'local_st', label: 'Sentence Transformers (Local)' },
+                { value: 'openai_embedding', label: 'OpenAI 向量嵌入（远程）' },
+                { value: 'local_st', label: 'Sentence Transformers（本地）' },
               ]}
               value={projectConfig.retrieval.embedding_backend}
               onChange={(e) => {
@@ -95,16 +113,16 @@ export const RetrievalTab: React.FC = () => {
                 updateProjectConfig('retrieval.runtime_mode', 'custom');
               }}
             />
-            
+
             <div className="grid grid-cols-2 gap-6">
               <Input
-                label="远程模型 (Remote Model)"
+                label="远程模型"
                 value={projectConfig.retrieval.remote_embedding_model}
                 onChange={(e) => updateProjectConfig('retrieval.remote_embedding_model', e.target.value)}
                 disabled={projectConfig.retrieval.embedding_backend !== 'openai_embedding'}
               />
               <Input
-                label="本地模型 (Local Model)"
+                label="本地模型"
                 value={projectConfig.retrieval.embedding_model}
                 onChange={(e) => updateProjectConfig('retrieval.embedding_model', e.target.value)}
                 disabled={projectConfig.retrieval.embedding_backend !== 'local_st'}
@@ -112,12 +130,12 @@ export const RetrievalTab: React.FC = () => {
             </div>
           </Card>
 
-          <Card title="重排配置 (Reranking)" description="选择如何对初步检索结果进行二次排序。">
+          <Card title="重排配置" description="选择如何对初步检索结果进行二次排序。">
             <Select
-              label="重排后端 (Reranker Backend)"
+              label="重排后端"
               options={[
-                { value: 'local_crossencoder', label: 'Cross-Encoder (Local)' },
-                { value: 'none', label: '禁用 (None)' },
+                { value: 'local_crossencoder', label: 'Cross-Encoder（本地）' },
+                { value: 'none', label: '禁用' },
               ]}
               value={projectConfig.retrieval.reranker_backend}
               onChange={(e) => {
@@ -125,9 +143,9 @@ export const RetrievalTab: React.FC = () => {
                 updateProjectConfig('retrieval.runtime_mode', 'custom');
               }}
             />
-            
+
             <Input
-              label="重排模型 (Reranker Model)"
+              label="重排模型"
               value={projectConfig.retrieval.reranker_model}
               onChange={(e) => updateProjectConfig('retrieval.reranker_model', e.target.value)}
               disabled={projectConfig.retrieval.reranker_backend === 'none'}
@@ -136,37 +154,37 @@ export const RetrievalTab: React.FC = () => {
         </div>
 
         <div className="space-y-8">
-          <Card title="检索参数 (Retrieval Params)" description="控制检索的数量和混合模式。">
+          <Card title="检索参数" description="控制检索数量和混合模式。">
             <Toggle
-              label="启用混合检索 (Hybrid Search)"
+              label="启用混合检索"
               description="结合向量搜索和关键词搜索（BM25）。"
               checked={projectConfig.retrieval.hybrid}
-              onChange={(c) => updateProjectConfig('retrieval.hybrid', c)}
+              onChange={(checked) => updateProjectConfig('retrieval.hybrid', checked)}
             />
-            
-            <div className="grid grid-cols-2 gap-6 mt-6">
+
+            <div className="mt-6 grid grid-cols-2 gap-6">
               <Input
-                label="候选数量 (Candidate K)"
+                label="候选数量"
                 description="初步检索返回的文档数。"
                 type="number"
                 min="1"
                 value={projectConfig.retrieval.candidate_k}
-                onChange={(e) => updateProjectConfig('retrieval.candidate_k', parseInt(e.target.value))}
+                onChange={(e) => updateProjectConfig('retrieval.candidate_k', parseInt(e.target.value, 10))}
               />
               <Input
-                label="最终数量 (Top K)"
+                label="最终数量"
                 description="重排后保留的文档数。"
                 type="number"
                 min="1"
                 value={projectConfig.retrieval.top_k}
-                onChange={(e) => updateProjectConfig('retrieval.top_k', parseInt(e.target.value))}
+                onChange={(e) => updateProjectConfig('retrieval.top_k', parseInt(e.target.value, 10))}
               />
             </div>
           </Card>
 
-          <Card title="索引配置 (Indexing)" description="配置向量数据库和分块策略。">
+          <Card title="索引配置" description="配置向量数据库和分块策略。">
             <Select
-              label="索引后端 (Index Backend)"
+              label="索引后端"
               options={[
                 { value: 'chroma', label: 'ChromaDB' },
                 { value: 'faiss', label: 'FAISS' },
@@ -174,24 +192,24 @@ export const RetrievalTab: React.FC = () => {
               value={projectConfig.index.backend}
               onChange={(e) => updateProjectConfig('index.backend', e.target.value)}
             />
-            
+
             <div className="grid grid-cols-2 gap-6">
               <Input
-                label="分块大小 (Chunk Size)"
+                label="分块大小"
                 type="number"
                 min="100"
                 value={projectConfig.index.chunk_size}
-                onChange={(e) => updateProjectConfig('index.chunk_size', parseInt(e.target.value))}
+                onChange={(e) => updateProjectConfig('index.chunk_size', parseInt(e.target.value, 10))}
               />
               <Input
-                label="重叠大小 (Overlap)"
+                label="重叠长度"
                 type="number"
                 min="0"
                 value={projectConfig.index.overlap}
-                onChange={(e) => updateProjectConfig('index.overlap', parseInt(e.target.value))}
+                onChange={(e) => updateProjectConfig('index.overlap', parseInt(e.target.value, 10))}
               />
             </div>
-            
+
             <div className="grid grid-cols-2 gap-6">
               <Input
                 label="论文集合名"

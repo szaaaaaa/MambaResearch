@@ -1,227 +1,199 @@
 import React from 'react';
-import { Play, Terminal } from 'lucide-react';
+import { ArrowUpRight, Bot, LoaderCircle, SendHorizonal, Square, User2 } from 'lucide-react';
 import { useAppContext } from '../../store';
-import { ProviderModelCatalog } from '../../types';
-import {
-  getModelOptionsForProvider,
-  getModelsForProviderVendor,
-  getVendorFromProviderModel,
-  getVendorOptionsForProvider,
-  isVendorScopedProvider,
-} from '../../modelOptions';
-import { Card, Input, Select, Toggle } from '../ui';
+import { Button } from '../ui';
+import { UiPreferences } from '../settings/types';
+import { RouteGraph } from '../RouteGraph';
 
-function getCatalogStatus(provider: string, catalog?: ProviderModelCatalog): string | null {
-  const providerLabel = (
-    {
-      openai: 'OpenAI',
-      gemini: 'Gemini',
-      openrouter: 'OpenRouter',
-      siliconflow: 'SiliconFlow',
-    } as const
-  )[provider as 'openai' | 'gemini' | 'openrouter' | 'siliconflow'];
-  if (!providerLabel) {
-    return null;
+const PROMPT_TEMPLATES = [
+  '比较面向智能体 RAG 的长上下文检索策略。',
+  '规划一份关于多模态研究智能体的文献综述。',
+  '总结自改进 planner-critic 流水线的设计权衡。',
+];
+
+function formatStatusLabel(status: string): string {
+  if (status === 'Running') {
+    return '运行中';
   }
-  if (!catalog || !catalog.loaded) {
-    return `${providerLabel} 模型目录加载中。`;
+  if (status === 'Stopping') {
+    return '停止中';
   }
-  if (catalog.missing_api_key) {
-    return `${providerLabel} 未检测到 API Key，暂时无法拉取实时模型目录。`;
+  if (status === 'Stopped') {
+    return '已停止';
   }
-  if (catalog.error) {
-    return `${providerLabel} 模型目录拉取失败：${catalog.error}`;
+  if (status === 'Failed') {
+    return '失败';
   }
-  if (catalog.modelCount === 0) {
-    return `${providerLabel} 当前没有返回可用模型。`;
+  if (status === 'Completed') {
+    return '已完成';
   }
-  return `${providerLabel} 已加载 ${catalog.vendorCount} 个厂商，${catalog.modelCount} 个模型。`;
+  return '空闲';
 }
 
-function formatResearchOsLabel(runtimeMode: string): string {
-  const normalized = String(runtimeMode || '').trim();
-  if (!normalized) {
-    return 'Research OS';
-  }
-  const displayMode = normalized.replace(/^(\d+)[-_ ]?agent$/i, '$1-Agent');
-  return `Research OS (${displayMode})`;
+function getMessageWidthClass(chatWidth: UiPreferences['chatWidth']): string {
+  return chatWidth === 'wide' ? 'max-w-6xl' : 'max-w-4xl';
 }
 
-export const RunTab: React.FC = () => {
-  const { state, updateRunOverrides, startRun } = useAppContext();
-  const {
-    runOverrides,
-    runLogs,
-    isRunInProgress,
-    openaiCatalog,
-    geminiCatalog,
-    openrouterCatalog,
-    siliconflowCatalog,
-    projectConfig,
-    runtimeMode,
-  } = state;
-  const catalogs = { openaiCatalog, geminiCatalog, openrouterCatalog, siliconflowCatalog };
-  const researchOsLabel = formatResearchOsLabel(runtimeMode);
+function getDensityClasses(density: UiPreferences['density']): { gap: string; padding: string } {
+  if (density === 'compact') {
+    return { gap: 'space-y-4', padding: 'py-2' };
+  }
+  return { gap: 'space-y-6', padding: 'py-4' };
+}
 
-  const provider = projectConfig.llm.provider;
-  const globalModelOptions = getModelOptionsForProvider(provider, catalogs);
-  const runVendor = getVendorFromProviderModel(provider, runOverrides.model || projectConfig.llm.model, catalogs);
-  const runVendorOptions = getVendorOptionsForProvider(provider, catalogs);
-  const runVendorModels = getModelsForProviderVendor(provider, runVendor, catalogs);
-  const activeCatalog =
-    provider === 'openai'
-      ? openaiCatalog
-      : provider === 'gemini'
-        ? geminiCatalog
-        : provider === 'openrouter'
-          ? openrouterCatalog
-          : provider === 'siliconflow'
-            ? siliconflowCatalog
-            : undefined;
+function formatTimestamp(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferences }) => {
+  const { state, updateRunOverrides, startRun, stopRun } = useAppContext();
+  const { conversations, activeConversationId, runOverrides } = state;
+  const activeConversation =
+    conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
+  const isActiveConversationRunning =
+    activeConversation.status === 'Running' || activeConversation.status === 'Stopping';
+  const messageWidthClass = getMessageWidthClass(uiPreferences.chatWidth);
+  const densityClasses = getDensityClasses(uiPreferences.density);
+  const hasConversation = activeConversation.messages.some((message) => message.role === 'user');
+  const visibleMessages = hasConversation
+    ? activeConversation.messages.filter((message) => message.content || message.streaming)
+    : [];
+  const messageFontClass = uiPreferences.messageFont === 'large' ? 'text-[15px]' : 'text-sm';
+
+  const submitPrompt = () => {
+    if (isActiveConversationRunning) {
+      return;
+    }
+    void startRun();
+  };
 
   return (
-    <div className="space-y-8">
-      <div className="pb-6 border-b border-slate-200/60 flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold text-slate-800 tracking-tight">运行</h2>
-          <p className="text-sm text-slate-500 mt-2">设置本次运行参数，并直接启动 agent。</p>
+    <div className="flex min-h-screen flex-col">
+      <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
+        <div className={`mx-auto flex w-full ${messageWidthClass} items-center justify-between gap-4`}>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">当前会话</p>
+            <h2 className="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-900">
+              {activeConversation.title}
+            </h2>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-sm font-medium text-slate-700">{formatStatusLabel(activeConversation.status)}</p>
+            <p className="mt-1 text-xs text-slate-400">{formatTimestamp(activeConversation.updatedAt)}</p>
+          </div>
         </div>
-        <button
-          onClick={() => void startRun()}
-          disabled={isRunInProgress}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white px-6 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition-all shadow-sm shadow-blue-600/20"
-        >
-          <Play className="w-4 h-4 fill-current" />
-          {isRunInProgress ? '运行中...' : '开始运行'}
-        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          <Card title="运行配置" description="设置主题、模式、语言和本次运行的模型覆盖。">
-            <Input
-              label="研究主题"
-              description="输入研究问题、综述主题或探索方向。"
-              placeholder="例如：医疗影像多模态基础模型综述"
-              value={runOverrides.topic}
-              onChange={(e) => updateRunOverrides({ topic: e.target.value })}
-            />
-
-            <div className="grid grid-cols-2 gap-6">
-              <Select
-                label="执行模式"
-                options={[
-                  { value: 'os', label: researchOsLabel },
-                  { value: 'legacy', label: 'Legacy Graph' },
-                ]}
-                value={runOverrides.mode}
-                onChange={(e) => updateRunOverrides({ mode: e.target.value })}
-              />
-              <Select
-                label="输出语言"
-                options={[
-                  { value: 'zh', label: '中文' },
-                  { value: 'en', label: 'English' },
-                ]}
-                value={runOverrides.language}
-                onChange={(e) => updateRunOverrides({ language: e.target.value })}
-              />
+      <div className="flex-1 overflow-y-auto px-4 pb-40 pt-8 sm:px-6">
+        <div className={`mx-auto w-full ${messageWidthClass}`}>
+          {activeConversation.routePlan?.nodes.length ? (
+            <div className="mb-8">
+              <RouteGraph routePlan={activeConversation.routePlan} />
             </div>
+          ) : null}
 
-            {getCatalogStatus(provider, activeCatalog) && (
-              <p className="text-xs text-slate-500 -mt-2">{getCatalogStatus(provider, activeCatalog)}</p>
-            )}
-
-            <div className={`grid gap-6 ${isVendorScopedProvider(provider) ? 'grid-cols-3' : 'grid-cols-2'}`}>
-              {isVendorScopedProvider(provider) && (
-                <Select
-                  label="模型厂商"
-                  options={runVendorOptions}
-                  value={runVendor}
-                  disabled={runVendorOptions.length === 0}
-                  onChange={(e) => {
-                    const vendor = e.target.value;
-                    const nextModel = getModelsForProviderVendor(provider, vendor, catalogs)[0]?.value ?? '';
-                    updateRunOverrides({ model: nextModel });
-                  }}
-                />
-              )}
-              <Select
-                label="具体模型"
-                options={isVendorScopedProvider(provider) ? runVendorModels : globalModelOptions}
-                value={runOverrides.model}
-                disabled={(isVendorScopedProvider(provider) ? runVendorModels : globalModelOptions).length === 0}
-                onChange={(e) => updateRunOverrides({ model: e.target.value })}
-              />
-              <Input
-                label="最大迭代轮数"
-                type="number"
-                min={1}
-                max={20}
-                value={runOverrides.max_iter}
-                onChange={(e) => updateRunOverrides({ max_iter: parseInt(e.target.value, 10) || 1 })}
-              />
+          {hasConversation ? (
+            <div className={densityClasses.gap}>
+              {visibleMessages.map((message) => {
+                const isUser = message.role === 'user';
+                const isAssistant = message.role === 'assistant';
+                return (
+                  <div key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'} ${densityClasses.padding}`}>
+                    <div className={`flex max-w-[92%] gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <div
+                        className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                          isUser ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'
+                        }`}
+                      >
+                        {isUser ? <User2 className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                      </div>
+                      <div className={isUser ? 'text-right' : ''}>
+                        <div className="mb-2 text-xs font-medium text-slate-400">{isUser ? '你' : '研究助手'}</div>
+                        <div
+                          className={`whitespace-pre-wrap rounded-[28px] px-5 py-4 leading-7 ${
+                            isUser ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-800 shadow-sm'
+                          } ${messageFontClass}`}
+                        >
+                          {message.content || (message.streaming ? '正在生成...' : '')}
+                          {isAssistant && message.streaming ? (
+                            <span className="ml-2 inline-flex align-middle text-slate-400">
+                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+          ) : (
+            <div className="flex min-h-[56vh] flex-col items-center justify-center text-center">
+              <div className="max-w-2xl">
+                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">研究助手</p>
+                <h2 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">
+                  开始一个新的研究会话
+                </h2>
+                <p className="mt-4 text-base leading-7 text-slate-500">
+                  每个会话都有独立的上下文历史。运行完成后，该会话的 planner 图会固定显示在消息区上方。
+                </p>
+              </div>
 
-            <Input
-              label="每次查询抓取论文数"
-              type="number"
-              min={1}
-              max={50}
-              value={runOverrides.papers_per_query}
-              onChange={(e) => updateRunOverrides({ papers_per_query: parseInt(e.target.value, 10) || 1 })}
-            />
-          </Card>
-
-          <Card title="断点续跑" description="如果已有 run id，可以从检查点继续执行。">
-            <Input
-              label="Resume Run ID"
-              description="例如：run_20260308_153000"
-              placeholder="run_1234567890"
-              value={runOverrides.resume_run_id}
-              onChange={(e) => updateRunOverrides({ resume_run_id: e.target.value })}
-              className="font-mono"
-            />
-          </Card>
+              {uiPreferences.showWelcomeHints ? (
+                <div className="mt-10 flex w-full max-w-4xl flex-wrap justify-center gap-3">
+                  {PROMPT_TEMPLATES.map((template) => (
+                    <button
+                      key={template}
+                      type="button"
+                      onClick={() => updateRunOverrides({ prompt: template })}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      {template}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
+      </div>
 
-        <div className="space-y-8">
-          <Card title="输出与开关">
-            <Input
-              label="输出目录"
-              value={runOverrides.output_dir}
-              onChange={(e) => updateRunOverrides({ output_dir: e.target.value })}
-              className="font-mono"
+      <div className="sticky bottom-0 z-10 bg-gradient-to-t from-[var(--app-bg)] via-[var(--app-bg)] to-transparent px-4 pb-6 pt-6 sm:px-6">
+        <div className={`mx-auto w-full ${messageWidthClass}`}>
+          <div className="rounded-[32px] border border-slate-200 bg-white p-3 shadow-[0_20px_70px_-40px_rgba(15,23,42,0.35)]">
+            <textarea
+              value={runOverrides.prompt}
+              onChange={(event) => updateRunOverrides({ prompt: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  submitPrompt();
+                }
+              }}
+              placeholder="输入评审、文献调研、规划或对比分析等请求。"
+              className="min-h-[104px] w-full resize-none rounded-[24px] border-0 bg-transparent px-4 py-3 text-[15px] leading-7 text-slate-900 outline-none placeholder:text-slate-400"
             />
-
-            <div className="space-y-5 mt-6 pt-6 border-t border-slate-100">
-              <Toggle
-                label="禁用 Web"
-                checked={runOverrides.no_web}
-                onChange={(checked) => updateRunOverrides({ no_web: checked })}
-              />
-              <Toggle
-                label="禁用网页抓取"
-                checked={runOverrides.no_scrape}
-                onChange={(checked) => updateRunOverrides({ no_scrape: checked })}
-              />
-              <Toggle
-                label="输出详细日志"
-                checked={runOverrides.verbose}
-                onChange={(checked) => updateRunOverrides({ verbose: checked })}
-              />
-            </div>
-          </Card>
-
-          <div className="bg-slate-900 rounded-2xl p-5 shadow-lg max-h-96 overflow-y-auto">
-            <div className="flex items-center gap-2 text-slate-400 mb-4 border-b border-slate-800 pb-3">
-              <Terminal className="w-4 h-4" />
-              <span className="text-xs font-mono uppercase tracking-wider font-semibold">Terminal</span>
-            </div>
-            <div className="font-mono text-sm text-emerald-400 whitespace-pre-wrap">
-              {runLogs.map((log, index) => (
-                <span key={index}>{log}</span>
-              ))}
+            <div className="mt-2 flex items-center justify-between gap-3 px-2 pb-1">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <ArrowUpRight className="h-3.5 w-3.5" />
+                <span>{isActiveConversationRunning ? '当前会话正在运行，可手动停止' : 'Enter 发送，Shift+Enter 换行'}</span>
+              </div>
+              {isActiveConversationRunning ? (
+                <Button onClick={() => void stopRun()} variant="danger" className="rounded-full px-5">
+                  <Square className="h-4 w-4" />
+                  停止运行
+                </Button>
+              ) : (
+                <Button onClick={submitPrompt} disabled={!runOverrides.prompt.trim()} className="rounded-full px-5">
+                  <SendHorizonal className="h-4 w-4" />
+                  发送
+                </Button>
+              )}
             </div>
           </div>
         </div>
