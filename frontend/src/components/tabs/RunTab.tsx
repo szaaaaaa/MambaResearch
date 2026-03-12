@@ -4,6 +4,8 @@ import { useAppContext } from '../../store';
 import { Button } from '../ui';
 import { UiPreferences } from '../settings/types';
 import { RouteGraph } from '../RouteGraph';
+import { BehaviorTimeline } from '../BehaviorTimeline';
+import { RawTerminalPanel } from '../RawTerminalPanel';
 
 const PROMPT_TEMPLATES = [
   '比较面向智能体 RAG 的长上下文检索策略。',
@@ -50,6 +52,68 @@ function formatTimestamp(value: string): string {
   }).format(new Date(value));
 }
 
+function currentRoleLabel(roleStatus: Record<string, string>): string {
+  const labels: Record<string, string> = {
+    conductor: '统筹',
+    researcher: '研究',
+    experimenter: '实验',
+    analyst: '分析',
+    writer: '写作',
+    critic: '评审',
+  };
+  const runningEntry = Object.entries(roleStatus).find(([, status]) => status === 'running');
+  if (runningEntry) {
+    return labels[runningEntry[0]] || runningEntry[0];
+  }
+  const waitingEntry = Object.entries(roleStatus).find(([, status]) => status === 'waiting');
+  if (waitingEntry) {
+    return labels[waitingEntry[0]] || waitingEntry[0];
+  }
+  return '';
+}
+
+function summarizeCurrentStage(conversation: {
+  status: string;
+  routePlan: { nodes: string[] } | null;
+  roleStatus: Record<string, string>;
+}): { title: string; detail: string } {
+  if (conversation.status === 'Completed' || conversation.status === 'Stopping' || conversation.status === 'Stopped' || conversation.status === 'Failed') {
+    return conversation.status === 'Completed'
+      ? { title: '已完成', detail: '研究任务已完成，可以查看路由、时间线和最终输出。' }
+      : conversation.status === 'Failed'
+        ? { title: '运行失败', detail: '当前运行已中断，请查看时间线和终端日志定位原因。' }
+        : { title: '已停止', detail: '当前运行已被手动停止，行为图已同步收口。' };
+  }
+  const currentRole = currentRoleLabel(conversation.roleStatus);
+  if (currentRole) {
+    const status = Object.entries(conversation.roleStatus).find(([, value]) => value === 'running')?.[1] === 'running'
+      ? '正在执行'
+      : '等待继续';
+    return {
+      title: `${status}：${currentRole}`,
+      detail: conversation.routePlan?.nodes.length
+        ? `已规划 ${conversation.routePlan.nodes.length} 个角色节点，当前聚焦在${currentRole}阶段。`
+        : `当前聚焦在${currentRole}阶段。`,
+    };
+  }
+  if (conversation.status === 'Completed') {
+    return { title: '已完成', detail: '运行已结束，下面显示最终结果与关键行为时间线。' };
+  }
+  if (conversation.status === 'Stopping' || conversation.status === 'Stopped') {
+    return { title: '已停止', detail: '运行已被手动停止。' };
+  }
+  if (conversation.status === 'Failed') {
+    return { title: '运行失败', detail: '执行过程中出现异常，请查看时间线中的失败事件。' };
+  }
+  if (conversation.routePlan?.nodes.length) {
+    return {
+      title: '已确定执行路径',
+      detail: `本次将按 ${conversation.routePlan.nodes.length} 个角色节点推进。`,
+    };
+  }
+  return { title: '准备中', detail: '正在初始化本次运行并等待第一批结构化事件。' };
+}
+
 export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferences }) => {
   const { state, updateRunOverrides, startRun, stopRun } = useAppContext();
   const { conversations, activeConversationId, runOverrides } = state;
@@ -57,6 +121,16 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
     conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const isActiveConversationRunning =
     activeConversation.status === 'Running' || activeConversation.status === 'Stopping';
+  const shouldShowRunInsights =
+    isActiveConversationRunning ||
+    activeConversation.status === 'Completed' ||
+    activeConversation.status === 'Failed' ||
+    activeConversation.status === 'Stopped' ||
+    Boolean(
+      activeConversation.routePlan?.nodes.length ||
+        activeConversation.runEvents.length ||
+        activeConversation.rawTerminalLog.trim(),
+    );
   const messageWidthClass = getMessageWidthClass(uiPreferences.chatWidth);
   const densityClasses = getDensityClasses(uiPreferences.density);
   const hasConversation = activeConversation.messages.some((message) => message.role === 'user');
@@ -64,6 +138,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
     ? activeConversation.messages.filter((message) => message.content || message.streaming)
     : [];
   const messageFontClass = uiPreferences.messageFont === 'large' ? 'text-[15px]' : 'text-sm';
+  const currentStage = summarizeCurrentStage(activeConversation);
 
   const submitPrompt = () => {
     if (isActiveConversationRunning) {
@@ -91,9 +166,18 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
 
       <div className="flex-1 overflow-y-auto px-4 pb-40 pt-8 sm:px-6">
         <div className={`mx-auto w-full ${messageWidthClass}`}>
-          {activeConversation.routePlan?.nodes.length ? (
-            <div className="mb-8">
-              <RouteGraph routePlan={activeConversation.routePlan} />
+          {shouldShowRunInsights ? (
+            <div className="mb-8 space-y-6">
+              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">当前阶段</p>
+                <h3 className="mt-2 text-base font-semibold text-slate-900">{currentStage.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-500">{currentStage.detail}</p>
+              </section>
+              {activeConversation.routePlan?.nodes.length ? (
+                <RouteGraph routePlan={activeConversation.routePlan} roleStatus={activeConversation.roleStatus} />
+              ) : null}
+              <BehaviorTimeline events={activeConversation.runEvents} />
+              <RawTerminalPanel content={activeConversation.rawTerminalLog} />
             </div>
           ) : null}
 

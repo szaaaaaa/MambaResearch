@@ -165,6 +165,19 @@ export interface RoutePlan {
   rationale: string[];
 }
 
+export type RoleStatusMap = Partial<Record<AgentRoleId, string>>;
+
+export interface RunEvent {
+  id: string;
+  ts: string;
+  event: string;
+  role: string;
+  status: string;
+  decision: string;
+  iteration: number | null;
+  detail: string;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -175,6 +188,9 @@ export interface ChatSession {
   runId: string;
   status: string;
   routePlan: RoutePlan | null;
+  roleStatus: RoleStatusMap;
+  runEvents: RunEvent[];
+  rawTerminalLog: string;
 }
 
 export interface ProviderModelCatalog {

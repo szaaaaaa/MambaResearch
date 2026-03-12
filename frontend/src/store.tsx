@@ -6,7 +6,9 @@ import {
   Credentials,
   CredentialStatusMap,
   ProjectConfig,
+  RoleStatusMap,
   RoutePlan,
+  RunEvent,
   RunOverrides,
 } from './types';
 import { getFirstModelForProvider, getModelOptionsForProvider } from './modelOptions';
@@ -15,6 +17,9 @@ export const API_BASE = window.location.port === '3000' ? 'http://localhost:8000
 
 const UI_SESSIONS_KEY = 'research-agent-chat-sessions';
 const RUN_STATE_PREFIX = '[[RUN_STATE]]';
+const RUN_EVENT_PREFIX = '[[RUN_EVENT]]';
+const RUN_LOG_PREFIX = '[[RUN_LOG]]';
+const RUN_PLACEHOLDER_TEXT = '正在启动研究任务，稍后会用结构化摘要展示当前进度。';
 
 const LLM_BACKEND_BY_PROVIDER: Record<string, string> = {
   openai: 'openai_chat',
@@ -233,6 +238,74 @@ function emptyRoutePlan(): RoutePlan {
   };
 }
 
+function emptyRoleStatus(): RoleStatusMap {
+  return {};
+}
+
+function normalizeRoleStatus(value: unknown): RoleStatusMap {
+  if (!isRecord(value)) {
+    return emptyRoleStatus();
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, item]) => [String(key), String(item || '')] as const)
+      .filter(([, item]) => item),
+  ) as RoleStatusMap;
+}
+
+function normalizeRunEvent(value: unknown): RunEvent | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const event = String(value.event || '').trim();
+  if (!event) {
+    return null;
+  }
+
+  const iterationRaw = value.iteration;
+  const iteration =
+    typeof iterationRaw === 'number'
+      ? iterationRaw
+      : iterationRaw == null || iterationRaw === ''
+        ? null
+        : Number(iterationRaw);
+  let detail = String(value.detail || '');
+  if (!detail && event === 'os_route_resolved' && Array.isArray(value.nodes)) {
+    detail = value.nodes.map((item) => String(item)).filter(Boolean).join(' -> ');
+  }
+  if (!detail && event === 'failure_routed') {
+    detail = [String(value.context || ''), String(value.action || '')].filter(Boolean).join(' | ');
+  }
+  if (!detail && event === 'provider_circuit_opened') {
+    detail = String(value.provider || '');
+  }
+  if (!detail && event === 'provider_circuit_open_skip') {
+    detail = String(value.provider || '');
+  }
+
+  return {
+    id: String(value.id || `${event}-${String(value.ts || nowIso())}`),
+    ts: String(value.ts || nowIso()),
+    event,
+    role: String(value.role || ''),
+    status: String(value.status || ''),
+    decision: String(value.decision || ''),
+    iteration: Number.isFinite(iteration) ? iteration : null,
+    detail,
+  };
+}
+
+function roleStatusAfterStop(roleStatus: RoleStatusMap): RoleStatusMap {
+  return Object.fromEntries(
+    Object.entries(roleStatus).map(([role, status]) => {
+      const nextStatus = ['completed', 'pass', 'revise', 'failed', 'skipped'].includes(status) ? status : 'stopped';
+      return [role, nextStatus];
+    }),
+  ) as RoleStatusMap;
+}
+
 function createEmptySession(): ChatSession {
   const timestamp = nowIso();
   return {
@@ -244,6 +317,9 @@ function createEmptySession(): ChatSession {
     runId: '',
     status: '',
     routePlan: null,
+    roleStatus: emptyRoleStatus(),
+    runEvents: [],
+    rawTerminalLog: '',
     messages: [
       {
         id: `assistant-${Date.now()}`,
@@ -311,6 +387,11 @@ function normalizeSession(value: unknown): ChatSession | null {
     runId: String(value.runId || ''),
     status: String(value.status || ''),
     routePlan: normalizeRoutePlan(value.routePlan),
+    roleStatus: normalizeRoleStatus(value.roleStatus),
+    runEvents: Array.isArray(value.runEvents)
+      ? value.runEvents.map(normalizeRunEvent).filter((item): item is RunEvent => Boolean(item))
+      : [],
+    rawTerminalLog: String(value.rawTerminalLog || ''),
     messages: messages.length > 0 ? messages : createEmptySession().messages,
   };
 }
@@ -407,16 +488,8 @@ function updateNestedValue(config: ProjectConfig, path: string, value: unknown):
 function syncFallbackLlmConfig(projectConfig: ProjectConfig): ProjectConfig {
   const nextConfig = structuredClone(projectConfig);
   const conductorRole = nextConfig.llm.role_models.conductor;
-  const provider = String(conductorRole.provider || nextConfig.llm.provider || '').trim();
-  const model = String(conductorRole.model || nextConfig.llm.model || '').trim();
-
-  if (provider) {
-    nextConfig.llm.provider = provider;
-    nextConfig.providers.llm.backend = LLM_BACKEND_BY_PROVIDER[provider] ?? nextConfig.providers.llm.backend;
-  }
-  if (model) {
-    nextConfig.llm.model = model;
-  }
+  const provider = String(conductorRole.provider || '').trim();
+  const model = String(conductorRole.model || '').trim();
 
   if (isRecord(nextConfig.agent)) {
     const agentConfig = nextConfig.agent as Record<string, unknown>;
@@ -507,6 +580,20 @@ function parseProviderCatalog(data: unknown): AppState['openaiCatalog'] {
   };
 }
 
+async function readErrorDetail(response: Response): Promise<string> {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+
+  if (isRecord(payload) && typeof payload.detail === 'string' && payload.detail.trim()) {
+    return payload.detail;
+  }
+  return `HTTP ${response.status}`;
+}
+
 interface AppContextType {
   state: AppState;
   updateCredentials: (updates: Partial<Credentials>) => void;
@@ -577,7 +664,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const response = await fetch(`${API_BASE}${endpoint}`);
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(await readErrorDetail(response));
       }
       const data = await response.json();
       setState((prev) => {
@@ -625,7 +712,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     fetch(`${API_BASE}/api/config`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readErrorDetail(res));
+        }
+        return res.json();
+      })
       .then((data) => {
         const payload = isRecord(data) ? data : {};
         const runtimeMode = typeof payload.runtime_mode === 'string' ? payload.runtime_mode : undefined;
@@ -658,7 +750,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .catch((err) => console.error('Failed to load config', err));
 
     fetch(`${API_BASE}/api/credentials`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readErrorDetail(res));
+        }
+        return res.json();
+      })
       .then((data) => {
         if (!data || Object.keys(data).length === 0) {
           return;
@@ -679,11 +776,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const saveConfigToBackend = async (newConfig: ProjectConfig) => {
-    await fetch(`${API_BASE}/api/config`, {
+    const response = await fetch(`${API_BASE}/api/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newConfig),
     });
+    if (!response.ok) {
+      throw new Error(await readErrorDetail(response));
+    }
   };
 
   const saveProjectConfig = async () => {
@@ -746,6 +846,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         archived: false,
         status: '',
         runId: '',
+        routePlan: null,
+        roleStatus: emptyRoleStatus(),
+        runEvents: [],
+        rawTerminalLog: '',
         messages: source.messages.map((message) => ({
           ...message,
           id: `${message.id}-copy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -814,6 +918,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentialsRef.current),
     });
+    if (!response.ok) {
+      throw new Error(await readErrorDetail(response));
+    }
     const data = await response.json();
     credentialsRef.current = defaultCredentials;
     setState((prev) => ({
@@ -882,14 +989,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...session,
       updatedAt: nowIso(),
       messages: session.messages.map((message) =>
-        message.id === assistantId ? { ...message, content: `${message.content}${text}` } : message,
+        message.id === assistantId
+          ? {
+              ...message,
+              content:
+                message.content === RUN_PLACEHOLDER_TEXT
+                  ? text
+                  : `${message.content}${text}`,
+            }
+          : message,
       ),
     }));
   };
 
   const applyRunStateEvent = (
     conversationId: string,
-    event: { run_id?: string; status?: string; route_plan?: RoutePlan | null },
+    event: {
+      run_id?: string;
+      status?: string;
+      route_plan?: RoutePlan | null;
+      role_status?: RoleStatusMap;
+    },
   ) => {
     updateSession(conversationId, (session) => ({
       ...session,
@@ -897,6 +1017,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       runId: String(event.run_id || session.runId || ''),
       status: String(event.status || session.status || ''),
       routePlan: normalizeRoutePlan(event.route_plan) || session.routePlan || emptyRoutePlan(),
+      roleStatus: Object.keys(event.role_status || {}).length > 0 ? normalizeRoleStatus(event.role_status) : session.roleStatus,
+    }));
+  };
+
+  const applyRunEvent = (conversationId: string, payload: unknown) => {
+    const event = normalizeRunEvent(payload);
+    if (!event) {
+      return;
+    }
+
+    updateSession(conversationId, (session) => {
+      const nextEvents = [...session.runEvents, event].slice(-40);
+      const nextRoleStatus =
+        event.event === 'os_role_status' && event.role
+          ? { ...session.roleStatus, [event.role]: event.status || 'pending' }
+          : session.roleStatus;
+      const nextRoutePlan =
+        event.event === 'os_route_resolved' && isRecord(payload)
+          ? normalizeRoutePlan(payload) || session.routePlan
+          : session.routePlan;
+
+      return {
+        ...session,
+        updatedAt: nowIso(),
+        runId: isRecord(payload) ? String(payload.run_id || session.runId || '') : session.runId,
+        routePlan: nextRoutePlan,
+        roleStatus: nextRoleStatus,
+        runEvents: nextEvents,
+      };
+    });
+  };
+
+  const appendRawTerminalLog = (conversationId: string, text: string) => {
+    if (!text) {
+      return;
+    }
+    updateSession(conversationId, (session) => ({
+      ...session,
+      updatedAt: nowIso(),
+      rawTerminalLog: `${session.rawTerminalLog}${text}`,
     }));
   };
 
@@ -933,10 +1093,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const requestBody = JSON.stringify({
       client_request_id: clientRequestId,
       runOverrides: {
-        prompt,
+        topic: prompt,
         user_request: prompt,
         resume_run_id: resumeRunId,
-        mode: 'os',
       },
       projectConfig: latestProjectConfig,
       credentials: latestCredentials,
@@ -960,6 +1119,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           title: nextTitle,
           updatedAt: nowIso(),
           status: 'Running',
+          routePlan: null,
+          roleStatus: emptyRoleStatus(),
+          runEvents: [],
+          rawTerminalLog: '',
           messages: [
             ...session.messages,
             {
@@ -970,7 +1133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             {
               id: assistantId,
               role: 'assistant',
-              content: '',
+              content: RUN_PLACEHOLDER_TEXT,
               streaming: true,
             },
           ],
@@ -987,7 +1150,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(await readErrorDetail(response));
       }
 
       const reader = response.body?.getReader();
@@ -1013,11 +1176,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
+          if (line.startsWith(RUN_LOG_PREFIX)) {
+            appendRawTerminalLog(activeConversationId, `${line.slice(RUN_LOG_PREFIX.length)}\n`);
+            continue;
+          }
+          if (line.startsWith(RUN_EVENT_PREFIX)) {
+            const event = JSON.parse(line.slice(RUN_EVENT_PREFIX.length)) as Record<string, unknown>;
+            applyRunEvent(activeConversationId, event);
+            continue;
+          }
           if (line.startsWith(RUN_STATE_PREFIX)) {
             const event = JSON.parse(line.slice(RUN_STATE_PREFIX.length)) as {
               run_id?: string;
               status?: string;
               route_plan?: RoutePlan | null;
+              role_status?: RoleStatusMap;
             };
             applyRunStateEvent(activeConversationId, event);
             continue;
@@ -1028,11 +1201,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const tail = buffer.trimEnd();
       if (tail) {
-        if (tail.startsWith(RUN_STATE_PREFIX)) {
+        if (tail.startsWith(RUN_LOG_PREFIX)) {
+          appendRawTerminalLog(activeConversationId, `${tail.slice(RUN_LOG_PREFIX.length)}\n`);
+        } else if (tail.startsWith(RUN_EVENT_PREFIX)) {
+          const event = JSON.parse(tail.slice(RUN_EVENT_PREFIX.length)) as Record<string, unknown>;
+          applyRunEvent(activeConversationId, event);
+        } else if (tail.startsWith(RUN_STATE_PREFIX)) {
           const event = JSON.parse(tail.slice(RUN_STATE_PREFIX.length)) as {
             run_id?: string;
             status?: string;
             route_plan?: RoutePlan | null;
+            role_status?: RoleStatusMap;
           };
           applyRunStateEvent(activeConversationId, event);
         } else {
@@ -1108,15 +1287,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
 
     try {
-      await fetch(`${API_BASE}/api/run/stop`, {
+      const response = await fetch(`${API_BASE}/api/run/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_request_id: clientRequestId }),
       });
+      if (!response.ok) {
+        throw new Error(await readErrorDetail(response));
+      }
+      const payload = (await response.json()) as { status?: string };
+      if (!['terminated', 'already_exited', 'killed'].includes(String(payload.status || ''))) {
+        throw new Error(String(payload.status || 'stop_failed'));
+      }
+      updateSession(activeConversationId, (session) => ({
+        ...session,
+        updatedAt: nowIso(),
+        status: 'Stopped',
+        roleStatus: roleStatusAfterStop(session.roleStatus),
+        runEvents: [
+          ...session.runEvents,
+          {
+            id: `run-stopped-${Date.now()}`,
+            ts: nowIso(),
+            event: 'run_stopped',
+            role: '',
+            status: 'stopped',
+            decision: '',
+            iteration: null,
+            detail: '用户已停止当前运行。',
+          },
+        ].slice(-40),
+      }));
+      controller?.abort();
     } catch (error) {
       console.error('Failed to stop run', error);
-    } finally {
-      controller?.abort();
+      manuallyStoppedRequestIdsRef.current.delete(clientRequestId);
+      updateSession(activeConversationId, (session) => ({
+        ...session,
+        updatedAt: nowIso(),
+        status: 'Running',
+      }));
     }
   };
 
