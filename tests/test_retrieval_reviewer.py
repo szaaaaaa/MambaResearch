@@ -324,7 +324,7 @@ class TestDiversityStats(unittest.TestCase):
 
 
 class TestFallbackBehavior(unittest.TestCase):
-    def test_invalid_json_falls_back_to_degrade_when_sources_exist(self):
+    def test_invalid_json_raises(self):
         papers = [_paper("arxiv:1", "Paper A", 2024, venue="NeurIPS")]
         state = _make_state(
             papers=papers,
@@ -332,14 +332,12 @@ class TestFallbackBehavior(unittest.TestCase):
             research_questions=["How does concept drift affect model performance?"],
             search_queries=["concept drift"],
         )
-        result = review_retrieval(
-            state,
-            llm_call=lambda *args, **kwargs: "not-json",
-            parse_json=lambda raw: (_ for _ in ()).throw(json.JSONDecodeError("x", raw, 0)),
-        )
-        review = result.get("review", {}).get("retrieval_review", {})
-        self.assertEqual(review["verdict"]["action"], "degrade")
-        self.assertEqual(review["verdict"]["status"], "warn")
+        with self.assertRaisesRegex(RuntimeError, "retrieval reviewer returned invalid JSON"):
+            review_retrieval(
+                state,
+                llm_call=lambda *args, **kwargs: "not-json",
+                parse_json=lambda raw: (_ for _ in ()).throw(json.JSONDecodeError("x", raw, 0)),
+            )
 
 
 if __name__ == "__main__":

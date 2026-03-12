@@ -29,12 +29,9 @@ class FailureRouterTest(unittest.TestCase):
             FailureAction.SKIP,
         )
 
-    def test_llm_provider_backoff_to_fallback_model(self) -> None:
+    def test_llm_provider_backoff_raises_without_fallback_model_switch(self) -> None:
         provider = Mock()
-        provider.generate.side_effect = [
-            RuntimeError("content_policy refused"),
-            ModelResponse(content="ok-fallback", usage={}, model="gpt-4.1-mini"),
-        ]
+        provider.generate.side_effect = RuntimeError("content_policy refused")
         cfg = {
             "llm": {"provider": "openai"},
             "providers": {
@@ -44,16 +41,15 @@ class FailureRouterTest(unittest.TestCase):
         with patch("src.agent.providers.llm_provider.ensure_plugins_registered"):
             with patch("src.agent.providers.llm_provider.get_llm_provider", return_value=provider):
                 with patch("src.agent.providers.llm_provider.emit_event") as emit_mock:
-                    out = llm_provider.call_llm(
-                        system_prompt="sys",
-                        user_prompt="usr",
-                        cfg=cfg,
-                        model="gpt-4.1",
-                    )
-        self.assertEqual(out, "ok-fallback")
-        self.assertEqual(provider.generate.call_count, 2)
+                    with self.assertRaises(RuntimeError):
+                        llm_provider.call_llm(
+                            system_prompt="sys",
+                            user_prompt="usr",
+                            cfg=cfg,
+                            model="gpt-4.1",
+                        )
+        self.assertEqual(provider.generate.call_count, 1)
         self.assertEqual(provider.generate.call_args_list[0].args[0].model, "gpt-4.1")
-        self.assertEqual(provider.generate.call_args_list[1].args[0].model, "gpt-4.1-mini")
         self.assertGreaterEqual(emit_mock.call_count, 1)
         first_payload = emit_mock.call_args_list[0].args[1]
         self.assertEqual(first_payload["event"], "failure_routed")
@@ -73,13 +69,13 @@ class FailureRouterTest(unittest.TestCase):
         self.assertEqual(payload["event"], "failure_routed")
         self.assertEqual(payload["action"], "abort")
 
-    def test_gemini_backend_backoff_stays_on_gemini_family(self) -> None:
+    def test_gemini_backend_backoff_retries_same_model(self) -> None:
         provider = Mock()
         provider.generate.side_effect = [
             RuntimeError("content_policy refused"),
             ModelResponse(content="ok-gemini-fallback", usage={}, model="gemini-3-pro-preview"),
         ]
-        cfg = {"llm": {"provider": "gemini"}, "providers": {"llm": {"backend": "gemini_chat", "retries": 0}}}
+        cfg = {"llm": {"provider": "gemini"}, "providers": {"llm": {"backend": "gemini_chat", "retries": 1}}}
         with patch("src.agent.providers.llm_provider.ensure_plugins_registered"):
             with patch("src.agent.providers.llm_provider.get_llm_provider", return_value=provider):
                 out = llm_provider.call_llm(
@@ -91,7 +87,7 @@ class FailureRouterTest(unittest.TestCase):
         self.assertEqual(out, "ok-gemini-fallback")
         self.assertEqual(provider.generate.call_count, 2)
         self.assertEqual(provider.generate.call_args_list[0].args[0].model, "gemini-2.0-flash")
-        self.assertEqual(provider.generate.call_args_list[1].args[0].model, "gemini-3-pro-preview")
+        self.assertEqual(provider.generate.call_args_list[1].args[0].model, "gemini-2.0-flash")
 
     def test_dispatch_emits_failure_routed_metadata_on_executor_exception(self) -> None:
         class _BadExecutor:

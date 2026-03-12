@@ -49,6 +49,16 @@ class CoreExperimentHelpersTest(unittest.TestCase):
         self.assertEqual(out["domain"], "deep_learning")
         self.assertEqual(out["subfield"], "NLP")
 
+    def test_detect_domain_by_llm_raises_on_invalid_json(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Domain detector returned invalid JSON"):
+            _detect_domain_by_llm(
+                "BERT fine-tuning",
+                ["How does LR affect F1?"],
+                {"llm": {"model": "gpt-4.1-mini"}},
+                llm_call=lambda *args, **kwargs: "not-json",
+                parse_json=lambda raw: (_ for _ in ()).throw(json.JSONDecodeError("x", raw, 0)),
+            )
+
     def test_limit_experiment_groups_per_rq(self) -> None:
         plan, dropped = _limit_experiment_groups_per_rq(
             {
@@ -79,6 +89,17 @@ class CoreExperimentHelpersTest(unittest.TestCase):
         )
         self.assertEqual(out["status"], "submitted")
         self.assertEqual(out["runs"][0]["run_id"], "run-1")
+
+    def test_normalize_experiment_results_with_llm_raises_on_invalid_payload(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Experiment results normalizer returned an invalid payload"):
+            _normalize_experiment_results_with_llm(
+                raw_results="raw log",
+                research_questions=["RQ1"],
+                experiment_plan={"rq_experiments": [{"research_question": "RQ1"}]},
+                cfg={"llm": {"model": "gpt-4.1-mini"}},
+                llm_call=lambda *args, **kwargs: "[]",
+                parse_json=lambda raw: [],
+            )
 
 
 if __name__ == "__main__":

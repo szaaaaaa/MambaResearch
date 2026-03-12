@@ -112,6 +112,18 @@ class ExperimentResultsNodeTest(unittest.TestCase):
         self.assertFalse(update.get("await_experiment_results"))
         self.assertEqual(update.get("experiment_results", {}).get("status"), "validated")
 
+    @patch("src.agent.stages.experiments._runtime_llm_call")
+    def test_ingest_experiment_results_raises_when_normalization_is_invalid(self, mock_llm) -> None:
+        mock_llm.return_value = "[]"
+        state = {
+            "research_questions": ["RQ1"],
+            "experiment_plan": {"rq_experiments": [{"research_question": "RQ1"}]},
+            "experiment_results": {"raw_results": "raw log"},
+            "_cfg": {"llm": {"model": "gpt-4.1-mini"}},
+        }
+        with self.assertRaisesRegex(RuntimeError, "Experiment results normalizer returned invalid JSON"):
+            nodes.ingest_experiment_results(state)
+
 
 if __name__ == "__main__":
     unittest.main()

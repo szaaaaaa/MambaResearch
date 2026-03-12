@@ -22,18 +22,27 @@ from src.agent.roles import (
 )
 from src.agent.runtime.context import RunContext
 from src.agent.runtime.policy import budget_guard_allows, can_retry, hitl_gate
+from src.agent.runtime.router import resolve_route_plan
 
 logger = logging.getLogger(__name__)
-_ROLE_ORDER = ("conductor", "researcher", "experimenter", "analyst", "writer", "critic")
+_ROLE_ORDER = ("conductor", "researcher", "critic", "experimenter", "analyst", "writer")
 
 
 def _role_status_template() -> dict[str, str]:
     return {role_id: "pending" for role_id in _ROLE_ORDER}
 
 
-def _build_initial_state(*, topic: str, cfg: dict[str, Any], run_id: str, max_iterations: int) -> ResearchState:
+def _build_initial_state(
+    *,
+    topic: str,
+    user_request: str,
+    cfg: dict[str, Any],
+    run_id: str,
+    max_iterations: int,
+) -> ResearchState:
     return {
         "topic": topic,
+        "user_request": user_request,
         "artifacts": [],
         "planning": {},
         "research": {},
@@ -48,6 +57,8 @@ def _build_initial_state(*, topic: str, cfg: dict[str, Any], run_id: str, max_it
         "status": "Starting Research OS orchestration",
         "error": None,
         "run_id": run_id,
+        "route_mode": "auto",
+        "route_plan": {"mode": "auto", "nodes": [], "edges": [], "planned_skills": [], "rationale": []},
         "_cfg": cfg,
         "_artifact_objects": [],
         "research_questions": [],
@@ -130,6 +141,72 @@ def _set_role_status(state: ResearchState, role_id: str, status: str) -> None:
 
 def _sync_artifact_records(state: ResearchState) -> None:
     state["artifacts"] = [artifact.to_record() for artifact in state.get("_artifact_objects", [])]
+
+
+def _set_unselected_role_statuses(state: ResearchState, nodes: list[str]) -> None:
+    selected = {str(role_id).strip().lower() for role_id in nodes}
+    for role_id in _ROLE_ORDER:
+        role_status = state.setdefault("role_status", {})
+        if not isinstance(role_status, dict):
+            continue
+        if role_id in selected:
+            if role_status.get(role_id) == "skipped":
+                role_status[role_id] = "pending"
+            continue
+        role_status[role_id] = "skipped"
+
+
+def _mark_remaining_roles_waiting(state: ResearchState, remaining_roles: list[str]) -> None:
+    for role_id in remaining_roles:
+        _set_role_status(state, role_id, "waiting")
+
+
+def _topological_roles(route_plan: dict[str, Any]) -> list[str]:
+    nodes = [str(role_id).strip().lower() for role_id in route_plan.get("nodes", []) if str(role_id).strip()]
+    edges = [edge for edge in route_plan.get("edges", []) if isinstance(edge, dict)]
+    node_set = set(nodes)
+    incoming: dict[str, set[str]] = {node: set() for node in nodes}
+    outgoing: dict[str, set[str]] = {node: set() for node in nodes}
+    for edge in edges:
+        source = str(edge.get("source", "")).strip().lower()
+        target = str(edge.get("target", "")).strip().lower()
+        if source not in node_set or target not in node_set or source == target:
+            continue
+        outgoing[source].add(target)
+        incoming[target].add(source)
+
+    ordered_nodes: list[str] = []
+    pending = {node for node in nodes}
+    while pending:
+        ready = [node for node in _ROLE_ORDER if node in pending and not incoming[node]]
+        if not ready:
+            raise ValueError("Route DAG contains a cycle or disconnected dependency loop")
+        for node in ready:
+            ordered_nodes.append(node)
+            pending.remove(node)
+            for target in outgoing[node]:
+                incoming[target].discard(node)
+    return ordered_nodes
+
+
+def _descendant_roles(route_plan: dict[str, Any], role_id: str) -> list[str]:
+    nodes = [str(node).strip().lower() for node in route_plan.get("nodes", []) if str(node).strip()]
+    edges = [edge for edge in route_plan.get("edges", []) if isinstance(edge, dict)]
+    outgoing: dict[str, list[str]] = {node: [] for node in nodes}
+    for edge in edges:
+        source = str(edge.get("source", "")).strip().lower()
+        target = str(edge.get("target", "")).strip().lower()
+        if source in outgoing and target in outgoing and target not in outgoing[source]:
+            outgoing[source].append(target)
+    seen: set[str] = set()
+    stack = list(outgoing.get(role_id, []))
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(outgoing.get(node, []))
+    return [node for node in _ROLE_ORDER if node in seen]
 
 
 def _render_stage_report(state: ResearchState, *, terminal_label: str, critic_decision: str) -> str:
@@ -261,47 +338,107 @@ class ResearchOrchestrator:
             "critic": CriticAgent(context=self.context, state=state),
         }
 
-    def _run_post_research_pipeline(self, *, state: ResearchState, agents: dict[str, Any]) -> list[Any]:
+    def _execute_route(
+        self,
+        *,
+        state: ResearchState,
+        agents: dict[str, Any],
+        route_plan: dict[str, Any],
+    ) -> tuple[str, bool]:
         artifacts = list(state.get("_artifact_objects", []))
+        planned_skills = [
+            str(skill_id)
+            for skill_id in route_plan.get("planned_skills", [])
+            if str(skill_id).strip()
+        ]
+        execution_order = _topological_roles(route_plan)
 
-        experimenter = agents["experimenter"]
-        analyst = agents["analyst"]
-        writer = agents["writer"]
+        for role_id in execution_order:
+            if role_id == "conductor":
+                _set_role_status(state, "conductor", "running")
+                planned_skills = agents["conductor"].plan(self.context)
+                route_plan["planned_skills"] = list(planned_skills)
+                state["route_plan"] = route_plan
+                artifacts = list(state.get("_artifact_objects", artifacts))
+                _set_role_status(state, "conductor", "completed")
+                logger.info("[ResearchOrchestrator] Planned skills: %s", ", ".join(planned_skills))
+                continue
 
-        _set_role_status(state, "experimenter", "running")
-        artifacts = experimenter.design(artifacts)
-        _set_role_status(state, "experimenter", "completed")
-        _sync_artifact_records(state)
+            if role_id == "researcher":
+                _set_role_status(state, "researcher", "running")
+                artifacts = agents["researcher"].execute_plan(planned_skills, artifacts)
+                _set_role_status(state, "researcher", "completed")
+                _sync_artifact_records(state)
+                continue
 
-        if hitl_gate(state):
-            _set_role_status(state, "analyst", "waiting")
-            _set_role_status(state, "writer", "waiting")
-            return artifacts
+            if role_id == "critic":
+                _set_role_status(state, "critic", "running")
+                decision, critique_report = agents["critic"].evaluate(artifacts)
+                _set_role_status(state, "critic", decision)
+                state["iteration"] = self.context.iteration
+                _sync_artifact_records(state)
+                emit_event(
+                    self.cfg,
+                    {
+                        "event": "os_critic_decision",
+                        "run_id": self.context.run_id,
+                        "decision": decision,
+                        "iteration": self.context.iteration,
+                        "critique_artifact_id": critique_report.artifact_id,
+                    },
+                )
+                if decision != "pass":
+                    return decision, False
+                continue
 
-        experiment_results = state.get("experiment_results", {})
-        results_status = ""
-        if isinstance(experiment_results, dict):
-            results_status = str(experiment_results.get("status", "")).strip().lower()
+            if role_id == "experimenter":
+                _set_role_status(state, "experimenter", "running")
+                artifacts = agents["experimenter"].design(artifacts)
+                _set_role_status(state, "experimenter", "completed")
+                _sync_artifact_records(state)
+                if hitl_gate(state):
+                    _mark_remaining_roles_waiting(state, _descendant_roles(route_plan, "experimenter"))
+                    return "pass", True
+                continue
 
-        if results_status == "validated":
-            _set_role_status(state, "analyst", "running")
-            artifacts = analyst.analyze(artifacts)
-            _set_role_status(state, "analyst", "completed")
-            _sync_artifact_records(state)
-        else:
-            _set_role_status(state, "analyst", "skipped")
+            if role_id == "analyst":
+                experiment_results = state.get("experiment_results", {})
+                results_status = ""
+                if isinstance(experiment_results, dict):
+                    results_status = str(experiment_results.get("status", "")).strip().lower()
+                if results_status == "validated":
+                    _set_role_status(state, "analyst", "running")
+                    artifacts = agents["analyst"].analyze(artifacts)
+                    _set_role_status(state, "analyst", "completed")
+                    _sync_artifact_records(state)
+                else:
+                    _set_role_status(state, "analyst", "skipped")
+                continue
 
-        _set_role_status(state, "writer", "running")
-        artifacts = writer.write(artifacts)
-        _set_role_status(state, "writer", "completed")
-        _sync_artifact_records(state)
-        return artifacts
+            if role_id == "writer":
+                _set_role_status(state, "writer", "running")
+                artifacts = agents["writer"].write(artifacts)
+                _set_role_status(state, "writer", "completed")
+                _sync_artifact_records(state)
+                continue
 
-    def run(self, *, topic: str) -> ResearchState:
+            logger.warning("[ResearchOrchestrator] Ignoring unknown role in route: %s", role_id)
+
+        return "pass", False
+
+    def run(
+        self,
+        *,
+        topic: str,
+        user_request: str | None = None,
+        route_roles: list[str] | None = None,
+    ) -> ResearchState:
         ensure_plugins_registered()
         self.context.topic = topic
+        resolved_user_request = str(user_request or topic or "").strip()
         state = _build_initial_state(
             topic=topic,
+            user_request=resolved_user_request,
             cfg=self.cfg,
             run_id=self.context.run_id,
             max_iterations=self.context.max_iterations,
@@ -315,40 +452,34 @@ class ResearchOrchestrator:
                 state["error"] = reason
                 return state
 
+            route_plan = resolve_route_plan(
+                topic=topic,
+                user_request=resolved_user_request,
+                route_roles=route_roles,
+                cfg=self.cfg,
+            )
+            state["route_mode"] = str(route_plan.get("mode", "auto"))
+            state["route_plan"] = route_plan
+            _set_unselected_role_statuses(
+                state,
+                [str(role_id) for role_id in route_plan.get("nodes", [])],
+            )
+
             agents = self._create_agents(state)
             conductor = agents["conductor"]
-            researcher = agents["researcher"]
-            critic = agents["critic"]
-
-            _set_role_status(state, "conductor", "running")
-            planned_skills = conductor.plan(self.context)
-            _set_role_status(state, "conductor", "completed")
-            logger.info("[ResearchOrchestrator] Planned skills: %s", ", ".join(planned_skills))
-
-            artifacts = list(state.get("_artifact_objects", []))
-            _set_role_status(state, "researcher", "running")
-            artifacts = researcher.execute_plan(planned_skills, artifacts)
-            _set_role_status(state, "researcher", "completed")
-            _set_role_status(state, "critic", "running")
-            decision, critique_report = critic.evaluate(artifacts)
-            _set_role_status(state, "critic", decision)
-            state["iteration"] = self.context.iteration
-            _sync_artifact_records(state)
-
-            emit_event(
-                self.cfg,
-                {
-                    "event": "os_critic_decision",
-                    "run_id": self.context.run_id,
-                    "decision": decision,
-                    "iteration": self.context.iteration,
-                    "critique_artifact_id": critique_report.artifact_id,
-                },
+            logger.info(
+                "[ResearchOrchestrator] Route mode=%s nodes=%s",
+                state["route_mode"],
+                ",".join(route_plan.get("nodes", [])),
+            )
+            decision, paused_for_hitl = self._execute_route(
+                state=state,
+                agents=agents,
+                route_plan=route_plan,
             )
 
             if decision == "pass":
-                self._run_post_research_pipeline(state=state, agents=agents)
-                if hitl_gate(state):
+                if paused_for_hitl or hitl_gate(state):
                     state["status"] = "Research OS orchestration paused for HITL"
                     return state
                 state["status"] = "Research OS orchestration completed"

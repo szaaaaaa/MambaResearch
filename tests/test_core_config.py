@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.agent.core.config import normalize_and_validate_config
+from src.agent.core.config import apply_role_llm_overrides, normalize_and_validate_config
 
 
 class CoreConfigTest(unittest.TestCase):
@@ -351,6 +351,45 @@ class CoreConfigTest(unittest.TestCase):
             out["llm"]["role_models"]["critic"]["model"],
             "Qwen/Qwen2.5-7B-Instruct",
         )
+
+    def test_conductor_role_syncs_top_level_llm_defaults(self) -> None:
+        out = normalize_and_validate_config(
+            {
+                "llm": {
+                    "provider": "openai",
+                    "model": "gpt-4o",
+                    "role_models": {
+                        "conductor": {"provider": "gemini", "model": "gemini-3-pro-preview"},
+                    },
+                }
+            }
+        )
+
+        self.assertEqual(out["llm"]["provider"], "gemini")
+        self.assertEqual(out["llm"]["model"], "gemini-3-pro-preview")
+        self.assertEqual(out["providers"]["llm"]["backend"], "gemini_chat")
+
+    def test_apply_role_llm_overrides_uses_core_role_fallbacks(self) -> None:
+        cfg = normalize_and_validate_config(
+            {
+                "llm": {
+                    "provider": "openai",
+                    "role_models": {
+                        "conductor": {"provider": "openai", "model": "gpt-5.4"},
+                        "researcher": {"provider": "gemini", "model": "gemini-3-pro-preview"},
+                        "critic": {"provider": "openrouter", "model": "anthropic/claude-sonnet-4"},
+                    },
+                }
+            }
+        )
+
+        experimenter_cfg = apply_role_llm_overrides(cfg, "experimenter")
+        analyst_cfg = apply_role_llm_overrides(cfg, "analyst")
+        writer_cfg = apply_role_llm_overrides(cfg, "writer")
+
+        self.assertEqual(experimenter_cfg["llm"]["provider"], "gemini")
+        self.assertEqual(analyst_cfg["llm"]["provider"], "openrouter")
+        self.assertEqual(writer_cfg["llm"]["provider"], "openai")
 
 
 if __name__ == "__main__":

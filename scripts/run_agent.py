@@ -39,9 +39,16 @@ ROLE_IDS = ("conductor", "researcher", "experimenter", "analyst", "writer", "cri
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Autonomous Research Agent")
     p.add_argument("--topic", required=False, help="Research topic or question")
+    p.add_argument("--user_request", type=str, default=None, help="Full user request used for dynamic route selection")
+    p.add_argument(
+        "--route_roles",
+        type=str,
+        default=None,
+        help="Comma-separated subset of roles to execute in canonical order",
+    )
     p.add_argument("--resume-run-id", type=str, default=None, help="Resume from a checkpointed run id")
     p.add_argument("--config", default="configs/agent.yaml", help="Config file path")
-    p.add_argument("--mode", type=str, default="legacy", choices=["legacy", "os"], help="Execution mode")
+    p.add_argument("--mode", type=str, default="os", choices=["os"], help="Execution mode")
     p.add_argument("--max_iter", type=int, default=None, help="Override max iterations")
     p.add_argument("--papers_per_query", type=int, default=None, help="Papers per search query")
     p.add_argument("--model", type=str, default=None, help="Override LLM model")
@@ -255,24 +262,21 @@ def main() -> None:
     logger.info("=" * 60)
 
     run_started_global = time.time()
-    if args.mode == "os":
-        from src.agent.runtime.orchestrator import ResearchOrchestrator
+    from src.agent.runtime.orchestrator import ResearchOrchestrator
 
-        orchestrator = ResearchOrchestrator(
-            cfg=cfg,
-            root=ROOT,
-            resume_run_id=args.resume_run_id,
-        )
-        final_state = orchestrator.run(topic=args.topic or "")
-    else:
-        from src.agent.graph import run_research
-
-        final_state = run_research(
-            topic=args.topic or "",
-            cfg=cfg,
-            root=ROOT,
-            resume_run_id=args.resume_run_id,
-        )
+    route_roles = None
+    if args.route_roles:
+        route_roles = [item.strip() for item in str(args.route_roles).split(",") if item.strip()]
+    orchestrator = ResearchOrchestrator(
+        cfg=cfg,
+        root=ROOT,
+        resume_run_id=args.resume_run_id,
+    )
+    final_state = orchestrator.run(
+        topic=args.topic or "",
+        user_request=args.user_request or args.topic or "",
+        route_roles=route_roles,
+    )
 
     # ── Write outputs ────────────────────────────────────────────────
     run_started = run_started_global
@@ -325,6 +329,8 @@ def main() -> None:
         "synthesis": sget(final_state, "synthesis", ""),
         "experiment_plan": sget(final_state, "experiment_plan", {}),
         "experiment_results": sget(final_state, "experiment_results", {}),
+        "route_mode": final_state.get("route_mode", ""),
+        "route_plan": final_state.get("route_plan", {}),
         "await_experiment_results": await_experiment_results,
         "status": final_state.get("status", ""),
         "iteration": final_state.get("iteration", 0),

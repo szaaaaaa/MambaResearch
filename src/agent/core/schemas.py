@@ -330,8 +330,25 @@ class ReportNamespace(TypedDict, total=False):
     acceptance_metrics: RunMetrics
 
 
+RoleId = Literal["conductor", "researcher", "critic", "experimenter", "analyst", "writer"]
+
+
+class RouteEdge(TypedDict):
+    source: RoleId
+    target: RoleId
+
+
+class RoutePlan(TypedDict, total=False):
+    mode: str
+    rationale: List[str]
+    nodes: List[RoleId]
+    edges: List[RouteEdge]
+    planned_skills: List[str]
+
+
 class ResearchState(TypedDict, total=False):
     topic: str
+    user_request: str
     status: str
     run_id: str
     artifacts: List[ArtifactRecord]
@@ -340,6 +357,8 @@ class ResearchState(TypedDict, total=False):
     should_continue: bool
     await_experiment_results: bool
     error: str | None
+    route_mode: str
+    route_plan: RoutePlan
 
     research: ResearchNamespace
     planning: PlanningNamespace
@@ -379,3 +398,5 @@ class ResearchState(TypedDict, total=False):
     acceptance_metrics: RunMetrics
     _academic_queries: List[str]
     _web_queries: List[str]
+    active_role: str
+    role_status: Dict[str, str]

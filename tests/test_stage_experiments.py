@@ -71,6 +71,24 @@ class StageExperimentsTest(unittest.TestCase):
         self.assertFalse(out["await_experiment_results"])
         self.assertEqual(out["experiment_results"]["status"], "validated")
 
+    def test_ingest_experiment_results_raises_when_normalization_fails(self) -> None:
+        state = {
+            "research_questions": ["RQ1"],
+            "experiment_plan": {"rq_experiments": [{"research_question": "RQ1"}]},
+            "experiment_results": {"raw_results": "raw log"},
+            "_cfg": {"llm": {"model": "gpt-4.1-mini"}},
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "bad normalizer"):
+            ingest_experiment_results(
+                state,
+                state_view=lambda x: x,
+                get_cfg=lambda x: x.get("_cfg", {}),
+                ns=lambda x: x,
+                normalize_experiment_results_with_llm=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("bad normalizer")),
+                validate_experiment_results=lambda results, rqs: [],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,79 @@ def _artifact(artifact_type: str, payload: dict) -> object:
 
 
 class Phase5OrchestratorTest(unittest.TestCase):
+    def test_orchestrator_passes_conductor_artifacts_to_researcher(self) -> None:
+        class _Conductor:
+            def __init__(self, *, context, state):
+                self.state = state
+                self.policy = SimpleNamespace(max_retries=1)
+
+            def plan(self, context):
+                output = [
+                    _artifact("SearchPlan", {"research_questions": ["rq"], "search_queries": ["q"], "query_routes": {}})
+                ]
+                self.state["_artifact_objects"] = output
+                self.state["artifacts"] = [artifact.to_record() for artifact in output]
+                return ["search_literature"]
+
+        class _Researcher:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def execute_plan(self, skill_ids, artifacts):
+                artifact_types = [artifact.artifact_type for artifact in artifacts]
+                if "SearchPlan" not in artifact_types:
+                    raise AssertionError("Researcher did not receive conductor SearchPlan artifact")
+                output = list(artifacts)
+                self.state["_artifact_objects"] = output
+                return output
+
+        class _Experimenter:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def design(self, artifacts):
+                raise AssertionError("Experimenter should not run")
+
+        class _Analyst:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def analyze(self, artifacts):
+                raise AssertionError("Analyst should not run")
+
+        class _Writer:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def write(self, artifacts):
+                output = list(artifacts) + [_artifact("ResearchReport", {"report": "ok"})]
+                self.state["_artifact_objects"] = output
+                self.state["report"] = {"report": "ok"}
+                return output
+
+        class _Critic:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def evaluate(self, artifacts):
+                return "pass", _artifact("CritiqueReport", {"verdict": {"action": "continue"}, "details": {}})
+
+        with patch("src.agent.runtime.orchestrator.ensure_plugins_registered"):
+            with patch("src.agent.runtime.orchestrator.ConductorAgent", _Conductor):
+                with patch("src.agent.runtime.orchestrator.ResearcherAgent", _Researcher):
+                    with patch("src.agent.runtime.orchestrator.ExperimenterAgent", _Experimenter):
+                        with patch("src.agent.runtime.orchestrator.AnalystAgent", _Analyst):
+                            with patch("src.agent.runtime.orchestrator.WriterAgent", _Writer):
+                                with patch("src.agent.runtime.orchestrator.CriticAgent", _Critic):
+                                    orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
+                                    state = orchestrator.run(
+                                        topic="topic",
+                                        route_roles=["conductor", "researcher", "critic", "writer"],
+                                    )
+
+        self.assertEqual(state["status"], "Research OS orchestration completed")
+        self.assertEqual(state["report"]["report"], "ok")
+
     def test_orchestrator_pass_flow_with_all_six_roles(self) -> None:
         class _Conductor:
             def __init__(self, *, context, state):
@@ -184,7 +257,10 @@ class Phase5OrchestratorTest(unittest.TestCase):
                             with patch("src.agent.runtime.orchestrator.WriterAgent", _Writer):
                                 with patch("src.agent.runtime.orchestrator.CriticAgent", _Critic):
                                     orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
-                                    state = orchestrator.run(topic="topic")
+                                    state = orchestrator.run(
+                                        topic="topic",
+                                        route_roles=["conductor", "researcher", "experimenter", "analyst", "writer", "critic"],
+                                    )
 
         self.assertEqual(state["status"], "Research OS orchestration completed")
         self.assertEqual(state["role_status"]["experimenter"], "completed")
@@ -307,7 +383,10 @@ class Phase5OrchestratorTest(unittest.TestCase):
                             with patch("src.agent.runtime.orchestrator.WriterAgent", _Writer):
                                 with patch("src.agent.runtime.orchestrator.CriticAgent", _Critic):
                                     orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
-                                    state = orchestrator.run(topic="topic")
+                                    state = orchestrator.run(
+                                        topic="topic",
+                                        route_roles=["conductor", "researcher", "experimenter", "analyst", "writer", "critic"],
+                                    )
 
         self.assertEqual(state["status"], "Research OS orchestration completed")
         self.assertEqual(state["iteration"], 1)
@@ -393,7 +472,10 @@ class Phase5OrchestratorTest(unittest.TestCase):
                             with patch("src.agent.runtime.orchestrator.WriterAgent", _Writer):
                                 with patch("src.agent.runtime.orchestrator.CriticAgent", _Critic):
                                     orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
-                                    state = orchestrator.run(topic="topic")
+                                    state = orchestrator.run(
+                                        topic="topic",
+                                        route_roles=["conductor", "researcher", "experimenter", "analyst", "writer", "critic"],
+                                    )
 
         self.assertEqual(state["status"], "Research OS orchestration paused for HITL")
         self.assertTrue(state["await_experiment_results"])
@@ -411,3 +493,153 @@ class Phase5OrchestratorTest(unittest.TestCase):
                 state = orchestrator.run(topic="topic")
         self.assertEqual(state["status"], "budget exceeded")
         self.assertEqual(state["error"], "budget exceeded")
+
+    def test_orchestrator_review_only_request_skips_experiment_roles(self) -> None:
+        class _Conductor:
+            def __init__(self, *, context, state):
+                self.policy = SimpleNamespace(max_retries=1)
+
+            def plan(self, context):
+                return ["search_literature"]
+
+        class _Researcher:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def execute_plan(self, skill_ids, artifacts):
+                output = list(artifacts) + [
+                    _artifact("CorpusSnapshot", {"papers": [], "web_sources": [], "indexed_paper_ids": []}),
+                    _artifact("RelatedWorkMatrix", {"narrative": "review narrative", "claims": []}),
+                    _artifact("GapMap", {"gaps": []}),
+                ]
+                self.state["_artifact_objects"] = output
+                self.state["synthesis"] = "review narrative"
+                self.state["analyses"] = []
+                self.state["findings"] = []
+                return output
+
+        class _Experimenter:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def design(self, artifacts):
+                raise AssertionError("Experimenter should not run for literature-review-only routing")
+
+        class _Analyst:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def analyze(self, artifacts):
+                raise AssertionError("Analyst should not run for literature-review-only routing")
+
+        class _Writer:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def write(self, artifacts):
+                output = list(artifacts) + [_artifact("ResearchReport", {"report": "review only report"})]
+                self.state["_artifact_objects"] = output
+                self.state["report"] = {"report": "review only report"}
+                return output
+
+        class _Critic:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def evaluate(self, artifacts):
+                return "pass", _artifact("CritiqueReport", {"verdict": {"action": "continue"}, "details": {}})
+
+        with patch("src.agent.runtime.orchestrator.ensure_plugins_registered"):
+            with patch("src.agent.runtime.orchestrator.ConductorAgent", _Conductor):
+                with patch("src.agent.runtime.orchestrator.ResearcherAgent", _Researcher):
+                    with patch("src.agent.runtime.orchestrator.ExperimenterAgent", _Experimenter):
+                        with patch("src.agent.runtime.orchestrator.AnalystAgent", _Analyst):
+                            with patch("src.agent.runtime.orchestrator.WriterAgent", _Writer):
+                                with patch("src.agent.runtime.orchestrator.CriticAgent", _Critic):
+                                    with patch(
+                                        "src.agent.runtime.orchestrator.resolve_route_plan",
+                                        return_value={
+                                            "mode": "literature_review_only",
+                                            "nodes": ["conductor", "researcher", "writer", "critic"],
+                                            "rationale": ["Using mocked literature-review-only route."],
+                                            "edges": [],
+                                        },
+                                    ):
+                                        orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
+                                        state = orchestrator.run(
+                                            topic="topic",
+                                            user_request="Please do a literature review only.",
+                                        )
+
+        self.assertEqual(state["route_mode"], "literature_review_only")
+        self.assertEqual(state["role_status"]["experimenter"], "skipped")
+        self.assertEqual(state["role_status"]["analyst"], "skipped")
+        self.assertEqual(state["role_status"]["writer"], "completed")
+        self.assertEqual(state["report"]["report"], "review only report")
+
+    def test_orchestrator_explicit_writer_only_route(self) -> None:
+        class _Conductor:
+            def __init__(self, *, context, state):
+                self.policy = SimpleNamespace(max_retries=1)
+
+            def plan(self, context):
+                raise AssertionError("Conductor should not run for explicit writer-only routing")
+
+        class _Researcher:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def execute_plan(self, skill_ids, artifacts):
+                raise AssertionError("Researcher should not run for explicit writer-only routing")
+
+        class _Experimenter:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def design(self, artifacts):
+                raise AssertionError("Experimenter should not run for explicit writer-only routing")
+
+        class _Analyst:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def analyze(self, artifacts):
+                raise AssertionError("Analyst should not run for explicit writer-only routing")
+
+        class _Writer:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def write(self, artifacts):
+                output = list(artifacts) + [_artifact("ResearchReport", {"report": "writer only"})]
+                self.state["_artifact_objects"] = output
+                self.state["report"] = {"report": "writer only"}
+                return output
+
+        class _Critic:
+            def __init__(self, *, context, state):
+                self.state = state
+
+            def evaluate(self, artifacts):
+                raise AssertionError("Critic should not run for explicit writer-only routing")
+
+        with patch("src.agent.runtime.orchestrator.ensure_plugins_registered"):
+            with patch("src.agent.runtime.orchestrator.ConductorAgent", _Conductor):
+                with patch("src.agent.runtime.orchestrator.ResearcherAgent", _Researcher):
+                    with patch("src.agent.runtime.orchestrator.ExperimenterAgent", _Experimenter):
+                        with patch("src.agent.runtime.orchestrator.AnalystAgent", _Analyst):
+                            with patch("src.agent.runtime.orchestrator.WriterAgent", _Writer):
+                                with patch("src.agent.runtime.orchestrator.CriticAgent", _Critic):
+                                    orchestrator = ResearchOrchestrator(cfg={"llm": {"provider": "gemini"}}, root=".")
+                                    state = orchestrator.run(
+                                        topic="topic",
+                                        user_request="write report only",
+                                        route_roles=["writer"],
+                                    )
+
+        self.assertEqual(state["route_mode"], "explicit_roles")
+        self.assertEqual(state["role_status"]["conductor"], "skipped")
+        self.assertEqual(state["role_status"]["researcher"], "skipped")
+        self.assertEqual(state["role_status"]["critic"], "skipped")
+        self.assertEqual(state["role_status"]["writer"], "completed")
+        self.assertEqual(state["report"]["report"], "writer only")

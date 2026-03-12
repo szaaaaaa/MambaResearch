@@ -42,6 +42,24 @@ class RunAgentUtilsTest(unittest.TestCase):
         self.assertIsNone(args.topic)
         self.assertEqual(args.resume_run_id, "run-123")
 
+    def test_parse_args_accepts_user_request_and_route_roles(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "run_agent.py",
+                "--topic",
+                "t",
+                "--user_request",
+                "literature review only",
+                "--route_roles",
+                "writer,critic",
+            ],
+        ):
+            args = parse_args()
+        self.assertEqual(args.user_request, "literature review only")
+        self.assertEqual(args.route_roles, "writer,critic")
+
     def test_parse_args_requires_topic_or_resume(self) -> None:
         with patch.object(sys, "argv", ["run_agent.py"]):
             with self.assertRaises(SystemExit):

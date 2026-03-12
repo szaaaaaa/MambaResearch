@@ -246,17 +246,14 @@ def ingest_experiment_results(
         raw_payload = results_raw
 
     if raw_payload not in (None, "", {}):
-        try:
-            normalized = normalize_experiment_results_with_llm(
-                raw_results=raw_payload,
-                research_questions=research_questions,
-                experiment_plan=experiment_plan,
-                cfg=cfg,
-            )
-            if normalized:
-                results = normalized
-        except Exception as exc:
-            logger.warning("[ingest_experiment_results] Failed to normalize raw results: %s", exc)
+        normalized = normalize_experiment_results_with_llm(
+            raw_results=raw_payload,
+            research_questions=research_questions,
+            experiment_plan=experiment_plan,
+            cfg=cfg,
+        )
+        if normalized:
+            results = normalized
 
     status = str(results.get("status", "")).lower() if isinstance(results, dict) else ""
     runs = results.get("runs", []) if isinstance(results, dict) else []

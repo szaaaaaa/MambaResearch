@@ -21,8 +21,8 @@ class ExperimenterAgent(RoleAgent):
         super().__init__(
             policy=RolePolicy(
                 role_id="experimenter",
-                system_prompt="Design experiments and implementation-ready code plans from synthesized research.",
-                allowed_skills=["design_experiment"],
+                system_prompt="Design experiments and execute configured experiment backends from synthesized research.",
+                allowed_skills=["design_experiment", "execute_experiment"],
                 max_retries=int(state.get("_cfg", {}).get("reviewer", {}).get("retrieval", {}).get("max_retries", 1)),
                 budget_limit_tokens=int(state.get("_cfg", {}).get("budget_guard", {}).get("max_tokens", 500000)),
             ),
@@ -31,7 +31,11 @@ class ExperimenterAgent(RoleAgent):
         )
 
     def design(self, artifacts: list[Any]) -> list[Artifact]:
-        return self.execute_plan(["design_experiment"], artifacts)
+        route_mode = str(self.state.get("route_mode", "") or "").strip().lower()
+        skill_ids = ["design_experiment"]
+        if route_mode == "experiment_execution":
+            skill_ids.append("execute_experiment")
+        return self.execute_plan(skill_ids, artifacts)
 
     def execute_plan(self, skill_ids: list[str], artifacts: list[Any]) -> list[Artifact]:
         current_artifacts = [artifact for artifact in artifacts if isinstance(artifact, Artifact)]
@@ -44,7 +48,7 @@ class ExperimenterAgent(RoleAgent):
         return current_artifacts
 
     def _apply_skill_outputs(self, skill_id: str, output_artifacts: list[Artifact]) -> None:
-        if skill_id != "design_experiment":
+        if skill_id not in {"design_experiment", "execute_experiment"}:
             return
 
         experiment_plan = _latest_artifact(output_artifacts, "ExperimentPlan")

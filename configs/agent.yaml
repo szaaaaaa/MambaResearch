@@ -1,6 +1,6 @@
 providers:
   llm:
-    backend: openai_chat
+    backend: openrouter_chat
     retries: 3
     retry_backoff_sec: 2
     gemini_api_key_env: GEMINI_API_KEY
@@ -20,20 +20,31 @@ providers:
       open_ttl_sec: 60
       half_open_probe_after_sec: 30
       sqlite_path: ${project.data_dir}/circuit_breaker.db
+  retrieval:
+    backend: default_retriever
 llm:
-  provider: openai
-  model: gpt-4o
+  provider: openrouter
+  model: google/gemini-2.0-flash-001
   temperature: 0.2
   role_models:
     conductor:
-      provider: gemini
-      model: gemini-3.1-pro-preview
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
     researcher:
-      provider: gemini
-      model: deep-research-pro-preview-12-2025
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
+    experimenter:
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
+    analyst:
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
+    writer:
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
     critic:
-      provider: gemini
-      model: gemini-3.1-pro-preview
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
 retrieval:
   openai_api_key_env: OPENAI_API_KEY
   runtime_mode: lite
@@ -43,8 +54,9 @@ retrieval:
   hybrid: true
   top_k: 10
   candidate_k: 50
-  reranker_backend: none
+  reranker_backend: local_crossencoder
   reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  device: auto
 sources:
   arxiv:
     enabled: true
@@ -73,7 +85,17 @@ sources:
     enabled: false
   pdf_download:
     only_allowed_hosts: false
-    allowed_hosts: []
+    allowed_hosts:
+    - arxiv.org
+    - export.arxiv.org
+    - openreview.net
+    - openaccess.thecvf.com
+    - aclanthology.org
+    - proceedings.mlr.press
+    - jmlr.org
+    - ceur-ws.org
+    - papers.nips.cc
+    - neurips.cc
     forbidden_host_ttl_sec: 86400
 index:
   backend: chroma
@@ -84,7 +106,7 @@ index:
   overlap: 200
 agent:
   seed: 42
-  max_iterations: 5
+  max_iterations: 2
   papers_per_query: 5
   max_queries_per_iteration: 3
   top_k_for_analysis: 10
@@ -96,7 +118,7 @@ agent:
     max_references: 30
   source_ranking:
     core_min_a_ratio: 0.5
-    background_max_c: 0.3
+    background_max_c: 0
     max_per_venue: 5
   query_rewrite:
     min_per_rq: 1
@@ -105,8 +127,36 @@ agent:
   dynamic_retrieval:
     simple_query_academic: true
     simple_query_pdf: true
-    simple_query_terms: 3
-    deep_query_terms: 5
+    simple_query_terms:
+    - what is
+    - intro
+    - introduction
+    - guide
+    - tutorial
+    - vs
+    - difference
+    - overview
+    - best practices
+    - compare
+    - comparison
+    - 是什么
+    - 区别
+    - 对比
+    - 入门
+    deep_query_terms:
+    - benchmark
+    - evaluation
+    - privacy
+    - governance
+    - architecture
+    - framework
+    - algorithm
+    - ablation
+    - latency
+    - token
+    - memory
+    - theorem
+    - proof
   memory:
     max_findings_for_context: 20
     max_context_chars: 10000
@@ -123,7 +173,13 @@ agent:
     min_keyword_hits: 1
     min_anchor_hits: 1
     include_terms: []
-    block_terms: []
+    block_terms:
+    - hanabi
+    - quantum
+    - software registries
+    - route choice
+    - value systems of agents
+    - multi-agent deep reinforcement learning with communication
   experiment_plan:
     enabled: false
     max_per_rq: 2
@@ -132,6 +188,37 @@ agent:
     enabled: true
     backend: sqlite
     sqlite_path: ${project.data_dir}/checkpoints.db
+  routing:
+    planner_llm:
+      provider: openrouter
+      model: google/gemini-2.0-flash-001
+      temperature: 0.1
+  experiment_execution:
+    backend: manual
+    autoresearch:
+      command:
+      - python
+      - scripts/run_autoresearch_bridge.py
+      - --plan
+      - '{plan_path}'
+      - --output
+      - '{output_path}'
+      - --topic
+      - '{topic}'
+      workdir: '{root}'
+      agent_provider: codex
+      agent_command: ''
+      codex_command: codex exec --cd "{workspace}" --prompt-file "{program_path}"
+      claude_code_command: powershell -NoProfile -Command "claude --dangerously-skip-permissions
+        --cwd '{workspace}' -p (Get-Content -Raw '{program_path}')"
+      workspace_dir: ''
+      timeout_sec: 7200
+  staged_indexing:
+    enabled: true
+    fast_text_only_until_iteration: 0
+    first_pass_text_extraction: pymupdf_only
+    figure_enrichment_start_iteration: 1
+    figure_top_papers: 4
 ingest:
   text_extraction: pymupdf_only
   latex:

@@ -154,5 +154,10 @@ def _normalize_experiment_results_with_llm(
         model=model,
         temperature=temperature,
     )
-    parsed = parse_json(raw)
-    return parsed if isinstance(parsed, dict) else {}
+    try:
+        parsed = parse_json(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Experiment results normalizer returned invalid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Experiment results normalizer returned an invalid payload")
+    return parsed

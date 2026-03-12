@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 from typing import Any, Dict, Iterable, List
 
 from src.agent.core.secret_redaction import assert_no_inline_secrets
@@ -84,6 +85,26 @@ DEFAULT_REWRITE_MAX_TOTAL_QUERIES = 24
 DEFAULT_EXPERIMENT_PLAN_ENABLED = True
 DEFAULT_EXPERIMENT_MAX_PER_RQ = 2
 DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS = True
+DEFAULT_EXPERIMENT_EXECUTION_BACKEND = "manual"
+DEFAULT_AUTORESEARCH_COMMAND = [
+    "python",
+    "scripts/run_autoresearch_bridge.py",
+    "--plan",
+    "{plan_path}",
+    "--output",
+    "{output_path}",
+    "--topic",
+    "{topic}",
+]
+DEFAULT_AUTORESEARCH_TIMEOUT_SEC = 7200
+DEFAULT_AUTORESEARCH_AGENT_COMMAND = ""
+DEFAULT_AUTORESEARCH_AGENT_PROVIDER = "codex"
+DEFAULT_AUTORESEARCH_CODEX_COMMAND = 'codex exec --cd "{workspace}" --prompt-file "{program_path}"'
+DEFAULT_AUTORESEARCH_CLAUDE_CODE_COMMAND = (
+    'powershell -NoProfile -Command '
+    '"claude --dangerously-skip-permissions --cwd \'{workspace}\' -p (Get-Content -Raw \'{program_path}\')"'
+)
+DEFAULT_AUTORESEARCH_WORKSPACE_DIR = ""
 DEFAULT_EVIDENCE_MIN_PER_RQ = 2
 DEFAULT_EVIDENCE_ALLOW_GRACEFUL_DEGRADE = True
 DEFAULT_CLAIM_ALIGNMENT_ENABLED = True
@@ -147,7 +168,12 @@ _DEFAULT_LLM_MODEL_BY_PROVIDER = {
     "openrouter": "anthropic/claude-sonnet-4",
     "siliconflow": "Qwen/Qwen2.5-7B-Instruct",
 }
-_ROLE_LLM_IDS = ("conductor", "researcher", "critic")
+_ROLE_LLM_IDS = ("conductor", "researcher", "experimenter", "analyst", "writer", "critic")
+_ROLE_LLM_FALLBACKS = {
+    "experimenter": "researcher",
+    "analyst": "critic",
+    "writer": "conductor",
+}
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -194,7 +220,16 @@ def apply_role_llm_overrides(cfg: Dict[str, Any], role_id: str | None) -> Dict[s
     out = deepcopy(cfg)
     llm_cfg = out.setdefault("llm", {})
     role_models = llm_cfg.get("role_models", {})
-    role_cfg = role_models.get(role_id, {}) if isinstance(role_models, dict) else {}
+    resolved_role_id = str(role_id).strip().lower()
+    fallback_role_id = _ROLE_LLM_FALLBACKS.get(resolved_role_id, "")
+    role_cfg = {}
+    if isinstance(role_models, dict):
+        role_cfg = role_models.get(resolved_role_id, {})
+        role_cfg_is_empty = not isinstance(role_cfg, dict) or not any(
+            str(role_cfg.get(key, "")).strip() for key in ("provider", "model")
+        )
+        if role_cfg_is_empty and fallback_role_id:
+            role_cfg = role_models.get(fallback_role_id, {})
     if not isinstance(role_cfg, dict):
         return out
 
@@ -253,6 +288,16 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
             role_cfg.pop("temperature", None)
         else:
             role_cfg["temperature"] = float(role_cfg["temperature"])
+
+    conductor_role_cfg = role_models_cfg.get("conductor", {})
+    if isinstance(conductor_role_cfg, dict):
+        conductor_provider = str(conductor_role_cfg.get("provider", "")).strip().lower()
+        conductor_model = str(conductor_role_cfg.get("model", "")).strip()
+        if conductor_provider in _LLM_BACKEND_BY_PROVIDER:
+            llm_cfg["provider"] = conductor_provider
+            out.setdefault("providers", {}).setdefault("llm", {})["backend"] = _LLM_BACKEND_BY_PROVIDER[conductor_provider]
+        if conductor_model:
+            llm_cfg["model"] = conductor_model
 
     providers_cfg = out.setdefault("providers", {})
     providers_llm_cfg = providers_cfg.setdefault("llm", {})
@@ -470,6 +515,41 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
         experiment_cfg.get("require_human_results"),
         DEFAULT_REQUIRE_HUMAN_EXPERIMENT_RESULTS,
     )
+    execution_cfg = agent_cfg.setdefault("experiment_execution", {})
+    execution_cfg["backend"] = str(
+        execution_cfg.get("backend", DEFAULT_EXPERIMENT_EXECUTION_BACKEND)
+    ).strip().lower() or DEFAULT_EXPERIMENT_EXECUTION_BACKEND
+    autoresearch_cfg = execution_cfg.setdefault("autoresearch", {})
+    command_cfg = autoresearch_cfg.get("command", DEFAULT_AUTORESEARCH_COMMAND)
+    if isinstance(command_cfg, list):
+        autoresearch_cfg["command"] = [str(item) for item in command_cfg if str(item).strip()]
+    else:
+        autoresearch_cfg["command"] = str(command_cfg).strip()
+    autoresearch_cfg["workdir"] = str(autoresearch_cfg.get("workdir", "{root}")).strip() or "{root}"
+    autoresearch_cfg["agent_provider"] = str(
+        autoresearch_cfg.get("agent_provider", DEFAULT_AUTORESEARCH_AGENT_PROVIDER)
+    ).strip().lower() or DEFAULT_AUTORESEARCH_AGENT_PROVIDER
+    agent_command_cfg = autoresearch_cfg.get("agent_command", DEFAULT_AUTORESEARCH_AGENT_COMMAND)
+    if agent_command_cfg in (None, ""):
+        agent_command_cfg = os.environ.get("AUTORESEARCH_AGENT_COMMAND", DEFAULT_AUTORESEARCH_AGENT_COMMAND)
+    autoresearch_cfg["agent_command"] = str(agent_command_cfg).strip()
+    codex_command_cfg = autoresearch_cfg.get("codex_command", DEFAULT_AUTORESEARCH_CODEX_COMMAND)
+    if codex_command_cfg in (None, ""):
+        codex_command_cfg = os.environ.get("AUTORESEARCH_CODEX_COMMAND", DEFAULT_AUTORESEARCH_CODEX_COMMAND)
+    autoresearch_cfg["codex_command"] = str(codex_command_cfg).strip()
+    claude_code_command_cfg = autoresearch_cfg.get("claude_code_command", DEFAULT_AUTORESEARCH_CLAUDE_CODE_COMMAND)
+    if claude_code_command_cfg in (None, ""):
+        claude_code_command_cfg = os.environ.get(
+            "AUTORESEARCH_CLAUDE_CODE_COMMAND",
+            DEFAULT_AUTORESEARCH_CLAUDE_CODE_COMMAND,
+        )
+    autoresearch_cfg["claude_code_command"] = str(claude_code_command_cfg).strip()
+    autoresearch_cfg["workspace_dir"] = str(
+        autoresearch_cfg.get("workspace_dir", DEFAULT_AUTORESEARCH_WORKSPACE_DIR)
+    ).strip()
+    autoresearch_cfg["timeout_sec"] = int(
+        autoresearch_cfg.get("timeout_sec", DEFAULT_AUTORESEARCH_TIMEOUT_SEC)
+    )
     checkpoint_cfg = agent_cfg.setdefault("checkpointing", {})
     checkpoint_cfg["enabled"] = _to_bool(
         checkpoint_cfg.get("enabled"),
@@ -502,6 +582,23 @@ def normalize_and_validate_config(cfg: Dict[str, Any] | None) -> Dict[str, Any]:
         1,
         int(claim_align_cfg.get("anchor_terms_max", DEFAULT_CLAIM_ALIGNMENT_ANCHOR_TERMS_MAX)),
     )
+    routing_cfg = agent_cfg.setdefault("routing", {})
+    planner_llm_cfg = routing_cfg.setdefault("planner_llm", {})
+    if not isinstance(planner_llm_cfg, dict):
+        planner_llm_cfg = {}
+        routing_cfg["planner_llm"] = planner_llm_cfg
+    planner_provider = str(planner_llm_cfg.get("provider", "")).strip().lower()
+    if planner_provider and planner_provider not in {"gemini", "openai", "claude", "openrouter", "siliconflow"}:
+        planner_provider = ""
+    planner_llm_cfg["provider"] = planner_provider
+    planner_model = str(planner_llm_cfg.get("model", "")).strip()
+    if planner_provider and not planner_model:
+        planner_model = _DEFAULT_LLM_MODEL_BY_PROVIDER[planner_provider]
+    planner_llm_cfg["model"] = planner_model
+    if planner_llm_cfg.get("temperature") in (None, ""):
+        planner_llm_cfg.pop("temperature", None)
+    else:
+        planner_llm_cfg["temperature"] = float(planner_llm_cfg["temperature"])
 
     sources_cfg = out.setdefault("sources", {})
     for source_name in ALL_SOURCES:

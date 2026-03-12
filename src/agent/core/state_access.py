@@ -50,18 +50,6 @@ def sget(state: Dict[str, Any], key: str, default: Any = None) -> Any:
     return state.get(key, default)
 
 
-def with_flattened_legacy_view(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a shallow copy with flat aliases materialized from namespaces."""
-    out = dict(state)
-    for field in _FIELD_NS_MAP:
-        if field in out:
-            continue
-        value = sget(out, field, None)
-        if value is not None:
-            out[field] = value
-    return out
-
-
 def to_namespaced_update(update: Dict[str, Any]) -> Dict[str, Any]:
     """Convert node updates into namespaced patch format with flat mirrors.
 

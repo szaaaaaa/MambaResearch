@@ -7,7 +7,7 @@ from src.agent.stages.planning import plan_research
 
 
 class StagePlanningTest(unittest.TestCase):
-    def test_plan_research_falls_back_when_json_invalid(self) -> None:
+    def test_plan_research_raises_when_json_invalid(self) -> None:
         state = {
             "topic": "retrieval augmented generation benchmark",
             "iteration": 0,
@@ -17,31 +17,24 @@ class StagePlanningTest(unittest.TestCase):
         def parse_json(_: str) -> dict[str, object]:
             raise json.JSONDecodeError("bad", "bad", 0)
 
-        out = plan_research(
-            state,
-            state_view=lambda x: x,
-            get_cfg=lambda x: x.get("_cfg", {}),
-            load_budget_and_scope=lambda _state, _cfg: (
-                {"intent": "survey", "allowed_sections": ["Introduction"]},
-                {"max_research_questions": 3, "max_sections": 5, "max_references": 20},
-            ),
-            ns=lambda x: x,
-            llm_call=lambda *args, **kwargs: "not-json",
-            parse_json=parse_json,
-            compress_findings_for_context=lambda *args, **kwargs: "",
-            expand_query_set=lambda **kwargs: [],
-            academic_sources_enabled=lambda cfg: True,
-            web_sources_enabled=lambda cfg: True,
-            route_query=lambda query, cfg: {"use_academic": True, "use_web": True},
-        )
-
-        self.assertEqual(
-            out["research_questions"],
-            ["What are the key developments in retrieval augmented generation benchmark?"],
-        )
-        self.assertEqual(out["search_queries"], ["retrieval augmented generation benchmark"])
-        self.assertEqual(out["_academic_queries"], ["retrieval augmented generation benchmark"])
-        self.assertEqual(out["_web_queries"], ["retrieval augmented generation benchmark"])
+        with self.assertRaisesRegex(RuntimeError, "plan_research returned invalid JSON"):
+            plan_research(
+                state,
+                state_view=lambda x: x,
+                get_cfg=lambda x: x.get("_cfg", {}),
+                load_budget_and_scope=lambda _state, _cfg: (
+                    {"intent": "survey", "allowed_sections": ["Introduction"]},
+                    {"max_research_questions": 3, "max_sections": 5, "max_references": 20},
+                ),
+                ns=lambda x: x,
+                llm_call=lambda *args, **kwargs: "not-json",
+                parse_json=parse_json,
+                compress_findings_for_context=lambda *args, **kwargs: "",
+                expand_query_set=lambda **kwargs: [],
+                academic_sources_enabled=lambda cfg: True,
+                web_sources_enabled=lambda cfg: True,
+                route_query=lambda query, cfg: {"use_academic": True, "use_web": True},
+            )
 
     def test_plan_research_applies_focus_and_routing(self) -> None:
         state = {

@@ -34,6 +34,41 @@ PLAN_RESEARCH_REFINE_CONTEXT = (
     "Do NOT repeat previous queries: {previous_queries}\n\n"
 )
 
+ROUTE_PLANNER_SYSTEM = (
+    "You are the planner for a six-agent research system. "
+    "Given a user request, choose the smallest useful execution DAG that will satisfy it.\n\n"
+    "Available roles:\n"
+    '- "conductor": clarify intent and plan research tasks\n'
+    '- "researcher": search, fetch, analyze sources\n'
+    '- "critic": review evidence quality and decide whether to continue\n'
+    '- "experimenter": design or execute experiments\n'
+    '- "analyst": analyze experiment results\n'
+    '- "writer": draft the final review/report/paper\n\n'
+    "Rules:\n"
+    "- Output valid JSON only.\n"
+    "- nodes must contain only the available roles.\n"
+    "- edges must form a directed acyclic graph over those nodes.\n"
+    "- Use the smallest DAG that still completes the request.\n"
+    "- Include conductor when the request needs planning or retrieval setup.\n"
+    "- Use analyst only when experiment results already exist or must be interpreted.\n"
+    "- Use experimenter only when the user asks for experiment design or execution.\n"
+    "- If the request is just a literature review/report, writer should be a terminal node.\n\n"
+    "Return exactly this schema:\n"
+    "{\n"
+    '  "mode": "<short route label>",\n'
+    '  "rationale": ["...", "..."],\n'
+    '  "nodes": ["conductor", "researcher", "critic", "writer"],\n'
+    '  "edges": [{"source": "conductor", "target": "researcher"}, {"source": "researcher", "target": "critic"}, {"source": "critic", "target": "writer"}]\n'
+    "}"
+)
+
+ROUTE_PLANNER_USER = (
+    "Topic: {topic}\n"
+    "User request: {user_request}\n"
+    "Available roles: {available_roles}\n\n"
+    "Choose the best execution DAG for this request."
+)
+
 # ── Paper Analysis ───────────────────────────────────────────────────
 
 ANALYZE_PAPER_SYSTEM = (

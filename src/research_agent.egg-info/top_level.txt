@@ -3,4 +3,5 @@ agent
 common
 ingest
 rag
+retrieval
 workflows
