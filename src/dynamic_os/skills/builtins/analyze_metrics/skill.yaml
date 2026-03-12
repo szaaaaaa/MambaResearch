@@ -1,0 +1,19 @@
+id: analyze_metrics
+name: Analyze Metrics
+version: 1.0.0
+applicable_roles:
+  - analyst
+description: Analyze experiment results into reusable findings and metrics summaries.
+input_contract:
+  required:
+    - ExperimentResults
+  optional:
+    - SourceSet
+    - PaperNotes
+output_artifacts:
+  - ExperimentAnalysis
+  - PerformanceMetrics
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

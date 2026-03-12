@@ -1,0 +1,18 @@
+id: search_papers
+name: Search Papers
+version: 1.0.0
+applicable_roles:
+  - researcher
+description: Search for candidate papers and source records from the current search plan.
+input_contract:
+  required:
+    - SearchPlan
+  optional:
+    - TopicBrief
+output_artifacts:
+  - SourceSet
+allowed_tools:
+  - mcp.search.papers
+permissions:
+  network: true
+timeout_sec: 120

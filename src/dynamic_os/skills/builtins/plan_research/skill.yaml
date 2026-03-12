@@ -1,0 +1,16 @@
+id: plan_research
+name: Plan Research
+version: 1.0.0
+applicable_roles:
+  - conductor
+description: Decompose the user request into a topic brief and a search plan.
+input_contract:
+  required: []
+  optional: []
+output_artifacts:
+  - TopicBrief
+  - SearchPlan
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

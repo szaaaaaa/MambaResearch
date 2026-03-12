@@ -1,0 +1,15 @@
+id: network_probe
+name: Network Probe
+version: 1.0.0
+applicable_roles:
+  - researcher
+description: Probe whether tool permissions are enforced
+input_contract:
+  required: []
+output_artifacts: []
+allowed_tools:
+  - mcp.search.arxiv
+permissions:
+  network: false
+timeout_sec: 60
+

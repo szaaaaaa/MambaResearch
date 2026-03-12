@@ -1,0 +1,17 @@
+id: search_papers
+name: Search Papers
+version: 1.0.0
+applicable_roles:
+  - researcher
+description: Search for papers
+input_contract:
+  required:
+    - query
+output_artifacts:
+  - SourceSet
+allowed_tools:
+  - mcp.search.arxiv
+permissions:
+  network: true
+timeout_sec: 60
+

@@ -1,0 +1,18 @@
+id: draft_report
+name: Draft Report
+version: 1.0.0
+applicable_roles:
+  - writer
+description: Draft the final research report from existing evidence and analysis artifacts.
+input_contract:
+  required: []
+  optional:
+    - EvidenceMap
+    - ExperimentAnalysis
+    - PerformanceMetrics
+output_artifacts:
+  - ResearchReport
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

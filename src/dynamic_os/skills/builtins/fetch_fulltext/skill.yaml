@@ -1,0 +1,17 @@
+id: fetch_fulltext
+name: Fetch Fulltext
+version: 1.0.0
+applicable_roles:
+  - researcher
+description: Retrieve fuller text snippets for a previously collected source set.
+input_contract:
+  required:
+    - SourceSet
+  optional: []
+output_artifacts:
+  - SourceSet
+allowed_tools:
+  - mcp.retrieval.store
+permissions:
+  network: true
+timeout_sec: 120

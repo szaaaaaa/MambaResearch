@@ -4,7 +4,6 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from src.agent.core.config import normalize_and_validate_config
 from src.server.settings import APP_RUNTIME_MODE, CONFIG_PATH, CREDENTIAL_KEYS, ENV_PATH
 
 
@@ -17,20 +16,15 @@ def get_config():
         return {"runtime_mode": APP_RUNTIME_MODE}
     with CONFIG_PATH.open("r", encoding="utf-8") as file:
         config = yaml.safe_load(file) or {}
-    normalized = normalize_and_validate_config(config)
-    return {**normalized, "runtime_mode": APP_RUNTIME_MODE}
+    if not isinstance(config, dict):
+        raise HTTPException(status_code=500, detail="config file must contain an object")
+    return {**config, "runtime_mode": APP_RUNTIME_MODE}
 
 
 @router.post("/api/config")
 async def save_config(request: Request):
-    new_config = await request.json()
-    if not isinstance(new_config, dict):
-        raise HTTPException(status_code=400, detail="config payload must be an object")
-    new_config = {key: value for key, value in new_config.items() if key != "runtime_mode"}
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as file:
-        yaml.safe_dump(new_config, file, allow_unicode=True, sort_keys=False)
-    return {"status": "success"}
+    del request
+    raise HTTPException(status_code=405, detail="dynamic_os runtime configuration is read-only")
 
 
 def _read_env_file() -> dict[str, str]:
@@ -108,20 +102,5 @@ def get_credentials():
 
 @router.post("/api/credentials")
 async def save_credentials(request: Request):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="credentials payload must be an object")
-    current_values = _read_env_file()
-    next_values = dict(current_values)
-    for key in CREDENTIAL_KEYS:
-        if key not in payload:
-            continue
-        text = str(payload.get(key, "")).strip()
-        if text:
-            next_values[key] = text
-    _write_env_file(next_values)
-    return {
-        "status": "success",
-        "values": {key: "" for key in CREDENTIAL_KEYS},
-        "status_map": _credential_status(next_values),
-    }
+    del request
+    raise HTTPException(status_code=405, detail="dynamic_os credentials are read-only at runtime")

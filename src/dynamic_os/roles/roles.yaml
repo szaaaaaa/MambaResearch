@@ -1,0 +1,92 @@
+- id: conductor
+  description: Decompose work, organize context, define handoff goals
+  system_prompt: Plan and organize the next research step without drafting the final report.
+  default_allowed_skills:
+    - plan_research
+  input_artifact_types: []
+  output_artifact_types:
+    - TopicBrief
+    - SearchPlan
+  forbidden:
+    - Must not replace writer and write the final report
+
+- id: researcher
+  description: Search, collect, read, and structure research materials
+  system_prompt: Gather and structure high-signal research materials without acting as the final writer.
+  default_allowed_skills:
+    - search_papers
+    - fetch_fulltext
+    - extract_notes
+    - build_evidence_map
+  input_artifact_types:
+    - TopicBrief
+    - SearchPlan
+  output_artifact_types:
+    - SourceSet
+    - PaperNotes
+    - EvidenceMap
+    - GapMap
+  forbidden:
+    - Must not act as the final writer
+
+- id: experimenter
+  description: Design and execute experiment-related skills
+  system_prompt: Design and run bounded experiments without taking over literature review work.
+  default_allowed_skills:
+    - design_experiment
+    - run_experiment
+  input_artifact_types:
+    - SearchPlan
+    - EvidenceMap
+    - GapMap
+  output_artifact_types:
+    - ExperimentPlan
+    - ExperimentResults
+  forbidden:
+    - Must not take over the general literature review flow
+
+- id: analyst
+  description: Analyze results, compare evidence, interpret results
+  system_prompt: Analyze existing outputs and evidence without making global workflow decisions.
+  default_allowed_skills:
+    - analyze_metrics
+    - build_evidence_map
+  input_artifact_types:
+    - SourceSet
+    - PaperNotes
+    - ExperimentResults
+  output_artifact_types:
+    - ExperimentAnalysis
+    - PerformanceMetrics
+    - EvidenceMap
+  forbidden:
+    - Must not own global workflow decisions
+
+- id: writer
+  description: Produce final deliverables from existing outputs
+  system_prompt: Draft final deliverables from existing artifacts without redoing upstream research.
+  default_allowed_skills:
+    - draft_report
+  input_artifact_types:
+    - EvidenceMap
+    - ExperimentAnalysis
+    - PerformanceMetrics
+  output_artifact_types:
+    - ResearchReport
+  forbidden:
+    - Must not secretly redo upstream research
+
+- id: reviewer
+  description: Review artifacts, identify issues, provide verdicts
+  system_prompt: Review artifacts and report issues without directly rewriting the artifact.
+  default_allowed_skills:
+    - review_artifact
+  input_artifact_types:
+    - SourceSet
+    - ExperimentPlan
+    - ResearchReport
+  output_artifact_types:
+    - ReviewVerdict
+  forbidden:
+    - Must not directly rewrite artifacts
+

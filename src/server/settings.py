@@ -8,7 +8,7 @@ FRONTEND_DIST = ROOT / "frontend" / "dist"
 TMP_DIR = ROOT / ".tmp"
 ACTIVE_RUNS_PATH = TMP_DIR / "active_runs.json"
 
-APP_RUNTIME_MODE = "6-agent"
+APP_RUNTIME_MODE = "dynamic-os"
 RUN_STATE_PREFIX = "[[RUN_STATE]]"
 RUN_EVENT_PREFIX = "[[RUN_EVENT]]"
 RUN_LOG_PREFIX = "[[RUN_LOG]]"

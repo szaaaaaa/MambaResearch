@@ -1,0 +1,17 @@
+id: run_experiment
+name: Run Experiment
+version: 1.0.0
+applicable_roles:
+  - experimenter
+description: Execute a bounded experiment plan in the sandbox and collect raw results.
+input_contract:
+  required:
+    - ExperimentPlan
+  optional: []
+output_artifacts:
+  - ExperimentResults
+allowed_tools:
+  - mcp.exec.execute_code
+permissions:
+  sandbox_exec: true
+timeout_sec: 120

@@ -1,0 +1,20 @@
+id: build_evidence_map
+name: Build Evidence Map
+version: 1.0.0
+applicable_roles:
+  - researcher
+  - analyst
+description: Synthesize input artifacts into an evidence map and a gap map.
+input_contract:
+  required: []
+  optional:
+    - PaperNotes
+    - SourceSet
+    - ExperimentResults
+output_artifacts:
+  - EvidenceMap
+  - GapMap
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120
