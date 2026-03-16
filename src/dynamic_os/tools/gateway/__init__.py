@@ -40,7 +40,7 @@ class ToolGateway:
         self._llm = LLMGateway(self._mcp)
         self._search = SearchGateway(mcp=self._mcp, policy=policy)
         self._retrieval = RetrievalGateway(self._mcp)
-        self._execution = ExecutionGateway(policy=policy, executor=code_executor)
+        self._execution = ExecutionGateway(policy=policy, mcp=self._mcp, executor=code_executor)
         self._filesystem = FilesystemGateway(policy=policy)
 
     async def llm_chat(
@@ -70,7 +70,7 @@ class ToolGateway:
         *,
         source: str = "auto",
         max_results: int = 10,
-    ) -> list[dict]:
+    ) -> dict:
         return await self._search.search(query, source=source, max_results=max_results)
 
     async def retrieve(
@@ -96,8 +96,9 @@ class ToolGateway:
         *,
         language: str = "python",
         timeout_sec: int = 60,
+        remote: bool = False,
     ) -> dict:
-        return await self._execution.execute_code(code, language=language, timeout_sec=timeout_sec)
+        return await self._execution.execute_code(code, language=language, timeout_sec=timeout_sec, remote=remote)
 
     async def read_file(self, path: str) -> str:
         return await self._filesystem.read_file(path)
@@ -203,10 +204,11 @@ class ContextualToolGateway:
         *,
         source: str = "auto",
         max_results: int = 10,
-    ) -> list[dict]:
+    ) -> dict:
         if not self._permissions.network:
             raise PolicyViolationError("skill does not allow network access")
-        tool_id = self._resolve_tool_id(ToolCapability.search, preferred=source)
+        preferred_source = source if source not in {"", "auto", "academic", "web"} else "auto"
+        tool_id = self._resolve_tool_id(ToolCapability.search, preferred=preferred_source)
         self._ensure_tool_allowed(tool_id)
         return await self._wrap_tool_call(
             tool_id,
@@ -248,17 +250,22 @@ class ContextualToolGateway:
         *,
         language: str = "python",
         timeout_sec: int = 60,
+        remote: bool = False,
     ) -> dict:
-        if not self._permissions.sandbox_exec:
+        if remote:
+            if not self._permissions.remote_exec:
+                raise PolicyViolationError("skill does not allow remote execution")
+        elif not self._permissions.sandbox_exec:
             raise PolicyViolationError("skill does not allow sandbox execution")
         tool_id = self._resolve_tool_id(
             ToolCapability.execute_code,
-            fallback="mcp.exec.execute_code",
+            preferred="remote_execute_code" if remote else "execute_code",
+            fallback="mcp.exec.remote_execute_code" if remote else "mcp.exec.execute_code",
         )
         self._ensure_tool_allowed(tool_id)
         return await self._wrap_tool_call(
             tool_id,
-            self._base.execute_code(code, language=language, timeout_sec=timeout_sec),
+            self._base.execute_code(code, language=language, timeout_sec=timeout_sec, remote=remote),
         )
 
     async def read_file(self, path: str) -> str:

@@ -1,7 +1,8 @@
 __init__
-agent
 common
+dynamic_os
 ingest
 rag
 retrieval
+server
 workflows

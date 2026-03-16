@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -29,7 +30,7 @@ class Observation(BaseModel):
     model_config = {"frozen": True}
 
     node_id: str
-    role: RoleId
+    role: RoleId | Literal["planner"]
     status: NodeStatus
     error_type: ErrorType = ErrorType.none
     what_happened: str = ""
@@ -42,4 +43,3 @@ class Observation(BaseModel):
     )
     confidence: float = Field(1.0, ge=0.0, le=1.0)
     duration_ms: float = 0.0
-

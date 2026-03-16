@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from app import app
 from src.dynamic_os.contracts.artifact import ArtifactRecord
-from src.dynamic_os.contracts.observation import ErrorType, NodeStatus
+from src.dynamic_os.contracts.observation import ErrorType, NodeStatus, Observation
 from src.dynamic_os.contracts.policy import BudgetPolicy, PermissionPolicy
 from src.dynamic_os.contracts.route_plan import PlanNode, RoleId, RoutePlan
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
@@ -18,13 +20,14 @@ from src.dynamic_os.contracts.skill_spec import SkillSpec
 from src.dynamic_os.executor import Executor, NodeRunner
 from src.dynamic_os.planner import Planner, PlannerOutputError, assess_review_need, decide_termination
 from src.dynamic_os.planner.prompts import build_planner_messages
+from src.dynamic_os.planner.routing import derive_role_routing_policy
 from src.dynamic_os.policy.engine import PolicyEngine
 from src.dynamic_os.roles.registry import RoleRegistry
+from src.dynamic_os.skills.builtins.search_papers.run import run as search_papers_run
 from src.dynamic_os.skills.registry import SkillRegistry
 from src.dynamic_os.storage.memory import InMemoryArtifactStore, InMemoryObservationStore, InMemoryPlanStore
 from src.dynamic_os.tools.gateway import ToolGateway
 from src.dynamic_os.tools.registry import ToolCapability, ToolRegistry
-from src.server.settings import RUN_EVENT_PREFIX, RUN_STATE_PREFIX
 
 BUILTINS_DIR = Path(__file__).resolve().parents[1] / "src" / "dynamic_os" / "skills" / "builtins"
 
@@ -35,8 +38,74 @@ class FakePlannerModel:
         self.calls = 0
 
     async def generate(self, messages, response_schema):
+        if _is_role_routing_schema(response_schema):
+            hard_policy = _extract_hard_policy(messages)
+            user_request = next(
+                (message.get("content", "") for message in reversed(messages) if message.get("role") == "user"),
+                "",
+            ).lower()
+            selected_roles = list(hard_policy.get("selected_roles") or [])
+            required_roles = list(hard_policy.get("required_roles") or [])
+            reasons: list[str] = []
+
+            if any(token in user_request for token in ("experiment", "benchmark", "ablation", "实验", "评测", "基准")):
+                _append_unique(selected_roles, "experimenter")
+                _append_unique(selected_roles, "analyst")
+                _append_unique(required_roles, "experimenter")
+                reasons.append("进入实验阶段")
+            if any(token in user_request for token in ("analyze", "analysis", "compare", "分析", "对比", "比较")):
+                _append_unique(selected_roles, "analyst")
+                _append_unique(required_roles, "analyst")
+                reasons.append("进入分析阶段")
+            if any(token in user_request for token in ("write", "draft", "报告", "总结", "综述", "撰写")):
+                _append_unique(selected_roles, "writer")
+                reasons.append("进入写作阶段")
+            if any(token in user_request for token in ("review", "审核", "评审", "审阅")):
+                _append_unique(selected_roles, "reviewer")
+                reasons.append("进入评审阶段")
+            if any(
+                token in user_request
+                for token in ("find", "paper", "research", "investigate", "study", "研究", "调研", "论文", "文献", "检索")
+            ) or not selected_roles:
+                if "conductor" in selected_roles or not selected_roles:
+                    _append_unique(selected_roles, "researcher")
+                reasons.append("进入研究主流程")
+
+            for role_id in hard_policy.get("required_roles") or []:
+                _append_unique(selected_roles, role_id)
+                _append_unique(required_roles, role_id)
+            if not selected_roles:
+                selected_roles = ["researcher"]
+            return json.dumps(
+                {
+                    "selected_roles": selected_roles,
+                    "required_roles": required_roles,
+                    "reasons": reasons or ["沿用硬路由策略"],
+                }
+            )
         self.calls += 1
         return self._responses.pop(0)
+
+
+def _is_role_routing_schema(response_schema: dict) -> bool:
+    properties = response_schema.get("properties") or {}
+    return isinstance(properties, dict) and "selected_roles" in properties and "required_roles" in properties
+
+
+def _extract_hard_policy(messages) -> dict:
+    system_prompt = next((message.get("content", "") for message in messages if message.get("role") == "system"), "")
+    match = re.search(r"## Hard Routing Policy From Code\n(.*?)\n\n## Rules", system_prompt, re.S)
+    if not match:
+        return {}
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
 
 
 class FakeSkillRegistry:
@@ -69,12 +138,20 @@ class FakeSkillRegistry:
             raise ValueError(f"role {role_id} is not applicable for skills: {', '.join(incompatible)}")
 
 
-def _planner_with_model(model: FakePlannerModel, skill_specs: list[SkillSpec]) -> Planner:
+def _planner_with_model(
+    model: FakePlannerModel,
+    skill_specs: list[SkillSpec],
+    *,
+    artifact_records: list[ArtifactRecord] | None = None,
+) -> Planner:
+    artifact_store = InMemoryArtifactStore()
+    for record in artifact_records or []:
+        artifact_store.save(record)
     return Planner(
         model=model,
         role_registry=RoleRegistry.from_file(),
         skill_registry=FakeSkillRegistry(skill_specs),
-        artifact_store=InMemoryArtifactStore(),
+        artifact_store=artifact_store,
         observation_store=InMemoryObservationStore(),
         plan_store=InMemoryPlanStore(),
     )
@@ -93,15 +170,30 @@ def _skill_spec(
     *,
     permissions: dict | None = None,
     allowed_tools: list[str] | None = None,
+    required: list[str] | None = None,
+    requires_any: list[str] | None = None,
+    output_artifacts: list[str] | None = None,
 ) -> SkillSpec:
+    default_outputs = {
+        "search_papers": ["SourceSet"],
+        "fetch_fulltext": ["SourceSet"],
+        "extract_notes": ["PaperNotes"],
+        "plan_research": ["TopicBrief", "SearchPlan"],
+        "build_evidence_map": ["EvidenceMap", "GapMap"],
+        "draft_report": ["ResearchReport"],
+        "review_artifact": ["ReviewVerdict"],
+    }
     return SkillSpec.model_validate(
         {
             "id": skill_id,
             "name": skill_id.replace("_", " ").title(),
             "applicable_roles": roles,
             "description": skill_id,
-            "input_contract": {"required": []},
-            "output_artifacts": [],
+            "input_contract": {
+                "required": required or [],
+                "requires_any": requires_any or [],
+            },
+            "output_artifacts": output_artifacts or default_outputs.get(skill_id, []),
             "allowed_tools": allowed_tools or [],
             "permissions": permissions or {},
             "timeout_sec": 60,
@@ -109,22 +201,39 @@ def _skill_spec(
     )
 
 
-def _plan_json(role: str, skill_id: str, *, needs_review: bool = False) -> str:
+def _plan_json(
+    role: str,
+    skill_id: str,
+    *,
+    run_id: str = "run_1",
+    planning_iteration: int = 0,
+    needs_review: bool = False,
+    inputs: list[str] | None = None,
+) -> str:
+    default_expected_outputs = {
+        "plan_research": ["TopicBrief", "SearchPlan"],
+        "search_papers": ["SourceSet"],
+        "fetch_fulltext": ["SourceSet"],
+        "extract_notes": ["PaperNotes"],
+        "build_evidence_map": ["EvidenceMap", "GapMap"],
+        "draft_report": ["ResearchReport"],
+        "review_artifact": ["ReviewVerdict"],
+    }
     return json.dumps(
         {
-            "run_id": "run_1",
-            "planning_iteration": 0,
+            "run_id": run_id,
+            "planning_iteration": planning_iteration,
             "horizon": 1,
             "nodes": [
                 {
                     "node_id": "node_research_1",
                     "role": role,
                     "goal": "Collect papers",
-                    "inputs": [],
+                    "inputs": inputs or [],
                     "allowed_skills": [skill_id],
                     "success_criteria": ["at_least_one_source"],
                     "failure_policy": "replan",
-                    "expected_outputs": ["SourceSet"],
+                    "expected_outputs": default_expected_outputs.get(skill_id, []),
                     "needs_review": needs_review,
                 }
             ],
@@ -207,9 +316,20 @@ def _phase5_inputs(skill_id: str) -> list[ArtifactRecord]:
                         {
                             "paper_id": "paper_a",
                             "title": "Paper A",
-                            "content": "Full text for Paper A",
+                            "retrieved_document": {
+                                "paper_id": "paper_a",
+                                "title": "Paper A",
+                                "content": "Retrieved full text for Paper A",
+                            },
                         }
-                    ]
+                    ],
+                    "documents": [
+                        {
+                            "paper_id": "paper_a",
+                            "title": "Paper A",
+                            "content": "Retrieved full text for Paper A",
+                        }
+                    ],
                 },
             )
         ]
@@ -241,8 +361,9 @@ def _phase5_inputs(skill_id: str) -> list[ArtifactRecord]:
                 role=RoleId.experimenter,
                 skill="design_experiment",
                 payload={
+                    "plan": "Compare retrieval planning against a baseline.",
                     "language": "python",
-                    "code": "metrics = {'accuracy': 0.91, 'latency_ms': 120}\nprint(metrics)",
+                    "code": "metrics = {'accuracy': 0.93, 'latency_ms': 115}\nprint(metrics)",
                 },
             )
         ]
@@ -301,6 +422,14 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
 
     async def invoker(tool, payload):
         if tool.capability == ToolCapability.llm_chat:
+            system_message = next(
+                (
+                    message.get("content", "")
+                    for message in payload.get("messages", [])
+                    if message.get("role") == "system"
+                ),
+                "",
+            )
             user_message = next(
                 (
                     message.get("content", "")
@@ -309,6 +438,14 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
                 ),
                 "",
             )
+            if "Return JSON only. Produce a bounded experiment plan with runnable code." in system_message:
+                return json.dumps(
+                    {
+                        "plan": f"Evaluate retrieval planning for: {user_message[:80]}",
+                        "language": "python",
+                        "code": "metrics = {'accuracy': 0.93, 'latency_ms': 115}\nprint(metrics)",
+                    }
+                )
             return f"LLM summary: {user_message[:120]}"
         if tool.capability == ToolCapability.search:
             query = str(payload.get("query") or "")
@@ -353,11 +490,27 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
 
 def test_planner_accepts_valid_plan_and_reviewer_is_optional() -> None:
     planner = _planner_with_model(
-        FakePlannerModel([_plan_json("researcher", "search_papers")]),
-        [_skill_spec("search_papers", ["researcher"])],
+        FakePlannerModel(
+            [
+                _plan_json(
+                    "researcher",
+                    "search_papers",
+                    inputs=["artifact:SearchPlan:search_plan_1"],
+                )
+            ]
+        ),
+        [_skill_spec("search_papers", ["researcher"], required=["SearchPlan"])],
+        artifact_records=[
+            _phase5_artifact(
+                "search_plan_1",
+                "SearchPlan",
+                role=RoleId.conductor,
+                skill="plan_research",
+            )
+        ],
     )
 
-    plan = asyncio.run(planner.plan(user_request="Find papers about retrieval planning", planning_iteration=0))
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers about retrieval planning", planning_iteration=0))
 
     assert isinstance(plan, RoutePlan)
     assert [node.role.value for node in plan.nodes] == ["researcher"]
@@ -367,15 +520,157 @@ def test_planner_retries_once_after_invalid_output() -> None:
     model = FakePlannerModel(
         [
             '{"run_id": "bad"}',
-            _plan_json("researcher", "search_papers"),
+            _plan_json(
+                "researcher",
+                "search_papers",
+                inputs=["artifact:SearchPlan:search_plan_1"],
+            ),
         ]
     )
-    planner = _planner_with_model(model, [_skill_spec("search_papers", ["researcher"])])
+    planner = _planner_with_model(
+        model,
+        [_skill_spec("search_papers", ["researcher"], required=["SearchPlan"])],
+        artifact_records=[
+            _phase5_artifact(
+                "search_plan_1",
+                "SearchPlan",
+                role=RoleId.conductor,
+                skill="plan_research",
+            )
+        ],
+    )
 
-    plan = asyncio.run(planner.plan(user_request="Find papers", planning_iteration=0))
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
 
     assert plan.nodes[0].allowed_skills == ["search_papers"]
     assert model.calls == 2
+
+
+def test_planner_retries_after_legacy_plan_shape_output() -> None:
+    model = FakePlannerModel(
+        [
+            json.dumps(
+                {
+                    "run_id": "run_1",
+                    "nodes": [
+                        {
+                            "node_id": "conductor_plan",
+                            "role": "conductor",
+                            "agent_name": "legacy",
+                            "allowed_skills": ["plan_research"],
+                            "inputs": {},
+                            "expected_outputs": ["TopicBrief", "SearchPlan"],
+                            "goal": "制定研究计划",
+                            "success_criteria": "生成检索计划",
+                            "planner_notes": "旧格式节点字段",
+                            "needs_review": False,
+                        }
+                    ],
+                    "edges": [],
+                }
+            ),
+            json.dumps(
+                {
+                    "run_id": "run_1",
+                    "planning_iteration": 0,
+                    "horizon": 1,
+                    "nodes": [
+                        {
+                            "node_id": "node_plan_1",
+                            "role": "conductor",
+                            "goal": "制定研究计划",
+                            "inputs": [],
+                            "allowed_skills": ["plan_research"],
+                            "success_criteria": ["生成检索计划"],
+                            "failure_policy": "replan",
+                            "expected_outputs": ["TopicBrief", "SearchPlan"],
+                            "needs_review": False,
+                        }
+                    ],
+                    "edges": [],
+                    "planner_notes": ["修正为严格 RoutePlan 字段"],
+                    "terminate": False,
+                }
+            ),
+        ]
+    )
+    planner = _planner_with_model(model, [_skill_spec("plan_research", ["conductor"])])
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
+
+    assert plan.nodes[0].node_id == "node_plan_1"
+    assert plan.nodes[0].allowed_skills == ["plan_research"]
+    assert model.calls == 2
+
+
+def test_planner_normalizes_wrapped_plan_and_legacy_edge_relation() -> None:
+    model = FakePlannerModel(
+        [
+            json.dumps(
+                {
+                    "RoutePlan": {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 2,
+                        "nodes": [
+                            {
+                                "node_id": "node_fetch_1",
+                                "role": "researcher",
+                                "goal": "Fetch full text",
+                                "inputs": ["artifact:SourceSet:source_set_1"],
+                                "allowed_skills": ["fetch_fulltext"],
+                                "success_criteria": ["fetched"],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["SourceSet"],
+                                "needs_review": False,
+                            },
+                            {
+                                "node_id": "node_notes_1",
+                                "role": "researcher",
+                                "goal": "Extract notes",
+                                "inputs": ["artifact:SourceSet:node_fetch_1_source_set"],
+                                "allowed_skills": ["extract_notes"],
+                                "success_criteria": ["notes extracted"],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["PaperNotes"],
+                                "needs_review": False,
+                            },
+                        ],
+                        "edges": [
+                            {
+                                "source": "node_fetch_1",
+                                "target": "node_notes_1",
+                                "relation": "produces",
+                            }
+                        ],
+                        "planner_notes": ["legacy edge relation"],
+                        "terminate": False,
+                    }
+                }
+            )
+        ]
+    )
+    planner = _planner_with_model(
+        model,
+        [
+            _skill_spec("fetch_fulltext", ["researcher"], required=["SourceSet"]),
+            _skill_spec("extract_notes", ["researcher"], required=["SourceSet"]),
+        ],
+        artifact_records=[
+            _phase5_artifact(
+                "source_set_1",
+                "SourceSet",
+                role=RoleId.researcher,
+                skill="search_papers",
+            )
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
+
+    assert len(plan.nodes) == 2
+    assert plan.edges[0].condition.value == "on_success"
+    assert model.calls == 1
 
 
 def test_planner_raises_after_second_invalid_output() -> None:
@@ -383,18 +678,173 @@ def test_planner_raises_after_second_invalid_output() -> None:
     planner = _planner_with_model(model, [_skill_spec("search_papers", ["researcher"])])
 
     with pytest.raises(PlannerOutputError):
-        asyncio.run(planner.plan(user_request="Find papers", planning_iteration=0))
+        asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
 
     assert model.calls == 2
 
 
-def test_planner_accepts_inserted_reviewer_node() -> None:
+def test_planner_fallback_uses_plan_research_when_available() -> None:
+    model = FakePlannerModel(['{"run_id": "bad"}', '{"run_id": "still_bad"}'])
+    planner = _planner_with_model(model, [_skill_spec("plan_research", ["conductor"])])
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
+
+    assert plan.nodes[0].role == RoleId.conductor
+    assert plan.nodes[0].allowed_skills == ["plan_research"]
+    assert model.calls == 2
+
+
+def test_planner_fallback_uses_evidence_map_step_when_source_set_exists() -> None:
+    model = FakePlannerModel(['{"run_id": "bad"}', '{"run_id": "still_bad"}'])
     planner = _planner_with_model(
-        FakePlannerModel([_plan_json("reviewer", "review_artifact", needs_review=True)]),
-        [_skill_spec("review_artifact", ["reviewer"])],
+        model,
+        [
+            _skill_spec(
+                "build_evidence_map",
+                ["researcher"],
+                required=[],
+                requires_any=["PaperNotes", "SourceSet", "ExperimentResults"],
+            ),
+            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"]),
+        ],
+        artifact_records=[
+            _phase5_artifact(
+                "topic_brief_1",
+                "TopicBrief",
+                role=RoleId.conductor,
+                skill="plan_research",
+            ),
+            _phase5_artifact(
+                "search_plan_1",
+                "SearchPlan",
+                role=RoleId.conductor,
+                skill="plan_research",
+            ),
+            _phase5_artifact(
+                "source_set_1",
+                "SourceSet",
+                role=RoleId.researcher,
+                skill="search_papers",
+            ),
+        ],
     )
 
-    plan = asyncio.run(planner.plan(user_request="Review the final report", planning_iteration=0))
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=1))
+
+    assert plan.nodes[0].role == RoleId.researcher
+    assert plan.nodes[0].allowed_skills == ["build_evidence_map"]
+    assert plan.nodes[0].inputs == ["artifact:SourceSet:source_set_1"]
+
+
+def test_planner_retries_when_build_evidence_map_omits_grounding_inputs() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json("researcher", "build_evidence_map", inputs=[]),
+                _plan_json(
+                    "researcher",
+                    "build_evidence_map",
+                    inputs=["artifact:PaperNotes:paper_notes_1"],
+                ),
+            ]
+        ),
+        [
+            _skill_spec(
+                "build_evidence_map",
+                ["researcher"],
+                requires_any=["PaperNotes", "SourceSet", "ExperimentResults"],
+            ),
+        ],
+        artifact_records=[
+            _phase5_artifact(
+                "search_plan_1",
+                "SearchPlan",
+                role=RoleId.conductor,
+                skill="plan_research",
+            ),
+            _phase5_artifact(
+                "paper_notes_1",
+                "PaperNotes",
+                role=RoleId.researcher,
+                skill="extract_notes",
+            )
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Synthesize evidence", planning_iteration=1))
+
+    assert plan.nodes[0].allowed_skills == ["build_evidence_map"]
+    assert plan.nodes[0].inputs == ["artifact:PaperNotes:paper_notes_1"]
+    assert planner._model.calls == 2
+
+
+def test_executor_records_planner_llm_error_observation() -> None:
+    artifact_store = InMemoryArtifactStore()
+    observation_store = InMemoryObservationStore()
+    events: list[object] = []
+    planner = _planner_with_model(
+        FakePlannerModel(['{"run_id": "bad"}', '{"run_id": "still_bad"}']),
+        [_skill_spec("search_papers", ["researcher"])],
+    )
+    policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
+    tools = ToolGateway(
+        registry=ToolRegistry.from_servers(
+            [{"server_id": "search", "tools": [{"name": "arxiv", "capability": "search"}]}]
+        ),
+        policy=policy,
+        mcp_invoker=lambda tool, payload: [],
+    )
+    node_runner = NodeRunner(
+        role_registry=RoleRegistry.from_file(),
+        skill_registry=FakeSkillRegistry([_skill_spec("search_papers", ["researcher"])]),
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        tools=tools,
+        policy=policy,
+    )
+    executor = Executor(
+        planner=planner,
+        node_runner=node_runner,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        policy=policy,
+        event_sink=events.append,
+    )
+
+    result = asyncio.run(executor.run(user_request="Find papers", run_id="run_1"))
+
+    observation = observation_store.list_latest()[-1]
+    assert result.termination_reason
+    assert observation.role == "planner"
+    assert observation.error_type == ErrorType.llm_error
+    assert any(event.type == "observation" for event in events)
+
+
+def test_planner_accepts_inserted_reviewer_node() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json(
+                    "reviewer",
+                    "review_artifact",
+                    needs_review=True,
+                    inputs=["artifact:ResearchReport:report_1"],
+                )
+            ]
+        ),
+        [_skill_spec("review_artifact", ["reviewer"])],
+        artifact_records=[
+            _phase5_artifact(
+                "report_1",
+                "ResearchReport",
+                role=RoleId.writer,
+                skill="draft_report",
+                payload={"report": "final report"},
+            )
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Review the final report", planning_iteration=0))
 
     assert plan.nodes[0].role.value == "reviewer"
     assert plan.nodes[0].needs_review is True
@@ -412,7 +862,7 @@ def test_planner_rejects_unloaded_skills() -> None:
     )
 
     with pytest.raises(PlannerOutputError):
-        asyncio.run(planner.plan(user_request="Find papers", planning_iteration=0))
+        asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
 
 
 def test_planner_prompt_only_exposes_loaded_allowlisted_skills() -> None:
@@ -428,7 +878,11 @@ def test_planner_prompt_only_exposes_loaded_allowlisted_skills() -> None:
         user_request="Find papers",
         role_registry=RoleRegistry.from_file(),
         available_skills_by_role=planner._available_skills_by_role(),
+        skill_contract_summary=planner._skill_contract_summary(),
         artifact_summary=[],
+        artifact_refs=[],
+        artifact_ref_templates=planner._artifact_ref_templates(),
+        role_routing_policy=derive_role_routing_policy(user_request="Find papers", artifacts=[]),
         observation_summary=[],
         budget_snapshot={},
         planning_iteration=0,
@@ -436,6 +890,494 @@ def test_planner_prompt_only_exposes_loaded_allowlisted_skills() -> None:
 
     assert "search_papers" in messages[0]["content"]
     assert "custom_search" not in messages[0]["content"]
+    assert "artifact_ref_template" in messages[0]["content"]
+    assert "required_roles" in messages[0]["content"]
+
+
+def test_role_routing_policy_detects_writer_for_chinese_closed_loop_request_after_evidence() -> None:
+    policy = derive_role_routing_policy(
+        user_request="\u4e3a\u4e00\u4e2a\u5173\u4e8e\u52a8\u6001\u7814\u7a76\u667a\u80fd\u4f53\u7cfb\u7edf\u7684\u4e3b\u9898\u751f\u6210\u6700\u5c0f\u7814\u7a76\u95ed\u73af\u3002",
+        artifacts=[
+            ArtifactRecord(
+                artifact_id="evidence_1",
+                artifact_type="EvidenceMap",
+                producer_role=RoleId.researcher,
+                producer_skill="build_evidence_map",
+            )
+        ],
+    )
+
+    assert "write" in policy.intents
+    assert "writer" in policy.required_roles
+
+
+def test_role_routing_policy_keeps_chinese_search_request_in_research_lane() -> None:
+    policy = derive_role_routing_policy(
+        user_request="\u68c0\u7d22\u5173\u4e8e\u52a8\u6001\u7814\u7a76\u667a\u80fd\u4f53\u7cfb\u7edf\u7684\u76f8\u5173\u8bba\u6587\u3002",
+        artifacts=[],
+    )
+
+    assert "research" in policy.intents
+    assert "writer" not in policy.required_roles
+
+
+def test_planner_retries_when_chinese_closed_loop_request_skips_writer_after_evidence() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json(
+                    "researcher",
+                    "search_papers",
+                    inputs=[
+                        "artifact:SearchPlan:plan_1_search_plan",
+                        "artifact:EvidenceMap:evidence_1",
+                    ],
+                ),
+                _plan_json(
+                    "writer",
+                    "draft_report",
+                    inputs=[
+                        "artifact:EvidenceMap:evidence_1",
+                        "artifact:GapMap:gap_1",
+                    ],
+                ),
+            ]
+        ),
+        [
+            _skill_spec("search_papers", ["researcher"], output_artifacts=["SourceSet"]),
+            _skill_spec("draft_report", ["writer"], output_artifacts=["ResearchReport"]),
+        ],
+        artifact_records=[
+            ArtifactRecord(
+                artifact_id="plan_1_search_plan",
+                artifact_type="SearchPlan",
+                producer_role=RoleId.conductor,
+                producer_skill="plan_research",
+            ),
+            ArtifactRecord(
+                artifact_id="evidence_1",
+                artifact_type="EvidenceMap",
+                producer_role=RoleId.researcher,
+                producer_skill="build_evidence_map",
+            ),
+            ArtifactRecord(
+                artifact_id="gap_1",
+                artifact_type="GapMap",
+                producer_role=RoleId.researcher,
+                producer_skill="build_evidence_map",
+            ),
+        ],
+    )
+
+    plan = asyncio.run(
+        planner.plan(
+            run_id="run_1",
+            user_request="\u4e3a\u4e00\u4e2a\u5173\u4e8e\u52a8\u6001\u7814\u7a76\u667a\u80fd\u4f53\u7cfb\u7edf\u7684\u4e3b\u9898\u751f\u6210\u6700\u5c0f\u7814\u7a76\u95ed\u73af\u3002",
+            planning_iteration=1,
+        )
+    )
+
+    assert plan.nodes[0].role.value == "writer"
+    assert planner._model.calls == 2
+
+
+def test_planner_retries_when_cold_start_research_request_skips_conductor() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json("researcher", "search_papers"),
+                json.dumps(
+                    {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 2,
+                        "nodes": [
+                            {
+                                "node_id": "node_plan_1",
+                                "role": "conductor",
+                                "goal": "规划研究主题",
+                                "inputs": [],
+                                "allowed_skills": ["plan_research"],
+                                "success_criteria": ["完成规划"],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["TopicBrief", "SearchPlan"],
+                                "needs_review": False,
+                            },
+                            {
+                                "node_id": "node_search_1",
+                                "role": "researcher",
+                                "goal": "检索文献",
+                                "inputs": ["artifact:SearchPlan:node_plan_1_search_plan"],
+                                "allowed_skills": ["search_papers"],
+                                "success_criteria": ["拿到候选来源"],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["SourceSet"],
+                                "needs_review": False,
+                            },
+                        ],
+                        "edges": [
+                            {"source": "node_plan_1", "target": "node_search_1", "condition": "on_success"}
+                        ],
+                        "planner_notes": [],
+                        "terminate": False,
+                    }
+                ),
+            ]
+        ),
+        [
+            _skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"]),
+            _skill_spec("search_papers", ["researcher"], output_artifacts=["SourceSet"]),
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers about retrieval planning", planning_iteration=0))
+
+    assert [node.role.value for node in plan.nodes] == ["conductor", "researcher"]
+    assert planner._model.calls == 2
+
+
+def test_planner_retries_when_write_request_omits_writer_grounding_inputs() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json("writer", "draft_report"),
+                _plan_json(
+                    "writer",
+                    "draft_report",
+                    inputs=["artifact:EvidenceMap:evidence_map_1"],
+                ),
+            ]
+        ),
+        [_skill_spec("draft_report", ["writer"])],
+        artifact_records=[
+            _phase5_artifact(
+                "evidence_map_1",
+                "EvidenceMap",
+                role=RoleId.researcher,
+                skill="build_evidence_map",
+                payload={"summary": "grounded evidence"},
+            )
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Write the final report", planning_iteration=0))
+
+    assert plan.nodes[0].role.value == "writer"
+    assert plan.nodes[0].inputs == ["artifact:EvidenceMap:evidence_map_1"]
+    assert planner._model.calls == 2
+
+
+def test_planner_retries_when_review_request_skips_reviewer() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json(
+                    "writer",
+                    "draft_report",
+                    inputs=["artifact:EvidenceMap:evidence_map_1"],
+                ),
+                _plan_json(
+                    "reviewer",
+                    "review_artifact",
+                    inputs=["artifact:ResearchReport:report_1"],
+                    needs_review=True,
+                ),
+            ]
+        ),
+        [
+            _skill_spec("draft_report", ["writer"]),
+            _skill_spec("review_artifact", ["reviewer"]),
+        ],
+        artifact_records=[
+            _phase5_artifact(
+                "report_1",
+                "ResearchReport",
+                role=RoleId.writer,
+                skill="draft_report",
+                payload={"report": "ready to review"},
+            ),
+            _phase5_artifact(
+                "evidence_map_1",
+                "EvidenceMap",
+                role=RoleId.researcher,
+                skill="build_evidence_map",
+                payload={"summary": "grounded evidence"},
+            ),
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Review the final report", planning_iteration=0))
+
+    assert plan.nodes[0].role.value == "reviewer"
+    assert planner._model.calls == 2
+
+
+def test_planner_requires_termination_after_report_when_review_not_requested() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json(
+                    "researcher",
+                    "search_papers",
+                    inputs=["artifact:SearchPlan:search_plan_1"],
+                ),
+                json.dumps(
+                    {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 1,
+                        "nodes": [
+                            {
+                                "node_id": "node_stop_1",
+                                "role": "writer",
+                                "goal": "Stop after the report is complete",
+                                "inputs": ["artifact:ResearchReport:report_1"],
+                                "allowed_skills": ["draft_report"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["ResearchReport"],
+                                "needs_review": False,
+                            }
+                        ],
+                        "edges": [],
+                        "planner_notes": ["terminate after report"],
+                        "terminate": True,
+                    }
+                ),
+            ]
+        ),
+        [
+            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"]),
+            _skill_spec("draft_report", ["writer"]),
+        ],
+        artifact_records=[
+            _phase5_artifact(
+                "report_1",
+                "ResearchReport",
+                role=RoleId.writer,
+                skill="draft_report",
+                payload={"report": "finished"},
+            ),
+            _phase5_artifact(
+                "search_plan_1",
+                "SearchPlan",
+                role=RoleId.conductor,
+                skill="plan_research",
+                payload={"search_queries": ["dynamic research agents"]},
+            ),
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Write the final report", planning_iteration=0))
+
+    assert plan.terminate is True
+    assert planner._model.calls == 2
+
+
+def test_planner_retries_when_experiment_request_skips_experimenter() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                _plan_json(
+                    "researcher",
+                    "build_evidence_map",
+                    inputs=["artifact:EvidenceMap:evidence_map_1"],
+                ),
+                _plan_json(
+                    "experimenter",
+                    "design_experiment",
+                    inputs=["artifact:EvidenceMap:evidence_map_1"],
+                ),
+            ]
+        ),
+        [
+            _skill_spec("build_evidence_map", ["researcher"], output_artifacts=["EvidenceMap", "GapMap"]),
+            _skill_spec("design_experiment", ["experimenter"], output_artifacts=["ExperimentPlan"]),
+        ],
+        artifact_records=[
+            _phase5_artifact(
+                "evidence_map_1",
+                "EvidenceMap",
+                role=RoleId.researcher,
+                skill="build_evidence_map",
+                payload={"summary": "need controlled benchmark"},
+            )
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Design a benchmark experiment for the current evidence", planning_iteration=0))
+
+    assert plan.nodes[0].role.value == "experimenter"
+    assert planner._model.calls == 2
+
+
+def test_planner_retries_when_node_inputs_do_not_use_exact_future_artifact_refs() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                json.dumps(
+                    {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 2,
+                        "nodes": [
+                            {
+                                "node_id": "node_plan_1",
+                                "role": "conductor",
+                                "goal": "Plan the topic",
+                                "inputs": [],
+                                "allowed_skills": ["plan_research"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["TopicBrief", "SearchPlan"],
+                                "needs_review": False,
+                            },
+                            {
+                                "node_id": "node_search_1",
+                                "role": "researcher",
+                                "goal": "Search for papers",
+                                "inputs": ["artifact:SearchPlan:node_plan_1"],
+                                "allowed_skills": ["search_papers"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["SourceSet"],
+                                "needs_review": False,
+                            },
+                        ],
+                        "edges": [
+                            {"source": "node_plan_1", "target": "node_search_1", "condition": "on_success"}
+                        ],
+                        "planner_notes": [],
+                        "terminate": False,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 2,
+                        "nodes": [
+                            {
+                                "node_id": "node_plan_1",
+                                "role": "conductor",
+                                "goal": "Plan the topic",
+                                "inputs": [],
+                                "allowed_skills": ["plan_research"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["TopicBrief", "SearchPlan"],
+                                "needs_review": False,
+                            },
+                            {
+                                "node_id": "node_search_1",
+                                "role": "researcher",
+                                "goal": "Search for papers",
+                                "inputs": ["artifact:SearchPlan:node_plan_1_search_plan"],
+                                "allowed_skills": ["search_papers"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["SourceSet"],
+                                "needs_review": False,
+                            },
+                        ],
+                        "edges": [
+                            {"source": "node_plan_1", "target": "node_search_1", "condition": "on_success"}
+                        ],
+                        "planner_notes": [],
+                        "terminate": False,
+                    }
+                ),
+            ]
+        ),
+        [
+            _skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"]),
+            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"], output_artifacts=["SourceSet"]),
+        ],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
+
+    assert plan.nodes[1].inputs == ["artifact:SearchPlan:node_plan_1_search_plan"]
+    assert planner._model.calls == 2
+
+
+def test_planner_rejects_expected_outputs_outside_skill_contract() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                json.dumps(
+                    {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 1,
+                        "nodes": [
+                            {
+                                "node_id": "node_plan_1",
+                                "role": "conductor",
+                                "goal": "生成检索计划",
+                                "inputs": [],
+                                "allowed_skills": ["plan_research"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["architecture_differences_search_plan"],
+                                "needs_review": False,
+                            }
+                        ],
+                        "edges": [],
+                        "planner_notes": [],
+                        "terminate": False,
+                    }
+                ),
+                _plan_json("conductor", "plan_research"),
+            ]
+        ),
+        [_skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"])],
+    )
+
+    plan = asyncio.run(planner.plan(run_id="run_1", user_request="生成检索计划", planning_iteration=0))
+
+    assert plan.nodes[0].expected_outputs == ["TopicBrief", "SearchPlan"]
+
+
+def test_planner_rejects_allowed_skills_with_incompatible_inputs() -> None:
+    planner = _planner_with_model(
+        FakePlannerModel(
+            [
+                json.dumps(
+                    {
+                        "run_id": "run_1",
+                        "planning_iteration": 0,
+                        "horizon": 1,
+                        "nodes": [
+                            {
+                                "node_id": "node_research_1",
+                                "role": "researcher",
+                                "goal": "比较两种架构差异",
+                                "inputs": [],
+                                "allowed_skills": ["search_papers", "fetch_fulltext", "extract_notes"],
+                                "success_criteria": [],
+                                "failure_policy": "replan",
+                                "expected_outputs": ["PaperNotes"],
+                                "needs_review": False,
+                            }
+                        ],
+                        "edges": [],
+                        "planner_notes": [],
+                        "terminate": False,
+                    }
+                ),
+                _plan_json("researcher", "search_papers"),
+            ]
+        ),
+        [
+            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"], output_artifacts=["SourceSet"]),
+            _skill_spec("fetch_fulltext", ["researcher"], required=["SourceSet"], output_artifacts=["SourceSet"]),
+            _skill_spec("extract_notes", ["researcher"], required=["SourceSet"], output_artifacts=["PaperNotes"]),
+        ],
+    )
+
+    with pytest.raises(PlannerOutputError):
+        asyncio.run(planner.plan(run_id="run_1", user_request="比较两种架构差异", planning_iteration=0))
 
 
 def test_planner_meta_skills_cover_review_and_termination() -> None:
@@ -450,7 +1392,8 @@ class SequencePlanner:
         self._plans = list(plans)
         self.calls = 0
 
-    async def plan(self, *, user_request: str, planning_iteration: int, budget_snapshot=None) -> RoutePlan:
+    async def plan(self, *, run_id: str, user_request: str, planning_iteration: int, budget_snapshot=None) -> RoutePlan:
+        del run_id, user_request, planning_iteration, budget_snapshot
         self.calls += 1
         return self._plans.pop(0)
 
@@ -461,10 +1404,13 @@ def test_executor_runs_local_loop_and_emits_events() -> None:
     observation_store = InMemoryObservationStore()
     plan_store = InMemoryPlanStore()
     events: list[object] = []
+    search_calls = 0
 
     async def search_runner(ctx):
+        nonlocal search_calls
+        search_calls += 1
         results = await ctx.tools.search("retrieval planning", source="arxiv", max_results=2)
-        assert results[0]["title"] == "Paper A"
+        assert results["results"][0]["title"] == "Paper A"
         return SkillOutput(
             success=True,
             output_artifacts=[
@@ -494,7 +1440,7 @@ def test_executor_runs_local_loop_and_emits_events() -> None:
             [{"server_id": "search", "tools": [{"name": "arxiv", "capability": "search"}]}]
         ),
         policy=policy,
-        mcp_invoker=lambda tool, payload: [{"title": "Paper A", "tool_id": tool.tool_id}],
+        mcp_invoker=lambda tool, payload: {"results": [{"title": "Paper A", "tool_id": tool.tool_id}], "warnings": []},
         event_sink=events.append,
     )
     node_runner = NodeRunner(
@@ -524,6 +1470,7 @@ def test_executor_runs_local_loop_and_emits_events() -> None:
     result = asyncio.run(executor.run(user_request="Find papers", run_id="run_exec"))
 
     assert planner.calls == 2
+    assert search_calls == 2
     assert result.final_artifacts == ["artifact:SourceSet:ss_1"]
     assert observation_store.list_latest()[-1].status == NodeStatus.success
     event_types = [event.type for event in events]
@@ -546,7 +1493,10 @@ def test_executor_returns_observation_and_replans_on_failure() -> None:
         return SkillOutput(success=False, error="rate limited")
 
     skill_registry = FakeSkillRegistry(
-        [_skill_spec("search_papers", ["researcher"])],
+        [
+            _skill_spec("search_papers", ["researcher"]),
+            _skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"]),
+        ],
         runners={"search_papers": failing_runner},
     )
     policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
@@ -570,7 +1520,7 @@ def test_executor_returns_observation_and_replans_on_failure() -> None:
     planner = SequencePlanner(
         [
             _route_plan("run_fail", 0, "researcher", "search_papers", failure_policy="replan"),
-            _route_plan("run_fail", 1, "researcher", "search_papers", terminate=True),
+            _route_plan("run_fail", 1, "conductor", "plan_research", terminate=True),
         ]
     )
     executor = Executor(
@@ -584,9 +1534,9 @@ def test_executor_returns_observation_and_replans_on_failure() -> None:
 
     result = asyncio.run(executor.run(user_request="Find papers", run_id="run_fail"))
 
-    latest_observation = observation_store.list_latest()[-1]
-    assert latest_observation.status == NodeStatus.needs_replan
-    assert latest_observation.error_type == ErrorType.skill_error
+    assert any(obs.status == NodeStatus.needs_replan for obs in observation_store.list_latest())
+    assert any(obs.error_type == ErrorType.skill_error for obs in observation_store.list_latest())
+    assert any(event.type == "node_status" and event.status == "needs_replan" for event in events)
     assert any(event.type == "replan" for event in events)
     assert result.termination_reason == "planner_terminated"
 
@@ -636,7 +1586,7 @@ def test_executor_terminates_on_budget_exhaustion() -> None:
 
     result = asyncio.run(executor.run(user_request="Find papers", run_id="run_budget"))
 
-    assert result.termination_reason == "planning iteration budget exceeded"
+    assert result.termination_reason == "规划迭代次数已超出预算"
     assert events[-1].type == "run_terminate"
 
 
@@ -734,6 +1684,455 @@ def test_executor_rejects_planner_run_id_mismatch() -> None:
     assert "run_id mismatch" in result.termination_reason
 
 
+def test_search_papers_produces_empty_sourceset_with_warnings() -> None:
+    class FakeTools:
+        async def search(self, query: str, *, source: str = "auto", max_results: int = 10):
+            assert query == "retrieval planning"
+            assert source == "auto"
+            assert max_results == 5
+            return {"results": [], "warnings": ["arxiv: feedparser is required for arXiv fetching"]}
+
+    ctx = SkillContext(
+        skill_id="search_papers",
+        role_id="researcher",
+        run_id="run_search",
+        node_id="node_search_1",
+        goal="Search for papers",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="node_plan_1_search_plan",
+                artifact_type="SearchPlan",
+                producer_role=RoleId.conductor,
+                producer_skill="plan_research",
+                payload={"search_queries": ["retrieval planning"]},
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(search_papers_run(ctx))
+
+    assert output.success is True
+    assert output.output_artifacts[0].artifact_id == "node_search_1_source_set"
+    assert output.output_artifacts[0].payload["result_count"] == 0
+    assert output.output_artifacts[0].payload["warnings"] == [
+        "arxiv: feedparser is required for arXiv fetching"
+    ]
+
+
+def test_search_papers_merges_queries_and_uses_route_sources() -> None:
+    calls: list[tuple[str, str, int]] = []
+
+    class FakeTools:
+        async def search(self, query: str, *, source: str = "auto", max_results: int = 10):
+            calls.append((query, source, max_results))
+            return {
+                "results": [
+                    {
+                        "paper_id": f"{query}_{source}",
+                        "title": f"{query} via {source}",
+                    }
+                ],
+                "warnings": [f"{source} warning"],
+            }
+
+    ctx = SkillContext(
+        skill_id="search_papers",
+        role_id="researcher",
+        run_id="run_search_multi",
+        node_id="node_search_multi_1",
+        goal="Search for papers",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="node_plan_multi_search_plan",
+                artifact_type="SearchPlan",
+                producer_role=RoleId.conductor,
+                producer_skill="plan_research",
+                payload={
+                    "search_queries": ["q1", "q2"],
+                    "query_routes": {
+                        "q1": {"use_academic": True, "use_web": False},
+                        "q2": {"use_academic": False, "use_web": True},
+                    },
+                },
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(search_papers_run(ctx))
+
+    assert output.success is True
+    assert calls == [("q1", "academic", 5), ("q2", "web", 5)]
+    assert output.output_artifacts[0].payload["result_count"] == 2
+    assert output.output_artifacts[0].payload["queries"] == ["q1", "q2"]
+
+
+def test_plan_research_uses_structured_keyword_queries() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("plan_research")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return json.dumps(
+                {
+                    "topic": "dynamic research agent systems",
+                    "brief": "Focus on architecture, coordination, and evaluation.",
+                    "research_questions": [
+                        "What architectures are used in dynamic research agent systems?",
+                        "How are these systems evaluated?",
+                    ],
+                    "search_queries": [
+                        "dynamic research agent systems",
+                        "dynamic research agent systems architecture",
+                        "dynamic research agent systems evaluation",
+                    ],
+                    "query_routes": {
+                        "dynamic research agent systems": {"use_academic": True, "use_web": False},
+                        "dynamic research agent systems architecture": {"use_academic": True, "use_web": False},
+                        "dynamic research agent systems evaluation": {"use_academic": True, "use_web": False},
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+    ctx = SkillContext(
+        skill_id="plan_research",
+        role_id="conductor",
+        run_id="run_plan_structured",
+        node_id="node_plan_structured_1",
+        goal="为一个关于动态研究智能体系统的主题生成最小研究闭环。",
+        input_artifacts=[],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
+    assert search_plan.payload["topic"] == "dynamic research agent systems"
+    assert search_plan.payload["search_queries"] == [
+        "dynamic research agent systems",
+        "dynamic research agent systems architecture",
+        "dynamic research agent systems evaluation",
+    ]
+
+
+def test_plan_research_fallback_does_not_reuse_instruction_sentence_as_query() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("plan_research")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return "先定义研究目标，再生成最小研究闭环和搜索计划。"
+
+    goal = "为一个关于动态研究智能体系统的主题生成最小研究闭环。"
+    ctx = SkillContext(
+        skill_id="plan_research",
+        role_id="conductor",
+        run_id="run_plan_fallback",
+        node_id="node_plan_fallback_1",
+        goal=goal,
+        input_artifacts=[],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
+    queries = list(search_plan.payload["search_queries"])
+    assert goal not in queries
+    assert all("最小研究闭环" not in query for query in queries)
+    assert any("动态研究智能体系统" in query for query in queries)
+
+
+def test_plan_research_reanchors_generic_queries_to_topic() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("plan_research")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return json.dumps(
+                {
+                    "topic": "动态研究智能体系统",
+                    "brief": "围绕主题生成检索查询。",
+                    "research_questions": ["动态研究智能体系统的方法与证据是什么？"],
+                    "search_queries": ["方法与证据是什么", "综述", "方法", "评测"],
+                    "query_routes": {},
+                },
+                ensure_ascii=False,
+            )
+
+    ctx = SkillContext(
+        skill_id="plan_research",
+        role_id="conductor",
+        run_id="run_plan_anchor_queries",
+        node_id="node_plan_anchor_queries_1",
+        goal="为一个关于动态研究智能体系统的主题生成最小研究闭环。",
+        input_artifacts=[],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
+    assert search_plan.payload["search_queries"] == [
+        "动态研究智能体系统 方法与证据是什么",
+        "动态研究智能体系统 综述",
+        "动态研究智能体系统 方法",
+        "动态研究智能体系统 评测",
+    ]
+
+
+def test_plan_research_rejects_generic_topic_and_keeps_subject() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("plan_research")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return json.dumps(
+                {
+                    "topic": "方法与证据",
+                    "brief": "围绕主题生成检索查询。",
+                    "research_questions": ["动态研究智能体系统的方法与证据是什么？"],
+                    "search_queries": ["方法与证据是什么"],
+                    "query_routes": {},
+                },
+                ensure_ascii=False,
+            )
+
+    ctx = SkillContext(
+        skill_id="plan_research",
+        role_id="conductor",
+        run_id="run_plan_anchor_topic",
+        node_id="node_plan_anchor_topic_1",
+        goal="为一个关于动态研究智能体系统的主题生成最小研究闭环。",
+        input_artifacts=[],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    topic_brief = next(item for item in output.output_artifacts if item.artifact_type == "TopicBrief")
+    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
+    assert topic_brief.payload["topic"] == "动态研究智能体系统"
+    assert search_plan.payload["topic"] == "动态研究智能体系统"
+    assert search_plan.payload["search_queries"][0] == "动态研究智能体系统 方法与证据是什么"
+
+
+def test_build_evidence_map_derives_grounded_gaps() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("build_evidence_map")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del kwargs
+            return "Grounded evidence summary"
+
+    ctx = SkillContext(
+        skill_id="build_evidence_map",
+        role_id="researcher",
+        run_id="run_evidence",
+        node_id="node_evidence_grounded",
+        goal="Build evidence map",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="source_set_empty",
+                artifact_type="SourceSet",
+                producer_role=RoleId.researcher,
+                producer_skill="search_papers",
+                payload={"result_count": 0, "sources": [], "warnings": ["semantic_scholar timeout"]},
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+    gap_payload = next(item.payload for item in output.output_artifacts if item.artifact_type == "GapMap")
+
+    assert output.success is True
+    assert gap_payload["gap_count"] >= 2
+    assert any("检索尚未返回可用来源" in gap for gap in gap_payload["gaps"])
+    assert any("semantic_scholar timeout" in gap for gap in gap_payload["gaps"])
+
+
+def test_review_artifact_verdict_uses_artifact_checks() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("review_artifact")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return "Review summary"
+
+    ctx = SkillContext(
+        skill_id="review_artifact",
+        role_id="reviewer",
+        run_id="run_review",
+        node_id="node_review_structured",
+        goal="Review the report",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="report_missing_text",
+                artifact_type="ResearchReport",
+                producer_role=RoleId.writer,
+                producer_skill="draft_report",
+                payload={"artifact_count": 1},
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+    payload = output.output_artifacts[0].payload
+
+    assert output.success is True
+    assert payload["verdict"] == "needs_revision"
+    assert "missing report text" in payload["issues"]
+
+
+def test_analyze_metrics_computes_metric_stats() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("analyze_metrics")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return "Metric interpretation"
+
+    ctx = SkillContext(
+        skill_id="analyze_metrics",
+        role_id="analyst",
+        run_id="run_metrics",
+        node_id="node_metrics_1",
+        goal="Analyze experiment results",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="experiment_results_aggregate",
+                artifact_type="ExperimentResults",
+                producer_role=RoleId.experimenter,
+                producer_skill="run_experiment",
+                payload={
+                    "status": "completed",
+                    "runs": [
+                        {"run_id": "r1", "metrics": [{"name": "accuracy", "value": 0.8}]},
+                        {"run_id": "r2", "metrics": [{"name": "accuracy", "value": 0.9}]},
+                    ],
+                },
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+    perf_payload = next(item.payload for item in output.output_artifacts if item.artifact_type == "PerformanceMetrics")
+
+    assert output.success is True
+    assert perf_payload["run_count"] == 2
+    assert perf_payload["metric_stats"]["accuracy"]["avg"] == 0.85
+
+
+def test_runtime_report_text_summarizes_partial_artifacts_when_report_is_missing() -> None:
+    from src.dynamic_os import runtime as runtime_module
+
+    report_text = runtime_module._report_text(
+        artifacts=[
+            ArtifactRecord(
+                artifact_id="node_1_topic_brief",
+                artifact_type="TopicBrief",
+                producer_role=RoleId.conductor,
+                producer_skill="plan_research",
+                payload={"brief": "brief"},
+            ),
+            ArtifactRecord(
+                artifact_id="node_5_evidence_map",
+                artifact_type="EvidenceMap",
+                producer_role=RoleId.researcher,
+                producer_skill="build_evidence_map",
+                payload={"summary": "summary"},
+            ),
+        ],
+        observations=[
+            Observation(
+                node_id="node_6",
+                role=RoleId.writer,
+                status=NodeStatus.needs_replan,
+                error_type=ErrorType.input_missing,
+                what_happened="missing upstream evidence artifact",
+            )
+        ],
+        status="failed",
+    )
+
+    assert "Partial artifacts were produced" in report_text
+    assert "TopicBrief: node_1_topic_brief" in report_text
+    assert "EvidenceMap: node_5_evidence_map" in report_text
+    assert "missing upstream evidence artifact" in report_text
+
+
 @pytest.mark.parametrize(
     ("skill_id", "role_id", "expected_types"),
     [
@@ -805,6 +2204,154 @@ def test_phase5_run_experiment_returns_failure_on_executor_error() -> None:
 
     assert output.success is False
     assert "exit_code=1" in (output.error or "")
+
+
+def test_phase5_design_experiment_emits_llm_generated_code() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("design_experiment")
+    ctx = SkillContext(
+        skill_id="design_experiment",
+        role_id="experimenter",
+        run_id="run_phase5_design",
+        node_id="node_design_experiment_1",
+        goal="Design an experiment for retrieval planning",
+        input_artifacts=_phase5_inputs("design_experiment"),
+        tools=_phase5_gateway(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    artifact = output.output_artifacts[0]
+    assert artifact.payload["plan"].startswith("Evaluate retrieval planning")
+    assert artifact.payload["code"] == "metrics = {'accuracy': 0.93, 'latency_ms': 115}\nprint(metrics)"
+
+
+def test_phase5_run_experiment_requires_executable_code() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("run_experiment")
+    ctx = SkillContext(
+        skill_id="run_experiment",
+        role_id="experimenter",
+        run_id="run_phase5_missing_code",
+        node_id="node_run_experiment_missing_code",
+        goal="Run the experiment",
+        input_artifacts=[
+            _phase5_artifact(
+                "experiment_plan_missing_code_1",
+                "ExperimentPlan",
+                role=RoleId.experimenter,
+                skill="design_experiment",
+                payload={"language": "python"},
+            )
+        ],
+        tools=_phase5_gateway(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is False
+    assert output.error == "run_experiment requires executable code in ExperimentPlan"
+
+
+def test_phase5_fetch_fulltext_and_extract_notes_use_retrieved_documents() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    fetch_skill = registry.get("fetch_fulltext")
+    note_skill = registry.get("extract_notes")
+    gateway = _phase5_gateway()
+    fetch_ctx = SkillContext(
+        skill_id="fetch_fulltext",
+        role_id="researcher",
+        run_id="run_phase5_retrieval",
+        node_id="node_fetch_fulltext_1",
+        goal="Fetch fuller text",
+        input_artifacts=_phase5_inputs("fetch_fulltext"),
+        tools=gateway,
+    )
+
+    fetch_output = asyncio.run(fetch_skill.runner(fetch_ctx))
+
+    assert fetch_output.success is True
+    fetched_source_set = fetch_output.output_artifacts[0]
+    fetched_source = fetched_source_set.payload["sources"][0]
+    assert fetched_source["content"].startswith("Full text for Paper A")
+    assert fetched_source_set.payload["fetched_count"] == 1
+
+    note_ctx = SkillContext(
+        skill_id="extract_notes",
+        role_id="researcher",
+        run_id="run_phase5_retrieval",
+        node_id="node_extract_notes_1",
+        goal="Extract notes",
+        input_artifacts=[fetched_source_set],
+        tools=gateway,
+    )
+
+    note_output = asyncio.run(note_skill.runner(note_ctx))
+
+    assert note_output.success is True
+    note_payload = note_output.output_artifacts[0].payload
+    assert note_payload["notes"][0]["summary"].startswith("Full text for Paper A")
+
+
+def test_extract_notes_continues_when_index_backend_is_unavailable() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("extract_notes")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def index(self, documents, collection):
+            del documents, collection
+            raise ModuleNotFoundError("No module named 'chromadb'")
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return "Condensed paper notes"
+
+    ctx = SkillContext(
+        skill_id="extract_notes",
+        role_id="researcher",
+        run_id="run_extract_notes_indexless",
+        node_id="node_extract_notes_indexless",
+        goal="Extract notes without an index backend",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="source_set_indexless",
+                artifact_type="SourceSet",
+                producer_role=RoleId.researcher,
+                producer_skill="fetch_fulltext",
+                payload={
+                    "sources": [
+                        {
+                            "paper_id": "paper_a",
+                            "title": "Paper A",
+                            "retrieved_document": {
+                                "paper_id": "paper_a",
+                                "title": "Paper A",
+                                "content": "Full text for Paper A about dynamic research agents.",
+                            },
+                        }
+                    ]
+                },
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    payload = output.output_artifacts[0].payload
+    assert payload["notes"][0]["summary"].startswith("Full text for Paper A")
+    assert "chromadb" in payload["warnings"][0]
+    assert "chromadb" in output.metadata["warnings"][0]
 
 
 def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
@@ -965,9 +2512,14 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
         event_sink=events.append,
     )
 
-    result = asyncio.run(executor.run(user_request="Investigate retrieval planning", run_id="run_phase5"))
+    result = asyncio.run(
+        executor.run(
+            user_request="Investigate retrieval planning and write a reviewed report",
+            run_id="run_phase5",
+        )
+    )
 
-    assert result.termination_reason == "planner_terminated"
+    assert result.termination_reason == "final_artifact_produced"
     assert "artifact:ResearchReport:node_report_1_research_report" in result.final_artifacts
     assert "artifact:ReviewVerdict:node_review_1_review_verdict" in result.final_artifacts
     assert {record.artifact_type for record in artifact_store.list_all()} == {
@@ -983,8 +2535,108 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
     assert any(event.type == "tool_invoke" for event in events)
 
 
+def test_executor_short_circuits_when_final_artifact_is_produced_without_review_request() -> None:
+    role_registry = RoleRegistry.from_file()
+    artifact_store = InMemoryArtifactStore()
+    observation_store = InMemoryObservationStore()
+    events: list[object] = []
+
+    async def report_runner(ctx):
+        del ctx
+        return SkillOutput(
+            success=True,
+            output_artifacts=[
+                ArtifactRecord(
+                    artifact_id="report_budget_1",
+                    artifact_type="ResearchReport",
+                    producer_role=RoleId.writer,
+                    producer_skill="draft_report",
+                    payload={"report": "Final report"},
+                )
+            ],
+        )
+
+    skill_registry = FakeSkillRegistry(
+        [_skill_spec("draft_report", ["writer"], output_artifacts=["ResearchReport"])],
+        runners={"draft_report": report_runner},
+    )
+    policy = PolicyEngine(
+        permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]),
+        budget_policy=BudgetPolicy(
+            max_planning_iterations=1,
+            max_node_executions=4,
+            max_tool_invocations=10,
+            max_wall_time_sec=600.0,
+            max_tokens=50_000,
+        ),
+    )
+    tools = ToolGateway(
+        registry=ToolRegistry.from_servers(
+            [{"server_id": "llm", "tools": [{"name": "chat", "capability": "llm_chat"}]}]
+        ),
+        policy=policy,
+        mcp_invoker=lambda tool, payload: "unused",
+        event_sink=events.append,
+    )
+    node_runner = NodeRunner(
+        role_registry=role_registry,
+        skill_registry=skill_registry,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        tools=tools,
+        policy=policy,
+        event_sink=events.append,
+    )
+    planner = SequencePlanner(
+        [
+            RoutePlan(
+                run_id="run_budget_short_circuit",
+                planning_iteration=0,
+                horizon=1,
+                nodes=[
+                    PlanNode(
+                        node_id="node_report_budget_1",
+                        role=RoleId.writer,
+                        goal="Write the final report",
+                        inputs=[],
+                        allowed_skills=["draft_report"],
+                        success_criteria=["generated_report"],
+                        failure_policy="replan",
+                        expected_outputs=["ResearchReport"],
+                        needs_review=False,
+                    )
+                ],
+                edges=[],
+                planner_notes=[],
+                terminate=False,
+            )
+        ]
+    )
+    executor = Executor(
+        planner=planner,
+        node_runner=node_runner,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        policy=policy,
+        event_sink=events.append,
+    )
+
+    result = asyncio.run(
+        executor.run(
+            user_request="Write a report",
+            run_id="run_budget_short_circuit",
+        )
+    )
+
+    assert result.termination_reason == "final_artifact_produced"
+    assert planner.calls == 1
+    assert "artifact:ResearchReport:report_budget_1" in result.final_artifacts
+    assert events[-1].type == "run_terminate"
+
+
 def test_phase6_api_run_streams_dynamic_runtime_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.server.routes import runs as runs_route
+    monkeypatch.setattr(runs_route, "_preflight_run_config", lambda: [])
 
     async def fake_run(self, *, user_request: str, run_id: str | None = None):
         assert user_request == "dynamic runtime request"
@@ -1081,36 +2733,80 @@ def test_phase6_api_run_streams_dynamic_runtime_contract(monkeypatch: pytest.Mon
     )
 
     assert response.status_code == 200
-    assert f'{RUN_EVENT_PREFIX}{{"type": "plan_update"' in response.text
-    assert f'{RUN_EVENT_PREFIX}{{"type": "policy_block"' in response.text
-    assert f'{RUN_STATE_PREFIX}{{"run_id": "run_phase6"' in response.text
+    assert 'event: run_event\ndata: {"type": "plan_update"' in response.text
+    assert 'event: run_event\ndata: {"type": "policy_block"' in response.text
+    assert 'event: run_state\ndata: {"run_id": "run_phase6"' in response.text
     assert '"node_status": {"node_review_1": "success"}' in response.text
     assert '"artifacts": [{"artifact_id": "review_1"' in response.text
     assert "role_status" not in response.text
 
 
 def test_phase6_api_rejects_output_dir_outside_workspace() -> None:
+    from src.server.routes import runs as runs_route
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(runs_route, "_preflight_run_config", lambda: [])
     client = TestClient(app)
     outside_dir = Path.cwd().resolve().parent
 
-    response = client.post(
-        "/api/run",
-        json={
-            "client_request_id": "req_phase6_invalid_dir",
-            "runOverrides": {
-                "topic": "dynamic runtime request",
-                "user_request": "dynamic runtime request",
-                "output_dir": str(outside_dir),
+    try:
+        response = client.post(
+            "/api/run",
+            json={
+                "client_request_id": "req_phase6_invalid_dir",
+                "runOverrides": {
+                    "topic": "dynamic runtime request",
+                    "user_request": "dynamic runtime request",
+                    "output_dir": str(outside_dir),
+                },
             },
-        },
-    )
+        )
+    finally:
+        monkeypatch.undo()
 
     assert response.status_code == 400
     assert "output_root must stay within workspace root" in response.text
 
 
+def test_phase6_api_rejects_run_when_openai_codex_is_not_logged_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import runs as runs_route
+
+    monkeypatch.setattr(
+        runs_route,
+        "load_yaml",
+        lambda path: {
+            "agent": {"routing": {"planner_llm": {"provider": "openai_codex", "model": "openai-codex/gpt-5.1-codex"}}},
+            "llm": {"role_models": {"conductor": {"provider": "openai_codex", "model": "openai-codex/gpt-5.1-codex"}}},
+        },
+    )
+    monkeypatch.setattr(
+        runs_route,
+        "ensure_openai_codex_auth",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("openai codex oauth is not logged in for profile 'default'")),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/run",
+        json={
+            "client_request_id": "req_phase6_missing_codex_login",
+            "runOverrides": {
+                "topic": "dynamic runtime request",
+                "user_request": "dynamic runtime request",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert "run preflight failed" in response.text
+    assert "openai codex oauth is not logged in" in response.text
+
+
 def test_phase6_api_run_failure_still_emits_final_state(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.server.routes import runs as runs_route
+    monkeypatch.setattr(runs_route, "_preflight_run_config", lambda: [])
 
     async def fake_run(self, *, user_request: str, run_id: str | None = None):
         del run_id
@@ -1164,39 +2860,520 @@ def test_phase6_api_run_failure_still_emits_final_state(monkeypatch: pytest.Monk
     )
 
     assert response.status_code == 200
-    assert f'{RUN_STATE_PREFIX}{{"run_id": "run_phase6_fail", "status": "failed"' in response.text
+    assert 'event: run_state\ndata: {"run_id": "run_phase6_fail", "status": "failed"' in response.text
     assert '"route_plan": {"run_id": "run_phase6_fail"' in response.text
 
 
 def test_phase6_api_rejects_resume_run_id_even_with_topic() -> None:
+    from src.server.routes import runs as runs_route
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(runs_route, "_preflight_run_config", lambda: [])
     client = TestClient(app)
 
-    response = client.post(
-        "/api/run",
-        json={
-            "client_request_id": "req_phase6_resume",
-            "runOverrides": {
-                "topic": "dynamic runtime request",
-                "user_request": "dynamic runtime request",
-                "resume_run_id": "old_run_1",
+    try:
+        response = client.post(
+            "/api/run",
+            json={
+                "client_request_id": "req_phase6_resume",
+                "runOverrides": {
+                    "topic": "dynamic runtime request",
+                    "user_request": "dynamic runtime request",
+                    "resume_run_id": "old_run_1",
+                },
             },
-        },
-    )
+        )
+    finally:
+        monkeypatch.undo()
 
     assert response.status_code == 400
     assert "resume_run_id is not supported" in response.text
 
 
-def test_phase7_config_and_credentials_posts_are_read_only() -> None:
+def test_phase7_config_and_credentials_posts_persist_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    tmp_dir = Path(__file__).resolve().parent / ".tmp_config_route"
+    tmp_dir.mkdir(exist_ok=True)
+    config_path = tmp_dir / "agent.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "mcp": {"servers": {"llm": {"transport": "stdio"}}},
+                "llm": {"provider": "gemini"},
+                "agent": {"language": "zh"},
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    env_path = tmp_dir / ".env"
+    env_path.write_text('OPENAI_API_KEY="old-key"\nOTHER_FLAG=keep\n', encoding="utf-8")
+    monkeypatch.setattr(config_route, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(config_route, "ENV_PATH", env_path)
+
     client = TestClient(app)
 
-    config_response = client.post("/api/config", json={"llm": {"provider": "openai"}})
-    credentials_response = client.post("/api/credentials", json={"OPENAI_API_KEY": "secret"})
+    config_response = client.post(
+        "/api/config",
+        json={"llm": {"provider": "openai"}, "agent": {"language": "en"}},
+    )
+    credentials_response = client.post(
+        "/api/credentials",
+        json={"OPENAI_API_KEY": "secret", "GEMINI_API_KEY": "gem-key"},
+    )
 
-    assert config_response.status_code == 405
-    assert "read-only" in config_response.text
-    assert credentials_response.status_code == 405
-    assert "read-only" in credentials_response.text
+    assert config_response.status_code == 200
+    assert credentials_response.status_code == 200
+
+    saved_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved_config["mcp"]["servers"]["llm"]["transport"] == "stdio"
+    assert saved_config["llm"]["provider"] == "openai"
+    assert saved_config["agent"]["language"] == "en"
+
+    saved_env = env_path.read_text(encoding="utf-8")
+    assert 'OPENAI_API_KEY="secret"' in saved_env
+    assert 'GEMINI_API_KEY="gem-key"' in saved_env
+    assert "OTHER_FLAG=keep" in saved_env
+
+
+def test_api_config_normalizes_legacy_critic_role_and_preserves_planner_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    tmp_dir = Path(".tmp_phase7_config_normalize")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    config_path = tmp_dir / "agent.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "llm": {
+                    "role_models": {
+                        "conductor": {"provider": "openai_codex", "model": "openai-codex/gpt-5.1-codex"},
+                        "critic": {"provider": "openrouter", "model": "google/gemini-2.0-flash-001"},
+                    }
+                },
+                "agent": {
+                    "routing": {
+                        "planner_llm": {
+                            "provider": "openrouter",
+                            "model": "google/gemini-2.5-flash",
+                            "temperature": 0.2,
+                        }
+                    }
+                },
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_route, "CONFIG_PATH", config_path)
+
+    client = TestClient(app)
+    response = client.get("/api/config")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["role_models"]["reviewer"]["provider"] == "openrouter"
+    assert payload["llm"]["role_models"]["reviewer"]["model"] == "google/gemini-2.0-flash-001"
+    assert "critic" not in payload["llm"]["role_models"]
+    assert payload["agent"]["routing"]["planner_llm"]["provider"] == "openrouter"
+    assert payload["agent"]["routing"]["planner_llm"]["model"] == "google/gemini-2.5-flash"
+
+
+def _legacy_phase7_codex_status_route_reports_chatgpt_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "openai_codex_login_status",
+        lambda: {
+            "installed": True,
+            "logged_in": True,
+            "chatgpt_logged_in": True,
+            "auth_mode": "chatgpt",
+            "executable": "",
+            "available": True,
+            "user_name": "",
+            "user_email": "user@example.com",
+            "user_label": "user@example.com",
+            "plan_type": "plus",
+            "account_id": "acct_123",
+            "expires_at": 1234567890,
+            "expires_in_sec": 3600,
+            "expired": False,
+            "has_refresh_token": True,
+            "login_in_progress": False,
+            "last_error": "",
+        },
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/codex/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "installed": True,
+        "logged_in": True,
+        "chatgpt_logged_in": True,
+        "auth_mode": "chatgpt",
+        "executable": "",
+        "available": True,
+        "user_name": "",
+        "user_email": "user@example.com",
+        "user_label": "user@example.com",
+        "plan_type": "plus",
+        "account_id": "acct_123",
+        "expires_at": 1234567890,
+        "expires_in_sec": 3600,
+        "expired": False,
+        "has_refresh_token": True,
+        "login_in_progress": False,
+        "last_error": "",
+    }
+
+def _legacy_phase7_codex_login_route_launches_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "start_openai_codex_login",
+        lambda: {
+            "authorize_url": "https://auth.openai.com/oauth/authorize?client_id=test",
+            "status": {
+                "installed": True,
+                "logged_in": False,
+                "chatgpt_logged_in": False,
+                "auth_mode": "missing",
+                "executable": "",
+                "available": False,
+                "user_name": "",
+                "user_email": "",
+                "user_label": "",
+                "plan_type": "",
+                "account_id": "",
+                "expires_at": 0,
+                "expires_in_sec": 0,
+                "expired": False,
+                "has_refresh_token": False,
+                "login_in_progress": True,
+                "last_error": "",
+            },
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/codex/login")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "登录终端" in payload["message"]
+    assert payload["status"]["installed"] is True
+
+
+def _legacy_phase7_codex_logout_route_clears_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "logout_openai_codex",
+        lambda **kwargs: {
+            "installed": True,
+            "logged_in": False,
+            "chatgpt_logged_in": False,
+            "auth_mode": "missing",
+            "executable": "",
+            "available": False,
+            "user_name": "",
+            "user_email": "",
+            "user_label": "",
+            "plan_type": "",
+            "account_id": "",
+            "expires_at": 0,
+            "expires_in_sec": 0,
+            "expired": False,
+            "has_refresh_token": False,
+            "login_in_progress": False,
+            "last_error": "",
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/codex/logout")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "退出" in payload["message"]
+    assert payload["status"]["logged_in"] is False
+
+
+def test_phase7_openai_codex_status_route_reports_chatgpt_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "openai_codex_login_status",
+        lambda **kwargs: {
+            "installed": True,
+            "logged_in": True,
+            "chatgpt_logged_in": True,
+            "auth_mode": "chatgpt",
+            "executable": "",
+            "available": True,
+            "user_name": "",
+            "user_email": "user@example.com",
+            "user_label": "user@example.com",
+            "plan_type": "plus",
+            "account_id": "acct_123",
+            "expires_at": 1234567890,
+            "expires_in_sec": 3600,
+            "expired": False,
+            "has_refresh_token": True,
+            "login_in_progress": False,
+            "last_error": "",
+        },
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/codex/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "installed": True,
+        "logged_in": True,
+        "chatgpt_logged_in": True,
+        "auth_mode": "chatgpt",
+        "executable": "",
+        "available": True,
+        "user_name": "",
+        "user_email": "user@example.com",
+        "user_label": "user@example.com",
+        "plan_type": "plus",
+        "account_id": "acct_123",
+        "expires_at": 1234567890,
+        "expires_in_sec": 3600,
+        "expired": False,
+        "has_refresh_token": True,
+        "login_in_progress": False,
+        "last_error": "",
+    }
+
+
+def test_phase7_openai_codex_status_route_passes_agent_binding_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    captured: dict[str, object] = {}
+    config = {
+        "auth": {
+            "openai_codex": {
+                "default_profile": "work_main",
+                "allowed_profiles": ["work_main"],
+                "locked": True,
+                "require_explicit_switch": True,
+            }
+        }
+    }
+
+    monkeypatch.setattr(config_route, "_read_config_file", lambda: config)
+    monkeypatch.setattr(
+        config_route,
+        "openai_codex_login_status",
+        lambda **kwargs: captured.update(kwargs)
+        or {
+            "installed": True,
+            "logged_in": False,
+            "chatgpt_logged_in": False,
+            "auth_mode": "missing",
+            "executable": "",
+            "available": False,
+            "user_name": "",
+            "user_email": "",
+            "user_label": "",
+            "plan_type": "",
+            "account_id": "",
+            "expires_at": 0,
+            "expires_in_sec": 0,
+            "expired": False,
+            "has_refresh_token": False,
+            "login_in_progress": False,
+            "last_error": "",
+        },
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/codex/status")
+
+    assert response.status_code == 200
+    assert captured["config"] == config
+
+
+def test_phase7_openai_codex_login_route_returns_authorize_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "start_openai_codex_login",
+        lambda **kwargs: {
+            "authorize_url": "https://auth.openai.com/oauth/authorize?client_id=test",
+            "status": {
+                "installed": True,
+                "logged_in": False,
+                "chatgpt_logged_in": False,
+                "auth_mode": "missing",
+                "executable": "",
+                "available": False,
+                "user_name": "",
+                "user_email": "",
+                "user_label": "",
+                "plan_type": "",
+                "account_id": "",
+                "expires_at": 0,
+                "expires_in_sec": 0,
+                "expired": False,
+                "has_refresh_token": False,
+                "login_in_progress": True,
+                "last_error": "",
+            },
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/codex/login")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "browser flow" in payload["message"]
+    assert payload["authorize_url"].startswith("https://auth.openai.com/oauth/authorize")
+    assert payload["status"]["installed"] is True
+    assert payload["status"]["login_in_progress"] is True
+
+
+def test_phase7_openai_codex_models_route_uses_agent_config_for_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import models as models_route
+
+    captured: dict[str, object] = {}
+    config = {"llm": {"openai_codex": {"model_discovery": "account_plus_cached"}}}
+
+    monkeypatch.setattr(models_route, "_read_config_file", lambda: config)
+    monkeypatch.setattr(
+        models_route,
+        "openai_codex_model_catalog",
+        lambda **kwargs: captured.update(kwargs)
+        or {
+            "vendors": [{"value": "openai", "label": "OpenAI"}],
+            "modelsByVendor": {"openai": [{"value": "openai-codex/gpt-5.4", "label": "GPT-5.4"}]},
+            "vendor_count": 1,
+            "model_count": 1,
+            "loaded": True,
+        },
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/codex/models")
+
+    assert response.status_code == 200
+    assert captured["config"] == config
+    assert response.json()["model_count"] == 1
+
+
+def test_phase7_openai_codex_logout_route_clears_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "logout_openai_codex",
+        lambda **kwargs: {
+            "installed": True,
+            "logged_in": False,
+            "chatgpt_logged_in": False,
+            "auth_mode": "missing",
+            "executable": "",
+            "available": False,
+            "user_name": "",
+            "user_email": "",
+            "user_label": "",
+            "plan_type": "",
+            "account_id": "",
+            "expires_at": 0,
+            "expires_in_sec": 0,
+            "expired": False,
+            "has_refresh_token": False,
+            "login_in_progress": False,
+            "last_error": "",
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/codex/logout")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "cleared" in payload["message"]
+    assert payload["status"]["logged_in"] is False
+
+
+def test_phase7_openai_codex_callback_route_completes_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.server.routes import config as config_route
+
+    monkeypatch.setattr(
+        config_route,
+        "complete_openai_codex_login",
+        lambda callback_input, **kwargs: {
+            "installed": True,
+            "logged_in": True,
+            "chatgpt_logged_in": True,
+            "auth_mode": "chatgpt",
+            "executable": "",
+            "available": True,
+            "user_name": "",
+            "user_email": "user@example.com",
+            "user_label": "user@example.com",
+            "plan_type": "plus",
+            "account_id": "acct_123",
+            "expires_at": 1234567890,
+            "expires_in_sec": 3600,
+            "expired": False,
+            "has_refresh_token": True,
+            "login_in_progress": False,
+            "last_error": "",
+            "callback_input": callback_input,
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/codex/callback",
+        json={"callback_input": "http://localhost:1455/auth/callback?code=test&state=abc"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "completed" in payload["message"]
+    assert payload["status"]["logged_in"] is True
+    assert payload["status"]["chatgpt_logged_in"] is True
 
 
 def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
@@ -1253,6 +3430,7 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
     assert result.status == "completed"
     assert result.route_plan["terminate"] is True
     assert result.route_plan["planner_notes"] == ["terminate immediately"]
+    assert (output_root / "run_phase7_terminate" / "run_snapshot.json").exists()
 
 
 def test_phase7_legacy_package_and_scripts_removed() -> None:

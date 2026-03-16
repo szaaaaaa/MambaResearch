@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from src.dynamic_os.artifact_refs import artifact_ref_for_record
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.observation import Observation
 from src.dynamic_os.contracts.route_plan import RoutePlan
@@ -56,6 +57,7 @@ class InMemoryArtifactStore:
             {
                 "artifact_id": record.artifact_id,
                 "artifact_type": record.artifact_type,
+                "artifact_ref": artifact_ref_for_record(record),
                 "producer_role": record.producer_role.value,
             }
             for record in self._records.values()

@@ -7,6 +7,10 @@ applicable_roles:
 description: Synthesize input artifacts into an evidence map and a gap map.
 input_contract:
   required: []
+  requires_any:
+    - PaperNotes
+    - SourceSet
+    - ExperimentResults
   optional:
     - PaperNotes
     - SourceSet

@@ -18,12 +18,20 @@ class SearchGateway:
         *,
         source: str = "auto",
         max_results: int = 10,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, list[dict[str, Any]] | list[str]]:
         self._policy.assert_network_allowed()
+        preferred_source = source if source not in {"", "auto", "academic", "web"} else "auto"
         result = await self._mcp.invoke_capability(
             ToolCapability.search,
-            {"query": query, "max_results": max_results},
-            preferred=source,
+            {"query": query, "source": source, "max_results": max_results},
+            preferred=preferred_source,
         )
-        return list(result)
-
+        if isinstance(result, dict):
+            return {
+                "results": [dict(item) for item in result.get("results", []) if isinstance(item, dict)],
+                "warnings": [str(item).strip() for item in result.get("warnings", []) if str(item).strip()],
+            }
+        return {
+            "results": [dict(item) for item in result if isinstance(item, dict)],
+            "warnings": [],
+        }

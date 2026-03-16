@@ -63,15 +63,15 @@ class PolicyEngine:
     def check_budget(self) -> None:
         elapsed = self._clock() - self._started_at
         if self._planning_iterations > self.budget_policy.max_planning_iterations:
-            raise BudgetExceededError("planning iteration budget exceeded")
+            raise BudgetExceededError("规划迭代次数已超出预算")
         if self._node_executions > self.budget_policy.max_node_executions:
-            raise BudgetExceededError("node execution budget exceeded")
+            raise BudgetExceededError("节点执行次数已超出预算")
         if self._tool_invocations > self.budget_policy.max_tool_invocations:
-            raise BudgetExceededError("tool invocation budget exceeded")
+            raise BudgetExceededError("工具调用次数已超出预算")
         if self._tokens_used > self.budget_policy.max_tokens:
-            raise BudgetExceededError("token budget exceeded")
+            raise BudgetExceededError("Token 预算已超出限制")
         if elapsed > self.budget_policy.max_wall_time_sec:
-            raise BudgetExceededError("wall time budget exceeded")
+            raise BudgetExceededError("运行时长已超出预算")
 
     def ensure_skill_permissions(self, permissions: SkillPermissions) -> None:
         if permissions.network:

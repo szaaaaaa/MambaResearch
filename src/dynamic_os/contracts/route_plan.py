@@ -22,7 +22,7 @@ class RoleId(str, Enum):
 
 
 class PlanNode(BaseModel):
-    model_config = {"frozen": True}
+    model_config = {"frozen": True, "extra": "forbid"}
 
     node_id: str = Field(..., pattern=r"^node_[a-z0-9_]+$")
     role: RoleId
@@ -45,7 +45,7 @@ class EdgeCondition(str, Enum):
 
 
 class PlanEdge(BaseModel):
-    model_config = {"frozen": True}
+    model_config = {"frozen": True, "extra": "forbid"}
 
     source: str
     target: str
@@ -53,7 +53,7 @@ class PlanEdge(BaseModel):
 
 
 class RoutePlan(BaseModel):
-    model_config = {"frozen": True}
+    model_config = {"frozen": True, "extra": "forbid"}
 
     run_id: str
     planning_iteration: int = Field(..., ge=0)

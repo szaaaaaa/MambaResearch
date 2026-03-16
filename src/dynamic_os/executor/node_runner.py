@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from src.dynamic_os.artifact_refs import artifact_ref_for_record, parse_artifact_ref
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.events import (
     ArtifactEvent,
@@ -29,18 +30,6 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
-
-
-def _artifact_ref(record: ArtifactRecord) -> str:
-    return f"artifact:{record.artifact_type}:{record.artifact_id}"
-
-
-def _parse_artifact_ref(reference: str) -> tuple[str, str]:
-    parts = reference.split(":", 2)
-    if len(parts) != 3 or parts[0] != "artifact":
-        raise ValueError(f"invalid artifact reference: {reference}")
-    return parts[1], parts[2]
-
 
 @dataclass(frozen=True)
 class NodeExecutionResult:
@@ -280,12 +269,12 @@ class NodeRunner:
     def _resolve_inputs(self, references: list[str]) -> list[ArtifactRecord]:
         artifacts: list[ArtifactRecord] = []
         for reference in references:
-            artifact_type, artifact_id = _parse_artifact_ref(reference)
+            artifact_type, artifact_id = parse_artifact_ref(reference)
             record = self._artifact_store.get(artifact_id)
             if record is None:
-                raise ValueError(f"missing input artifact: {artifact_id}")
+                raise ValueError(f"缺少输入产物：{artifact_id}")
             if record.artifact_type != artifact_type:
-                raise ValueError(f"artifact type mismatch for {artifact_id}: expected {artifact_type}")
+                raise ValueError(f"输入产物类型不匹配：{artifact_id}，期望 {artifact_type}")
             artifacts.append(record)
         return artifacts
 
@@ -309,8 +298,8 @@ class NodeRunner:
 
         if not candidates:
             raise ValueError(
-                "no allowed skill matches node inputs: "
-                f"{', '.join(node.allowed_skills)} for available inputs {sorted(available_types)}"
+                "没有可执行的技能满足当前节点输入："
+                f"{', '.join(node.allowed_skills)}；可用输入类型 {sorted(available_types)}"
             )
 
         selected, _, _ = max(
@@ -359,17 +348,17 @@ class NodeRunner:
         if output.success and not missing_outputs:
             status = NodeStatus.success
             error_type = ErrorType.none
-            message = "skill completed successfully"
+            message = "技能执行成功"
             suggested_options: list[str] = []
         elif output.success:
             status = NodeStatus.partial if node.failure_policy != FailurePolicy.replan else NodeStatus.needs_replan
             error_type = ErrorType.none
-            message = f"missing expected outputs: {', '.join(missing_outputs)}"
+            message = f"缺少预期产物类型：{', '.join(missing_outputs)}"
             suggested_options = ["replan", "choose_different_skill"]
         else:
             status = NodeStatus.needs_replan if node.failure_policy == FailurePolicy.replan else NodeStatus.failed
             error_type = ErrorType.skill_error
-            message = output.error or "skill returned unsuccessful result"
+            message = output.error or "技能返回了失败结果"
             suggested_options = ["choose_different_skill", "replan"]
         confidence = output.metadata.get("confidence", 1.0)
         try:
@@ -385,7 +374,7 @@ class NodeRunner:
             what_was_tried=[f"skill:{skill_id}"],
             suggested_options=suggested_options,
             recommended_action="replan" if status in {NodeStatus.partial, NodeStatus.needs_replan} else "",
-            produced_artifacts=[_artifact_ref(artifact) for artifact in artifacts],
+            produced_artifacts=[artifact_ref_for_record(artifact) for artifact in artifacts],
             confidence=max(0.0, min(1.0, confidence_value)),
             duration_ms=duration_ms,
         )
@@ -415,11 +404,7 @@ class NodeRunner:
         )
 
     def _node_status_event_value(self, status: NodeStatus) -> str:
-        if status == NodeStatus.success:
-            return "success"
-        if status == NodeStatus.skipped:
-            return "skipped"
-        return "failed"
+        return status.value
 
     def _emit(self, event: object) -> None:
         if self._event_sink is not None:

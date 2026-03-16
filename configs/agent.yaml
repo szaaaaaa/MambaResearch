@@ -22,10 +22,47 @@ providers:
       sqlite_path: ${project.data_dir}/circuit_breaker.db
   retrieval:
     backend: default_retriever
+mcp:
+  servers:
+  - server_id: llm
+    command:
+    - ${python}
+    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
+    - --root
+    - ${workspace_root}
+    - --server-id
+    - llm
+  - server_id: search
+    command:
+    - ${python}
+    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
+    - --root
+    - ${workspace_root}
+    - --server-id
+    - search
+  - server_id: retrieval
+    command:
+    - ${python}
+    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
+    - --root
+    - ${workspace_root}
+    - --server-id
+    - retrieval
+  - server_id: exec
+    command:
+    - ${python}
+    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
+    - --root
+    - ${workspace_root}
+    - --server-id
+    - exec
 llm:
   provider: openrouter
   model: google/gemini-2.0-flash-001
   temperature: 0.2
+  openai_codex:
+    transport: auto
+    model_discovery: account_plus_cached
   role_models:
     conductor:
       provider: openrouter
@@ -42,12 +79,19 @@ llm:
     writer:
       provider: openrouter
       model: google/gemini-2.0-flash-001
-    critic:
+    reviewer:
       provider: openrouter
       model: google/gemini-2.0-flash-001
+auth:
+  openai_codex:
+    default_profile: default
+    allowed_profiles:
+    - default
+    locked: true
+    require_explicit_switch: true
 retrieval:
   openai_api_key_env: OPENAI_API_KEY
-  runtime_mode: lite
+  runtime_mode: standard
   embedding_backend: openai_embedding
   embedding_model: text-embedding-3-small
   remote_embedding_model: text-embedding-3-small
@@ -180,47 +224,17 @@ agent:
     - route choice
     - value systems of agents
     - multi-agent deep reinforcement learning with communication
-  experiment_plan:
-    enabled: false
-    max_per_rq: 2
-    require_human_results: false
-  checkpointing:
-    enabled: true
-    backend: sqlite
-    sqlite_path: ${project.data_dir}/checkpoints.db
   routing:
     planner_llm:
       provider: openrouter
       model: google/gemini-2.0-flash-001
       temperature: 0.1
-  experiment_execution:
-    backend: manual
-    autoresearch:
-      command:
-      - python
-      - scripts/run_autoresearch_bridge.py
-      - --plan
-      - '{plan_path}'
-      - --output
-      - '{output_path}'
-      - --topic
-      - '{topic}'
-      workdir: '{root}'
-      agent_provider: codex
-      agent_command: ''
-      codex_command: codex exec --cd "{workspace}" --prompt-file "{program_path}"
-      claude_code_command: powershell -NoProfile -Command "claude --dangerously-skip-permissions
-        --cwd '{workspace}' -p (Get-Content -Raw '{program_path}')"
-      workspace_dir: ''
-      timeout_sec: 7200
-  staged_indexing:
-    enabled: true
-    fast_text_only_until_iteration: 0
-    first_pass_text_extraction: pymupdf_only
-    figure_enrichment_start_iteration: 1
-    figure_top_papers: 4
+  experiment_plan:
+    enabled: false
+    max_per_rq: 2
+    require_human_results: false
 ingest:
-  text_extraction: pymupdf_only
+  text_extraction: auto
   latex:
     download_source: false
     source_dir: ${project.data_dir}/latex

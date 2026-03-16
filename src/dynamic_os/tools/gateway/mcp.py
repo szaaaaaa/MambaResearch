@@ -28,7 +28,13 @@ class McpGateway:
         self._policy.record_tool_invocation()
         result = self._invoker(tool, payload)
         if inspect.isawaitable(result):
-            return await result
+            result = await result
+        if isinstance(result, dict):
+            usage = result.get("usage")
+            if isinstance(usage, dict):
+                self._policy.record_tokens(int(usage.get("total_tokens") or 0))
+            if "content" in result:
+                return result.get("content")
         return result
 
     async def invoke_capability(
@@ -40,4 +46,3 @@ class McpGateway:
     ) -> Any:
         tool = self._registry.resolve(capability, preferred=preferred)
         return await self.invoke_tool(tool.tool_id, payload)
-

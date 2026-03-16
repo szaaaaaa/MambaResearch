@@ -35,6 +35,8 @@ def discover_skill_packages(roots: list[str | Path]) -> list[DiscoveredSkill]:
         if not root.exists():
             continue
         for package_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+            if package_dir.name.startswith("__"):
+                continue
             packages.append(DiscoveredSkill(root=root, package_dir=package_dir))
     return packages
 
@@ -43,4 +45,3 @@ def validate_skill_package(discovered: DiscoveredSkill) -> None:
     missing = [name for name in REQUIRED_SKILL_FILES if not (discovered.package_dir / name).is_file()]
     if missing:
         raise ValueError(f"skill package {discovered.package_dir} is missing: {', '.join(missing)}")
-

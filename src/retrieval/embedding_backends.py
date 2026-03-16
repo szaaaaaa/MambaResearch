@@ -149,4 +149,3 @@ def embedding_dim(
         cfg=cfg,
     )
     return int(sample.shape[1])
-

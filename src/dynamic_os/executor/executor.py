@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from src.dynamic_os.contracts.events import NodeStatusEvent, PlanUpdateEvent, ReplanEvent, RunTerminateEvent
-from src.dynamic_os.contracts.observation import NodeStatus, Observation
+from src.dynamic_os.contracts.events import NodeStatusEvent, ObservationEvent, PlanUpdateEvent, ReplanEvent, RunTerminateEvent
+from src.dynamic_os.contracts.observation import ErrorType, NodeStatus, Observation
 from src.dynamic_os.contracts.route_plan import EdgeCondition, PlanEdge, PlanNode, RoutePlan
 from src.dynamic_os.executor.node_runner import NodeExecutionResult, NodeRunner
+from src.dynamic_os.planner import decide_termination
+from src.dynamic_os.planner.routing import derive_role_routing_policy
 from src.dynamic_os.planner.planner import Planner, PlannerOutputError
 from src.dynamic_os.policy.engine import BudgetExceededError, PolicyEngine
 
@@ -68,6 +70,7 @@ class Executor:
             try:
                 self._policy.record_planning_iteration()
                 plan = await self._planner.plan(
+                    run_id=run_id,
                     user_request=user_request,
                     planning_iteration=planning_iteration,
                     budget_snapshot=self._policy.snapshot(),
@@ -76,6 +79,16 @@ class Executor:
             except BudgetExceededError as exc:
                 return self._terminate(run_id=run_id, reason=str(exc), observations=observations, planning_iterations=planning_iteration)
             except PlannerOutputError as exc:
+                observation = self._planner_error_observation(planning_iteration=planning_iteration, detail=str(exc))
+                observations.append(observation)
+                self._observation_store.save(observation)
+                self._emit(
+                    ObservationEvent(
+                        ts=_now_iso(),
+                        run_id=run_id,
+                        observation=observation.model_dump(mode="json"),
+                    )
+                )
                 return self._terminate(run_id=run_id, reason=str(exc), observations=observations, planning_iterations=planning_iteration)
 
             self._emit(
@@ -87,7 +100,7 @@ class Executor:
                 )
             )
 
-            if plan.terminate:
+            if plan.terminate and not plan.nodes:
                 return self._terminate(
                     run_id=run_id,
                     reason="planner_terminated",
@@ -106,6 +119,25 @@ class Executor:
                 )
 
             observations.extend(execution.observations)
+
+            if self._should_terminate_after_final_artifact(
+                user_request=user_request,
+                execution=execution,
+            ):
+                return self._terminate(
+                    run_id=run_id,
+                    reason="final_artifact_produced",
+                    observations=observations,
+                    planning_iterations=planning_iteration + 1,
+                )
+
+            if plan.terminate and not execution.should_replan:
+                return self._terminate(
+                    run_id=run_id,
+                    reason="planner_terminated",
+                    observations=observations,
+                    planning_iterations=planning_iteration + 1,
+                )
 
             if execution.should_replan:
                 self._emit(
@@ -174,6 +206,26 @@ class Executor:
 
         return PlanExecutionResult(observations=observations, should_replan=False, replan_reason="")
 
+    def _should_terminate_after_final_artifact(
+        self,
+        *,
+        user_request: str,
+        execution: PlanExecutionResult,
+    ) -> bool:
+        if execution.should_replan:
+            return False
+        records = list(self._artifact_store.list_all())
+        artifact_summaries = [{"artifact_type": record.artifact_type} for record in records]
+        if not decide_termination(artifact_summaries):
+            return False
+        artifact_types = {record.artifact_type for record in records}
+        if "ReviewVerdict" in artifact_types:
+            return True
+        if "ResearchReport" not in artifact_types:
+            return False
+        routing_policy = derive_role_routing_policy(user_request=user_request, artifacts=records)
+        return "review" not in set(routing_policy.intents)
+
     def _is_ready(self, node: PlanNode, edges: list[PlanEdge], statuses: dict[str, NodeStatus]) -> bool:
         if not edges:
             return True
@@ -232,6 +284,20 @@ class Executor:
             events=list(self._events),
             termination_reason=reason,
             planning_iterations=planning_iterations,
+        )
+
+    def _planner_error_observation(self, *, planning_iteration: int, detail: str) -> Observation:
+        return Observation(
+            node_id=f"planner_iteration_{planning_iteration}",
+            role="planner",
+            status=NodeStatus.failed,
+            error_type=ErrorType.llm_error,
+            what_happened=detail,
+            what_was_tried=["planner:structured_output"],
+            suggested_options=["abort"],
+            recommended_action="abort",
+            confidence=0.0,
+            duration_ms=0.0,
         )
 
     def _validate_plan_identity(self, *, plan: RoutePlan, run_id: str) -> None:

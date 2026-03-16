@@ -7,7 +7,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from src.server.routes.config import _read_env_file
+from src.common.openai_codex import openai_codex_model_catalog
+from src.server.routes.config import _read_config_file, _read_env_file
 from src.server.settings import (
     GEMINI_MODELS_URL,
     OPENAI_MODELS_URL,
@@ -288,7 +289,6 @@ def _build_gemini_catalog(items: list[Any]) -> dict[str, Any]:
         options.append({"value": model_id, "label": label})
     return _build_single_vendor_catalog("google", "Google", options)
 
-
 def _first_secret_value(*keys: str) -> str:
     saved_values = _read_env_file()
     for key in keys:
@@ -322,6 +322,11 @@ def get_openai_models():
         raise HTTPException(status_code=exc.code, detail="failed to load OpenAI model catalog") from exc
 
     return _build_openai_catalog(payload.get("data", []))
+
+
+@router.get("/api/codex/models")
+def get_codex_models():
+    return openai_codex_model_catalog(config=_read_config_file())
 
 
 @router.get("/api/gemini/models")

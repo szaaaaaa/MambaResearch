@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.route_plan import RoleId
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
@@ -29,18 +30,16 @@ def _metric_list(metrics: dict) -> list[dict]:
     return items
 
 
-def _source_inputs(ctx: SkillContext) -> list[str]:
-    return [f"artifact:{artifact.artifact_type}:{artifact.artifact_id}" for artifact in ctx.input_artifacts]
-
-
 async def run(ctx: SkillContext) -> SkillOutput:
     experiment_plan = _find_artifact(ctx, "ExperimentPlan")
     if experiment_plan is None:
         return SkillOutput(success=False, error="run_experiment requires an ExperimentPlan artifact")
 
     payload = dict(experiment_plan.payload)
-    code = str(payload.get("code") or "print('no experiment code provided')")
+    code = str(payload.get("code") or "").strip()
     language = str(payload.get("language") or "python")
+    if not code:
+        return SkillOutput(success=False, error="run_experiment requires executable code in ExperimentPlan")
     execution = await ctx.tools.execute_code(code, language=language, timeout_sec=min(ctx.timeout_sec, 60))
     exit_code = execution.get("exit_code")
     if exit_code not in (None, 0):
@@ -50,8 +49,8 @@ async def run(ctx: SkillContext) -> SkillOutput:
             metadata={"execution": execution},
         )
     metrics = dict(execution.get("metrics", {})) if isinstance(execution.get("metrics", {}), dict) else {}
-    artifact = ArtifactRecord(
-        artifact_id=f"{ctx.node_id}_experiment_results",
+    artifact = make_artifact(
+        node_id=ctx.node_id,
         artifact_type="ExperimentResults",
         producer_role=RoleId(ctx.role_id),
         producer_skill=ctx.skill_id,
@@ -66,7 +65,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
                 }
             ],
         },
-        source_inputs=_source_inputs(ctx),
+        source_inputs=source_input_refs(ctx.input_artifacts),
     )
     return SkillOutput(
         success=True,

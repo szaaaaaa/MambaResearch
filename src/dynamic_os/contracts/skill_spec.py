@@ -19,6 +19,7 @@ class SkillInputContract(BaseModel):
     model_config = {"frozen": True}
 
     required: list[str] = Field(default_factory=list)
+    requires_any: list[str] = Field(default_factory=list)
     optional: list[str] = Field(default_factory=list)
 
 
@@ -35,4 +36,3 @@ class SkillSpec(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     permissions: SkillPermissions = Field(default_factory=SkillPermissions)
     timeout_sec: int = Field(120, ge=1, le=600)
-
