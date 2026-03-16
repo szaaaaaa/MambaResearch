@@ -24,8 +24,12 @@ logs/
 *.log
 .pytest_cache/
 .tmp/
+.tmp_*
+.tmp_*/
 tests/.tmp_*/
 tests/.tmp_*.sqlite
+.auth/
+frontend/dist/
 
 # Local DB / index artifacts
 *.sqlite
