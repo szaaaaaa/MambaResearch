@@ -228,6 +228,12 @@ export interface RunEvent {
   detail: string;
 }
 
+export interface HitlRequest {
+  node_id: string;
+  question: string;
+  context: string;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -242,6 +248,7 @@ export interface ChatSession {
   artifacts: RunArtifact[];
   runEvents: RunEvent[];
   rawTerminalLog: string;
+  hitlRequest: HitlRequest | null;
 }
 
 export interface ProviderModelCatalog {

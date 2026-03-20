@@ -72,3 +72,16 @@ class RunTerminateEvent(BaseEvent):
     reason: str
     final_artifacts: list[str]
 
+
+class HitlRequestEvent(BaseEvent):
+    type: Literal["hitl_request"] = "hitl_request"
+    node_id: str
+    question: str
+    context: str
+
+
+class HitlResponseEvent(BaseEvent):
+    type: Literal["hitl_response"] = "hitl_response"
+    node_id: str
+    response: str
+

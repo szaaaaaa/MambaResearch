@@ -7,6 +7,7 @@ import { UiPreferences } from '../settings/types';
 import { RouteGraph } from '../RouteGraph';
 import { BehaviorTimeline } from '../BehaviorTimeline';
 import { RawTerminalPanel } from '../RawTerminalPanel';
+import { HitlModal } from '../HitlModal';
 
 const RUN_TAB_ROLE_LABELS: Record<string, string> = {
   conductor: '统筹',
@@ -317,7 +318,7 @@ function ArtifactDetailModal({
 }
 
 export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferences }) => {
-  const { state, updateRunOverrides, startRun, stopRun } = useAppContext();
+  const { state, updateRunOverrides, startRun, stopRun, submitHitlResponse } = useAppContext();
   const { conversations, activeConversationId, runOverrides } = state;
   const [runStartError, setRunStartError] = React.useState('');
   const [artifactDetail, setArtifactDetail] = React.useState<ArtifactDetailState | null>(null);
@@ -365,6 +366,14 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
     <div className="flex min-h-screen flex-col">
       {artifactDetail ? (
         <ArtifactDetailModal detail={artifactDetail} onClose={() => setArtifactDetail(null)} />
+      ) : null}
+
+      {activeConversation.hitlRequest && activeConversation.runId ? (
+        <HitlModal
+          runId={activeConversation.runId}
+          request={activeConversation.hitlRequest}
+          onSubmit={submitHitlResponse}
+        />
       ) : null}
 
       {runStartError ? (

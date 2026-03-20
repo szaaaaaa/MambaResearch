@@ -90,3 +90,13 @@
   forbidden:
     - Must not directly rewrite artifacts
 
+- id: hitl
+  description: Pause execution and request human guidance
+  system_prompt: This is a human-in-the-loop pause node. Execution pauses until the human provides a response.
+  default_allowed_skills:
+    - hitl
+  input_artifact_types: []
+  output_artifact_types:
+    - UserGuidance
+  forbidden: []
+

@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Callable
 
-from src.dynamic_os.contracts.events import NodeStatusEvent, ObservationEvent, PlanUpdateEvent, ReplanEvent, RunTerminateEvent
+from src.dynamic_os.artifact_refs import make_artifact
+from src.dynamic_os.contracts.artifact import ArtifactRecord
+from src.dynamic_os.contracts.events import (
+    ArtifactEvent,
+    HitlRequestEvent,
+    HitlResponseEvent,
+    NodeStatusEvent,
+    ObservationEvent,
+    PlanUpdateEvent,
+    ReplanEvent,
+    RunTerminateEvent,
+)
 from src.dynamic_os.contracts.observation import ErrorType, NodeStatus, Observation
-from src.dynamic_os.contracts.route_plan import EdgeCondition, PlanEdge, PlanNode, RoutePlan
+from src.dynamic_os.contracts.route_plan import EdgeCondition, PlanEdge, PlanNode, RoleId, RoutePlan
 from src.dynamic_os.executor.node_runner import NodeExecutionResult, NodeRunner
 from src.dynamic_os.planner import decide_termination
 from src.dynamic_os.planner.routing import derive_role_routing_policy
@@ -61,6 +73,13 @@ class Executor:
         self._policy = policy
         self._event_sink = event_sink
         self._events: list[object] = []
+        self._hitl_event: asyncio.Event | None = None
+        self._hitl_response: str = ""
+
+    def submit_hitl_response(self, response: str) -> None:
+        self._hitl_response = response
+        if self._hitl_event is not None:
+            self._hitl_event.set()
 
     async def run(self, *, user_request: str, run_id: str) -> ExecutorRunResult:
         planning_iteration = 0
@@ -169,7 +188,10 @@ class Executor:
             ]
             if ready_nodes:
                 for node in ready_nodes:
-                    result = await self._node_runner.run_node(run_id=plan.run_id, node=node)
+                    if node.role == RoleId.hitl:
+                        result = await self._handle_hitl_node(node=node, run_id=plan.run_id)
+                    else:
+                        result = await self._node_runner.run_node(run_id=plan.run_id, node=node)
                     observations.append(result.observation)
                     statuses[node.node_id] = result.observation.status
                     pending.remove(node.node_id)
@@ -205,6 +227,100 @@ class Executor:
             raise RuntimeError(f"route plan has no executable ready nodes: {unresolved}")
 
         return PlanExecutionResult(observations=observations, should_replan=False, replan_reason="")
+
+    async def _handle_hitl_node(self, *, node: PlanNode, run_id: str) -> NodeExecutionResult:
+        self._emit(
+            NodeStatusEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                node_id=node.node_id,
+                role=node.role.value,
+                status="running",
+            )
+        )
+        context_summary = ", ".join(
+            f"{record.artifact_type}:{record.artifact_id}"
+            for record in self._artifact_store.list_all()
+        )
+        question = node.hitl_question or node.goal
+        self._emit(
+            HitlRequestEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                node_id=node.node_id,
+                question=question,
+                context=context_summary,
+            )
+        )
+        self._hitl_event = asyncio.Event()
+        self._hitl_response = ""
+        await self._hitl_event.wait()
+        self._hitl_event = None
+        response = self._hitl_response
+
+        artifact = make_artifact(
+            node_id=node.node_id,
+            artifact_type="UserGuidance",
+            producer_role=RoleId.hitl,
+            producer_skill="hitl",
+            payload={"question": question, "response": response},
+        )
+        self._artifact_store.save(artifact)
+        self._emit(
+            ArtifactEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                artifact_id=artifact.artifact_id,
+                artifact_type=artifact.artifact_type,
+                producer_role=artifact.producer_role.value,
+                producer_skill=artifact.producer_skill,
+            )
+        )
+        self._emit(
+            HitlResponseEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                node_id=node.node_id,
+                response=response,
+            )
+        )
+        observation = Observation(
+            node_id=node.node_id,
+            role=node.role,
+            status=NodeStatus.success,
+            error_type=ErrorType.none,
+            what_happened=f"Human provided guidance: {response[:120]}",
+            what_was_tried=["hitl:pause_and_resume"],
+            suggested_options=[],
+            recommended_action="",
+            produced_artifacts=[f"artifact:UserGuidance:{artifact.artifact_id}"],
+            confidence=1.0,
+            duration_ms=0.0,
+        )
+        self._observation_store.save(observation)
+        self._emit(
+            ObservationEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                observation=observation.model_dump(mode="json"),
+            )
+        )
+        self._emit(
+            NodeStatusEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                node_id=node.node_id,
+                role=node.role.value,
+                status="success",
+            )
+        )
+        return NodeExecutionResult(
+            node=node,
+            skill_id="hitl",
+            observation=observation,
+            artifacts=[artifact],
+            should_replan=False,
+        )
 
     def _should_terminate_after_final_artifact(
         self,

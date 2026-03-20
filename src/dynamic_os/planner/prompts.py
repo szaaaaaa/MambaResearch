@@ -39,7 +39,7 @@ for the next segment.
 """
 
 
-PLANNER_SYSTEM_PROMPT = """You are the planner for a research operating system with six execution roles.
+PLANNER_SYSTEM_PROMPT = """You are the planner for a research operating system with six execution roles plus a special hitl (human-in-the-loop) node type.
 
 Your job: given a user request and current execution state, produce a small
 local execution DAG, typically 2-4 nodes. You do NOT plan the full run - only the next
@@ -86,6 +86,11 @@ meaningful segment.
 12. Only activate experimenter, analyst, writer, or reviewer when node.inputs directly include the required artifact types from the routing policy.
 13. Keep node.goal, each success_criteria item, and each planner_notes item short and concrete. Avoid long paragraphs or repeated text.
 14. Keep the whole JSON compact, usually under 1500 characters unless the schema truly requires more.
+15. HITL (human-in-the-loop) nodes: use role="hitl", allowed_skills=["hitl"], expected_outputs=["UserGuidance"].
+    Set hitl_question to the specific question you want the human to answer.
+    Use hitl nodes when: research direction is unclear and needs human validation, multiple equally valid paths exist,
+    or a critical decision requires human judgment before proceeding.
+    A UserGuidance artifact from a hitl node can be referenced as input by subsequent nodes.
 """
 
 
@@ -94,15 +99,16 @@ def planner_output_contract() -> str:
         "Top-level keys only: "
         "[run_id, planning_iteration, horizon, nodes, edges, planner_notes, terminate]. "
         "Each node keys only: "
-        "[node_id, role, goal, inputs, allowed_skills, success_criteria, failure_policy, expected_outputs, needs_review]. "
+        "[node_id, role, goal, inputs, allowed_skills, success_criteria, failure_policy, expected_outputs, needs_review, hitl_question]. "
         "Forbidden legacy node keys: [agent_id, agent_name, skill, planner_notes]. "
         "node_id must match ^node_[a-z0-9_]+$. "
         "inputs must be a list of artifact refs, never an object. "
         "success_criteria must be a list of strings, never a single string. "
         "planner_notes exists only at the top level and must be a list of strings. "
         "failure_policy must be one of [replan, skip, abort]. "
+        "HITL node: role=hitl, allowed_skills=[hitl], expected_outputs=[UserGuidance], hitl_question=<question for human>. "
         "Example skeleton: "
-        '{"run_id":"<same run_id>","planning_iteration":0,"horizon":1,"nodes":[{"node_id":"node_plan_1","role":"conductor","goal":"...","inputs":[],"allowed_skills":["plan_research"],"success_criteria":["..."],"failure_policy":"replan","expected_outputs":["TopicBrief","SearchPlan"],"needs_review":false}],"edges":[],"planner_notes":["..."],"terminate":false}'
+        '{"run_id":"<same run_id>","planning_iteration":0,"horizon":1,"nodes":[{"node_id":"node_plan_1","role":"conductor","goal":"...","inputs":[],"allowed_skills":["plan_research"],"success_criteria":["..."],"failure_policy":"replan","expected_outputs":["TopicBrief","SearchPlan"],"needs_review":false,"hitl_question":""}],"edges":[],"planner_notes":["..."],"terminate":false}'
     )
 
 

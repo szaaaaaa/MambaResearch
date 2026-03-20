@@ -196,6 +196,12 @@ class DynamicResearchRuntime:
         self._output_root = resolved_output_root
         self._event_sink = event_sink
         self._artifact_store: InMemoryArtifactStore | None = None
+        self._active_executor: Executor | None = None
+
+    def submit_hitl_response(self, response: str) -> None:
+        if self._active_executor is None:
+            raise RuntimeError("no active executor for this run")
+        self._active_executor.submit_hitl_response(response)
 
     @property
     def output_root(self) -> Path:
@@ -299,6 +305,7 @@ class DynamicResearchRuntime:
             policy=policy,
             event_sink=emit,
         )
+        self._active_executor = executor
 
         status = "completed"
         try:
@@ -331,6 +338,7 @@ class DynamicResearchRuntime:
             if result.termination_reason not in {"planner_terminated", "final_artifact_produced"}:
                 status = "failed"
         finally:
+            self._active_executor = None
             await mcp_runtime.close()
 
         artifacts = artifact_store.list_all()
