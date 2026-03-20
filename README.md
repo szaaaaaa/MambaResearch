@@ -126,21 +126,74 @@ cd ..
 
 ### 3. 配置 API Key
 
-至少需要一个 LLM provider 的 API key。在项目根目录创建 `.env` 文件：
+至少需要一个 LLM provider 的 API key。有两种配置方式：
+
+#### 方式 A：`.env` 文件（推荐，Docker 用户必选）
+
+在项目根目录创建 `.env` 文件（可以从 `.env.example` 复制）：
 
 ```bash
-# 推荐：OpenRouter（统一入口，支持多种模型）
-OPENROUTER_API_KEY="sk-or-v1-..."
-
-# 或者直接使用各供应商的 key
-OPENAI_API_KEY="sk-..."
-GEMINI_API_KEY="AIza..."
-
-# 搜索增强（可选，但推荐）
-SERPAPI_API_KEY="..."
+cp .env.example .env
 ```
 
-也可以设置为系统环境变量，系统会自动检测。
+编辑 `.env`，填入你的 key：
+
+```bash
+# 推荐：OpenRouter（统一入口，一个 key 可调用 OpenAI/Claude/Gemini 等多种模型）
+OPENROUTER_API_KEY="sk-or-v1-你的key"
+
+# 或者直接使用各供应商的 key
+OPENAI_API_KEY="sk-你的key"
+GEMINI_API_KEY="AIza你的key"
+
+# 搜索增强（可选，但推荐配置 SerpAPI 以获得更好的搜索结果）
+SERPAPI_API_KEY="你的key"
+```
+
+#### 方式 B：系统环境变量
+
+系统会自动检测环境变量中的 API key。适合不想把 key 写入文件的用户。
+
+**Windows（PowerShell）**：
+
+```powershell
+# 临时设置（仅当前终端有效）
+$env:OPENROUTER_API_KEY = "sk-or-v1-你的key"
+$env:GEMINI_API_KEY = "AIza你的key"
+
+# 永久设置（写入用户环境变量，所有新终端生效）
+[System.Environment]::SetEnvironmentVariable("OPENROUTER_API_KEY", "sk-or-v1-你的key", "User")
+[System.Environment]::SetEnvironmentVariable("GEMINI_API_KEY", "AIza你的key", "User")
+```
+
+也可以通过 Windows 设置界面操作：`设置 → 系统 → 关于 → 高级系统设置 → 环境变量 → 用户变量 → 新建`。
+
+**macOS / Linux（Bash/Zsh）**：
+
+```bash
+# 临时设置（仅当前终端有效）
+export OPENROUTER_API_KEY="sk-or-v1-你的key"
+export GEMINI_API_KEY="AIza你的key"
+
+# 永久设置（写入 shell 配置文件）
+echo 'export OPENROUTER_API_KEY="sk-or-v1-你的key"' >> ~/.bashrc
+echo 'export GEMINI_API_KEY="AIza你的key"' >> ~/.bashrc
+source ~/.bashrc
+# 如果用 zsh，把 ~/.bashrc 换成 ~/.zshrc
+```
+
+#### 如何获取 API Key
+
+| 供应商 | 获取地址 | 说明 |
+|--------|---------|------|
+| OpenRouter | https://openrouter.ai/keys | 推荐，一个 key 访问所有主流模型 |
+| OpenAI | https://platform.openai.com/api-keys | GPT-4o / GPT-5.4 |
+| Google | https://aistudio.google.com/apikey | Gemini 系列 |
+| SerpAPI | https://serpapi.com/manage-api-key | 搜索增强（可选） |
+
+#### 验证配置
+
+启动系统后，在前端 `设置 → 模型` 页面，点击 **「检测凭证」** 按钮，系统会显示哪些 API key 已成功检测到。
 
 ### 4. 启动
 
