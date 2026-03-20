@@ -36,4 +36,5 @@ frontend/dist/
 *.db
 *.bin
 
-.claude
+# Claude Code — exclude entire .claude/ dir (worktrees, hooks, local state)
+.claude/
