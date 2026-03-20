@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from src.common.config_utils import get_by_dotted, load_yaml
+from src.common.config_utils import get_by_dotted, load_yaml, read_env_file
 from src.dynamic_os.artifact_refs import artifact_ref_for_record
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.observation import NodeStatus, Observation
@@ -26,20 +26,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_PATH = _REPO_ROOT / "configs" / "agent.yaml"
 _ENV_PATH = _REPO_ROOT / ".env"
 
-
-def _read_env_file() -> dict[str, str]:
-    if not _ENV_PATH.exists():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        parsed_value = value.strip().strip('"').strip("'")
-        if parsed_value:
-            values[key.strip()] = parsed_value
-    return values
 
 EventSink = Callable[[dict[str, Any]], None]
 
@@ -213,7 +199,7 @@ class DynamicResearchRuntime:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         config = load_yaml(_CONFIG_PATH)
-        saved_env = _read_env_file()
+        saved_env = read_env_file(_ENV_PATH)
         artifact_store = InMemoryArtifactStore()
         self._artifact_store = artifact_store
         observation_store = InMemoryObservationStore()

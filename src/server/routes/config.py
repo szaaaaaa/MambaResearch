@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
+from src.common.config_utils import read_env_file
 from src.common.openai_codex import (
     complete_openai_codex_login,
     logout_openai_codex,
@@ -95,19 +96,7 @@ async def save_config(request: Request):
 
 
 def _read_env_file() -> dict[str, str]:
-    if not ENV_PATH.exists():
-        return {}
-
-    values: dict[str, str] = {}
-    for raw_line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        parsed_value = value.strip().strip('"').strip("'")
-        if parsed_value:
-            values[key.strip()] = parsed_value
-    return values
+    return read_env_file(ENV_PATH)
 
 
 def _write_env_file(values: dict[str, str]) -> None:
