@@ -56,6 +56,7 @@ class InMemoryArtifactStore:
             {
                 "artifact_id": record.artifact_id,
                 "artifact_type": record.artifact_type,
+                "artifact_ref": f"artifact:{record.artifact_type}:{record.artifact_id}",
                 "producer_role": record.producer_role.value,
             }
             for record in self._records.values()
