@@ -10,12 +10,18 @@ env/
 # Secrets
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 
 # IDE
 .vscode/
 .idea/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
 
 # Runtime data
 data/

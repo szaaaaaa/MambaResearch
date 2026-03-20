@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from src.common.config_utils import get_by_dotted, load_yaml
+from src.common.config_utils import get_by_dotted, load_yaml, read_env_file
 from src.dynamic_os.artifact_refs import artifact_ref_for_record
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.observation import NodeStatus, Observation
@@ -26,20 +26,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_PATH = _REPO_ROOT / "configs" / "agent.yaml"
 _ENV_PATH = _REPO_ROOT / ".env"
 
-
-def _read_env_file() -> dict[str, str]:
-    if not _ENV_PATH.exists():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        parsed_value = value.strip().strip('"').strip("'")
-        if parsed_value:
-            values[key.strip()] = parsed_value
-    return values
 
 EventSink = Callable[[dict[str, Any]], None]
 
@@ -62,6 +48,72 @@ def _is_within_root(path: Path, root: Path) -> bool:
 
 def _artifact_ref(artifact: ArtifactRecord) -> str:
     return artifact_ref_for_record(artifact)
+
+
+def _build_bib_from_artifacts(artifacts: list) -> str:
+    import re as _re
+
+    bib_lines: list[str] = []
+    seen_keys: set[str] = set()
+    seen_papers: set[str] = set()
+    index = 0
+    for a in artifacts:
+        if a.artifact_type != "SourceSet":
+            continue
+        for source in a.payload.get("sources", []):
+            title = str(source.get("title", "")).strip()
+            if not title:
+                continue
+            paper_id = str(source.get("paper_id", "")).strip()
+            dedup_id = paper_id or title.lower()
+            if dedup_id in seen_papers:
+                continue
+            seen_papers.add(dedup_id)
+            if paper_id:
+                key = _re.sub(r"[^a-zA-Z0-9]", "", paper_id.split(":")[-1].split("/")[-1])
+            else:
+                words = _re.findall(r"[a-zA-Z]+", title)
+                key = (words[0].lower() + str(index)) if words else f"paper{index}"
+            if not key or key in seen_keys:
+                key = f"{key or 'paper'}{index}"
+            seen_keys.add(key)
+            authors = " and ".join(str(a_) for a_ in source.get("authors", [])) or "Unknown"
+            year = str(source.get("year", "")).strip() or "n.d."
+            url = str(source.get("url", source.get("pdf_url", ""))).strip()
+            venue = f"arXiv preprint {paper_id}" if "arxiv" in paper_id.lower() else (url or "Online")
+            bib_lines.append(
+                f"@article{{{key},\n"
+                f"  author = {{{authors}}},\n"
+                f"  title = {{{{{title}}}}},\n"
+                f"  journal = {{{venue}}},\n"
+                f"  year = {{{year}}},\n"
+                f"}}\n"
+            )
+            index += 1
+    return "\n".join(bib_lines)
+
+
+def _compile_latex_report(report_text: str, run_dir: Path, bib_content: str = "") -> None:
+    if not report_text.strip():
+        return
+    tex_content = report_text.strip()
+    if not tex_content.startswith("\\documentclass"):
+        return
+    tex_path = run_dir / "research_report.tex"
+    tex_path.write_text(tex_content, encoding="utf-8")
+    if bib_content.strip():
+        (run_dir / "references.bib").write_text(bib_content, encoding="utf-8")
+    try:
+        import subprocess
+
+        run_args = {"cwd": str(run_dir), "capture_output": True, "timeout": 60}
+        subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_path.name], **run_args)
+        if (run_dir / "references.bib").exists():
+            subprocess.run(["bibtex", "research_report"], **run_args)
+        subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_path.name], **run_args)
+        subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_path.name], **run_args)
+    except Exception:
+        pass
 
 
 def _report_text(
@@ -213,7 +265,7 @@ class DynamicResearchRuntime:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         config = load_yaml(_CONFIG_PATH)
-        saved_env = _read_env_file()
+        saved_env = read_env_file(_ENV_PATH)
         artifact_store = InMemoryArtifactStore()
         self._artifact_store = artifact_store
         observation_store = InMemoryObservationStore()
@@ -368,6 +420,8 @@ class DynamicResearchRuntime:
                 "observations": [observation.model_dump(mode="json") for observation in observations[-20:]],
             }
             (run_dir / "research_report.md").write_text(report_text, encoding="utf-8")
+            bib_content = _build_bib_from_artifacts(artifacts)
+            _compile_latex_report(report_text, run_dir, bib_content=bib_content)
             (run_dir / "research_state.json").write_text(json.dumps(state_payload, ensure_ascii=False, indent=2), encoding="utf-8")
             (run_dir / "artifacts.json").write_text(json.dumps(artifact_summary, ensure_ascii=False, indent=2), encoding="utf-8")
             artifacts_full = [artifact.model_dump(mode="json") for artifact in artifacts]

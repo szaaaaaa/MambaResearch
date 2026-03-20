@@ -3,7 +3,7 @@ import { useAppContext } from '../../../store';
 import { Button, Card, Input, Textarea, Toggle } from '../../ui';
 
 export const SecuritySection: React.FC = () => {
-  const { state, updateProjectConfig } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
   const { projectConfig } = state;
 
   return (
@@ -142,6 +142,9 @@ export const SecuritySection: React.FC = () => {
               </Button>
             </div>
           ) : null}
+        </div>
+        <div className="mt-5 flex justify-end">
+          <Button onClick={() => void saveProjectConfig()}>保存安全设置</Button>
         </div>
       </Card>
     </div>

@@ -11,6 +11,12 @@ from app import app
 from src.server.routes import runs as runs_route
 
 
+@pytest.fixture(autouse=True)
+def _patch_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure _get_outputs_dir() ignores the real agent.yaml and falls back to ROOT / 'outputs'."""
+    monkeypatch.setattr(runs_route, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+
+
 # ---------------------------------------------------------------------------
 # GET /api/runs
 # ---------------------------------------------------------------------------

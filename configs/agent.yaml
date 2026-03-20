@@ -12,7 +12,7 @@ providers:
     web_order:
     - google_cse
     - bing
-    query_all_academic: false
+    query_all_academic: true
     query_all_web: false
     circuit_breaker:
       enabled: true
@@ -69,19 +69,19 @@ llm:
       model: google/gemini-2.0-flash-001
     researcher:
       provider: openrouter
-      model: google/gemini-2.0-flash-001
+      model: google/gemini-3-pro-preview
     experimenter:
       provider: openrouter
       model: google/gemini-2.0-flash-001
     analyst:
       provider: openrouter
-      model: google/gemini-2.0-flash-001
+      model: google/gemini-3-pro-preview
     writer:
       provider: openrouter
-      model: google/gemini-2.0-flash-001
+      model: openai/gpt-5.4
     reviewer:
       provider: openrouter
-      model: google/gemini-2.0-flash-001
+      model: google/gemini-3-pro-preview
 auth:
   openai_codex:
     default_profile: default
@@ -91,7 +91,7 @@ auth:
     require_explicit_switch: true
 retrieval:
   openai_api_key_env: OPENAI_API_KEY
-  runtime_mode: standard
+  runtime_mode: lite
   embedding_backend: openai_embedding
   embedding_model: text-embedding-3-small
   remote_embedding_model: text-embedding-3-small
@@ -104,23 +104,23 @@ retrieval:
 sources:
   arxiv:
     enabled: true
-    max_results_per_query: 10
+    max_results_per_query: 30
     download_pdf: true
   openalex:
     enabled: false
-    max_results_per_query: 10
+    max_results_per_query: 20
   google_scholar:
     enabled: false
-    max_results_per_query: 10
+    max_results_per_query: 20
   semantic_scholar:
     enabled: true
-    max_results_per_query: 10
+    max_results_per_query: 30
     polite_delay_sec: 1
     max_retries: 3
     retry_backoff_sec: 2
   web:
     enabled: true
-    max_results_per_query: 10
+    max_results_per_query: 20
   google_cse:
     enabled: false
   bing:
@@ -150,16 +150,16 @@ index:
   overlap: 200
 agent:
   seed: 42
-  max_iterations: 5
-  papers_per_query: 5
+  max_iterations: 8
+  papers_per_query: 20
   max_queries_per_iteration: 3
   top_k_for_analysis: 10
   language: zh
-  report_max_sources: 20
+  report_max_sources: 40
   budget:
     max_research_questions: 3
     max_sections: 5
-    max_references: 30
+    max_references: 50
   source_ranking:
     core_min_a_ratio: 0.5
     background_max_c: 0

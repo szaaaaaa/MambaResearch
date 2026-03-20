@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  core-ci:
+  backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,4 +30,27 @@ jobs:
             tests/test_dynamic_os_phase1.py \
             tests/test_dynamic_os_phase2.py \
             tests/test_dynamic_os_phase3.py \
+            tests/test_dynamic_os_hitl.py \
+            tests/test_server_runs_history.py \
             -p no:cacheprovider
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install & Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build

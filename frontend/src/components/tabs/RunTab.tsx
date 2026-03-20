@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, ArrowUpRight, Bot, ChevronRight, LoaderCircle, SendHorizonal, Square, User2, X } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, Bot, ChevronRight, Download, LoaderCircle, SendHorizonal, Square, User2, X } from 'lucide-react';
 import { useAppContext, API_BASE } from '../../store';
 import { NodeStatusMap, RoutePlan, RunArtifact } from '../../types';
 import { Button } from '../ui';
@@ -457,15 +457,16 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
 
               {activeConversation.artifacts.length > 0 ? (
                 <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">产物</p>
-                      <h3 className="mt-2 text-base font-semibold text-slate-900">产出面板</h3>
-                    </div>
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                      {activeConversation.artifacts.length} 项
-                    </span>
-                  </div>
+                  <details className="group" open>
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">产物</p>
+                        <h3 className="mt-2 text-base font-semibold text-slate-900">产出面板</h3>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 transition group-open:bg-slate-900 group-open:text-white">
+                        {activeConversation.artifacts.length} 项
+                      </span>
+                    </summary>
 
                   <div className="mt-5 grid gap-3 md:grid-cols-2">
                     {activeConversation.artifacts.map((artifact) => (
@@ -496,6 +497,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                       </button>
                     ))}
                   </div>
+                  </details>
                 </section>
               ) : null}
 
@@ -509,9 +511,10 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
 
           {hasConversation ? (
             <div className={densityClasses.gap}>
-              {visibleMessages.map((message) => {
+              {visibleMessages.map((message, messageIndex) => {
                 const isUser = message.role === 'user';
                 const isAssistant = message.role === 'assistant';
+                const isLastAssistant = isAssistant && !visibleMessages.slice(messageIndex + 1).some((m) => m.role === 'assistant');
                 return (
                   <div key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'} ${densityClasses.padding}`}>
                     <div className={`flex max-w-[92%] gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -536,6 +539,28 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                             </span>
                           ) : null}
                         </div>
+                        {isLastAssistant && !message.streaming && message.content && activeConversation.runId && activeConversation.status !== 'Running' ? (
+                          <div className="mt-2 flex gap-2">
+                            <a
+                              href={`${API_BASE}/api/runs/${activeConversation.runId}/report.pdf`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              PDF
+                            </a>
+                            <a
+                              href={`${API_BASE}/api/runs/${activeConversation.runId}/latex.zip`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              LaTeX
+                            </a>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>

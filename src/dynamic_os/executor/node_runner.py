@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -62,7 +63,7 @@ class NodeRunner:
         self._event_sink = event_sink
         self._config = dict(config or {})
 
-    async def run_node(self, *, run_id: str, node: PlanNode) -> NodeExecutionResult:
+    async def run_node(self, *, run_id: str, node: PlanNode, user_request: str = "") -> NodeExecutionResult:
         self._policy.check_budget()
         self._policy.record_node_execution()
         self._emit(
@@ -147,6 +148,7 @@ class NodeRunner:
                 run_id=run_id,
                 node=node,
                 input_artifacts=input_artifacts,
+                user_request=user_request,
             )
             artifacts = list(output.output_artifacts)
             for artifact in artifacts:
@@ -315,13 +317,18 @@ class NodeRunner:
         run_id: str,
         node: PlanNode,
         input_artifacts: list[ArtifactRecord],
+        user_request: str = "",
     ) -> SkillOutput:
+        skill_config = dict(self._config)
+        if loaded_skill.spec.id == "draft_report":
+            skill_config["_cite_keys_map"] = self._collect_cite_keys_map()
         ctx = SkillContext(
             skill_id=loaded_skill.spec.id,
             role_id=node.role.value,
             run_id=run_id,
             node_id=node.node_id,
             goal=node.goal,
+            user_request=user_request,
             input_artifacts=input_artifacts,
             tools=self._tools.with_context(
                 run_id=run_id,
@@ -329,7 +336,7 @@ class NodeRunner:
                 skill_id=loaded_skill.spec.id,
                 role_id=node.role.value,
             ).with_permissions(loaded_skill.spec.permissions).with_allowed_tools(loaded_skill.spec.allowed_tools),
-            config=self._config,
+            config=skill_config,
             timeout_sec=loaded_skill.spec.timeout_sec,
         )
         return await loaded_skill.runner(ctx)
@@ -378,6 +385,35 @@ class NodeRunner:
             confidence=max(0.0, min(1.0, confidence_value)),
             duration_ms=duration_ms,
         )
+
+    def _collect_cite_keys_map(self) -> dict[str, str]:
+        key_map: dict[str, str] = {}
+        seen_keys: set[str] = set()
+        seen_papers: set[str] = set()
+        index = 0
+        for record in self._artifact_store.list_all():
+            if record.artifact_type != "SourceSet":
+                continue
+            for source in record.payload.get("sources", []):
+                title = str(source.get("title", "")).strip()
+                if not title:
+                    continue
+                paper_id = str(source.get("paper_id", "")).strip()
+                dedup_id = paper_id or title.lower()
+                if dedup_id in seen_papers:
+                    continue
+                seen_papers.add(dedup_id)
+                if paper_id:
+                    key = re.sub(r"[^a-zA-Z0-9]", "", paper_id.split(":")[-1].split("/")[-1])
+                else:
+                    words = re.findall(r"[a-zA-Z]+", title)
+                    key = (words[0].lower() + str(index)) if words else f"paper{index}"
+                if not key or key in seen_keys:
+                    key = f"{key or 'paper'}{index}"
+                seen_keys.add(key)
+                key_map[key] = title
+                index += 1
+        return key_map
 
     def _build_error_observation(
         self,

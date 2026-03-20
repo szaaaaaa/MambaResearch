@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppContext } from '../../../store';
-import { Card, Input, Select, Toggle } from '../../ui';
+import { Button, Card, Input, Select, Toggle } from '../../ui';
 
 function getRuntimeModeLabel(runtimeMode: string): string {
   if (runtimeMode === 'dynamic-os') {
@@ -22,7 +22,7 @@ function getRuntimeModeLabel(runtimeMode: string): string {
 }
 
 export const GeneralSection: React.FC = () => {
-  const { state, updateProjectConfig, toggleAdvancedMode } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig, toggleAdvancedMode } = useAppContext();
   const { projectConfig, runtimeMode, isAdvancedMode } = state;
 
   return (
@@ -56,6 +56,9 @@ export const GeneralSection: React.FC = () => {
             value={projectConfig.paths.outputs_dir}
             onChange={(event) => updateProjectConfig('paths.outputs_dir', event.target.value)}
           />
+        </div>
+        <div className="mt-5 flex justify-end">
+          <Button onClick={() => void saveProjectConfig()}>保存常规设置</Button>
         </div>
       </Card>
 

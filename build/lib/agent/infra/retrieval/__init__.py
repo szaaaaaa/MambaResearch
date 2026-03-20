@@ -1,1 +1,0 @@
-"""Retrieval infra adapters."""

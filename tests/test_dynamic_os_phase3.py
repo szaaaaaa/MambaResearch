@@ -1689,7 +1689,7 @@ def test_search_papers_produces_empty_sourceset_with_warnings() -> None:
         async def search(self, query: str, *, source: str = "auto", max_results: int = 10):
             assert query == "retrieval planning"
             assert source == "auto"
-            assert max_results == 5
+            assert max_results == 10
             return {"results": [], "warnings": ["arxiv: feedparser is required for arXiv fetching"]}
 
     ctx = SkillContext(
@@ -1763,7 +1763,7 @@ def test_search_papers_merges_queries_and_uses_route_sources() -> None:
     output = asyncio.run(search_papers_run(ctx))
 
     assert output.success is True
-    assert calls == [("q1", "academic", 5), ("q2", "web", 5)]
+    assert calls == [("q1", "academic", 10), ("q2", "web", 10)]
     assert output.output_artifacts[0].payload["result_count"] == 2
     assert output.output_artifacts[0].payload["queries"] == ["q1", "q2"]
 

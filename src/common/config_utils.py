@@ -77,3 +77,19 @@ def as_bool(v: Any, default: bool) -> bool:
     if s in {"0", "false", "no", "n", "off"}:
         return False
     return default
+
+
+def read_env_file(env_path: Path) -> Dict[str, str]:
+    """Parse a dotenv-style file into a dict, skipping comments and blank lines."""
+    if not env_path.exists():
+        return {}
+    values: Dict[str, str] = {}
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        parsed_value = value.strip().strip('"').strip("'")
+        if parsed_value:
+            values[key.strip()] = parsed_value
+    return values

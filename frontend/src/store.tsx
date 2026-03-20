@@ -1430,7 +1430,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     updateSession(conversationId, (session) => {
-      const nextEvents = [...session.runEvents, event].slice(-40);
+      if (session.runEvents.some((existing) => existing.id === event.id)) {
+        return session;
+      }
+      const nextEvents = [...session.runEvents, event].slice(-80);
       const nextNodeStatus =
         event.type === 'node_status' && event.nodeId ? { ...session.nodeStatus, [event.nodeId]: event.status || 'pending' } : session.nodeStatus;
       const nextRoutePlan =

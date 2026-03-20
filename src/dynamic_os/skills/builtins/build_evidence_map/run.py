@@ -18,7 +18,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
             {
                 "role": "user",
                 "content": (
-                    f"Goal: {ctx.goal}\n\n"
+                    f"Goal: {ctx.user_request or ctx.goal}\n\n"
                     f"Evidence items:\n{_render_items(evidence_items)}\n\n"
                     f"Known gaps:\n{_render_lines(gaps)}"
                 ),

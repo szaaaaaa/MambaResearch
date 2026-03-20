@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.common.openai_codex import ensure_openai_codex_auth
@@ -64,12 +64,10 @@ def _preflight_run_config() -> list[str]:
 def _resolve_output_dir(payload: dict[str, Any]) -> Path:
     run_overrides = payload.get("runOverrides")
     if not isinstance(run_overrides, dict):
-        return (ROOT / "outputs").resolve()
+        return _get_outputs_dir()
     raw_path = str(run_overrides.get("output_dir", "") or "").strip() or "outputs"
-    output_dir = Path(raw_path)
-    if not output_dir.is_absolute():
-        output_dir = (ROOT / output_dir).resolve()
-    return output_dir
+    config = load_yaml(CONFIG_PATH) if CONFIG_PATH.exists() else {}
+    return resolve_path(ROOT, raw_path, config if isinstance(config, dict) else {})
 
 
 def _resolve_user_request(payload: dict[str, Any]) -> str:
@@ -411,3 +409,81 @@ async def get_run_artifact(run_id: str, artifact_id: str):
         raise HTTPException(status_code=404, detail=f"artifact {artifact_id!r} not found in run {run_id!r}")
 
     raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+
+
+@router.get("/api/runs/{run_id}/report.pdf")
+async def get_run_report_pdf(run_id: str):
+    run_dir = _get_outputs_dir() / run_id
+    pdf_path = run_dir / "research_report.pdf"
+    if not pdf_path.exists():
+        tex_path = run_dir / "research_report.tex"
+        if tex_path.exists():
+            _ensure_bib_on_disk(run_dir)
+            from src.dynamic_os.runtime import _compile_latex_report
+
+            _compile_latex_report(tex_path.read_text(encoding="utf-8"), run_dir)
+    if pdf_path.exists():
+        return FileResponse(str(pdf_path), media_type="application/pdf", filename=f"{run_id}_report.pdf")
+    raise HTTPException(status_code=404, detail=f"PDF report not found for run {run_id!r}")
+
+
+@router.get("/api/runs/{run_id}/report.tex")
+async def get_run_report_tex(run_id: str):
+    tex_path = _get_outputs_dir() / run_id / "research_report.tex"
+    if tex_path.exists():
+        return FileResponse(str(tex_path), media_type="application/x-tex", filename=f"{run_id}_report.tex")
+    raise HTTPException(status_code=404, detail=f"LaTeX source not found for run {run_id!r}")
+
+
+@router.get("/api/runs/{run_id}/references.bib")
+async def get_run_references_bib(run_id: str):
+    run_dir = _get_outputs_dir() / run_id
+    bib_path = run_dir / "references.bib"
+    if not bib_path.exists():
+        _ensure_bib_on_disk(run_dir)
+    if bib_path.exists():
+        return FileResponse(str(bib_path), media_type="application/x-bibtex", filename=f"references.bib")
+    raise HTTPException(status_code=404, detail=f"BibTeX file not found for run {run_id!r}")
+
+
+@router.get("/api/runs/{run_id}/latex.zip")
+async def get_run_latex_zip(run_id: str):
+    import io
+    import zipfile
+
+    run_dir = _get_outputs_dir() / run_id
+    tex_path = run_dir / "research_report.tex"
+    bib_path = run_dir / "references.bib"
+    if not tex_path.exists():
+        raise HTTPException(status_code=404, detail=f"LaTeX source not found for run {run_id!r}")
+    if not bib_path.exists():
+        _ensure_bib_on_disk(run_dir)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(str(tex_path), "research_report.tex")
+        if bib_path.exists():
+            zf.write(str(bib_path), "references.bib")
+    buf.seek(0)
+    from fastapi.responses import Response
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{run_id}_latex.zip"'},
+    )
+
+
+def _ensure_bib_on_disk(run_dir: Path) -> None:
+    bib_path = run_dir / "references.bib"
+    if bib_path.exists():
+        return
+    artifacts_path = run_dir / "artifacts_full.json"
+    if not artifacts_path.exists():
+        return
+    from src.dynamic_os.contracts.artifact import ArtifactRecord
+    from src.dynamic_os.runtime import _build_bib_from_artifacts
+
+    records = [ArtifactRecord(**d) for d in json.loads(artifacts_path.read_text(encoding="utf-8"))]
+    bib_content = _build_bib_from_artifacts(records)
+    if bib_content.strip():
+        bib_path.write_text(bib_content, encoding="utf-8")

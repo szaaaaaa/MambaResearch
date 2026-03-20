@@ -76,7 +76,7 @@ class _FakeNodeRunner:
         self._observation_store = observation_store
         self._policy = _make_policy()
 
-    async def run_node(self, *, run_id: str, node: PlanNode):
+    async def run_node(self, *, run_id: str, node: PlanNode, user_request: str = ""):
         from src.dynamic_os.contracts.observation import ErrorType, Observation
         artifact = ArtifactRecord(
             artifact_id=f"{node.node_id}_source_set",

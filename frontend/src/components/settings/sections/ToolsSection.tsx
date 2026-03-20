@@ -3,7 +3,7 @@ import { useAppContext } from '../../../store';
 import { Button, Card, Select, Toggle } from '../../ui';
 
 export const ToolsSection: React.FC = () => {
-  const { state, updateProjectConfig } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
   const { projectConfig } = state;
   const runtimeModeValue =
     projectConfig.retrieval.runtime_mode === 'lite' ||
@@ -91,6 +91,9 @@ export const ToolsSection: React.FC = () => {
             checked={projectConfig.fetch.download_pdf}
             onChange={(checked) => updateProjectConfig('fetch.download_pdf', checked)}
           />
+        </div>
+        <div className="mt-5 flex justify-end">
+          <Button onClick={() => void saveProjectConfig()}>保存工具设置</Button>
         </div>
       </Card>
     </div>
