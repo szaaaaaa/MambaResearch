@@ -91,15 +91,16 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
 
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">局部执行图</p>
-          <h3 className="mt-2 text-base font-semibold text-slate-900">动态执行图</h3>
-        </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-          第 {routePlan.planning_iteration} 轮 · {routePlan.horizon} 个节点
-        </span>
-      </div>
+      <details className="group" open>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">局部执行图</p>
+            <h3 className="mt-2 text-base font-semibold text-slate-900">动态执行图</h3>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 transition group-open:bg-slate-900 group-open:text-white">
+            第 {routePlan.planning_iteration} 轮 · {routePlan.horizon} 个节点
+          </span>
+        </summary>
 
       <div className="mt-5 overflow-x-auto pb-1">
         <div className="relative" style={{ width, height }}>
@@ -194,6 +195,7 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
           </div>
         </div>
       ) : null}
+      </details>
     </section>
   );
 };

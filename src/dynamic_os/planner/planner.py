@@ -9,12 +9,13 @@ from pydantic import ValidationError
 
 from src.dynamic_os.artifact_refs import (
     artifact_ref,
+    artifact_ref_for,
     artifact_ref_for_record,
     artifact_type_suffix,
     parse_artifact_ref,
     predicted_output_refs,
 )
-from src.dynamic_os.contracts.route_plan import FailurePolicy, PlanNode, RoleId, RoutePlan
+from src.dynamic_os.contracts.route_plan import FailurePolicy, PlanEdge, PlanNode, RoleId, RoutePlan
 from src.dynamic_os.planner.prompts import (
     build_planner_messages,
     build_planner_repair_messages,
@@ -357,42 +358,86 @@ class Planner:
                 )
 
         if "SourceSet" not in available_types:
+            search_inputs = self._preferred_inputs(latest_by_type, ["SearchPlan", "TopicBrief"])
+            search_node = self._fallback_node(
+                node_id="node_researcher_search",
+                role=RoleId.researcher,
+                goal="根据检索计划搜集相关资料",
+                inputs=search_inputs,
+                allowed_skills=["search_papers"],
+                success_criteria=["生成 SourceSet"],
+                expected_outputs=["SourceSet"],
+            )
+            loaded_ids = {s.spec.id for s in self._skill_registry.list()}
+            if "extract_notes" in loaded_ids:
+                extract_node = self._fallback_node(
+                    node_id="node_researcher_extract",
+                    role=RoleId.researcher,
+                    goal="从论文集中提取关键笔记",
+                    inputs=[artifact_ref_for(node_id="node_researcher_search", artifact_type="SourceSet")],
+                    allowed_skills=["extract_notes"],
+                    success_criteria=["生成 PaperNotes"],
+                    expected_outputs=["PaperNotes"],
+                )
+                return RoutePlan(
+                    run_id=run_id,
+                    planning_iteration=planning_iteration,
+                    horizon=2,
+                    nodes=[search_node, extract_node],
+                    edges=[PlanEdge(source="node_researcher_search", target="node_researcher_extract")],
+                    planner_notes=notes,
+                    terminate=False,
+                )
             return RoutePlan(
                 run_id=run_id,
                 planning_iteration=planning_iteration,
                 horizon=1,
-                nodes=[
-                    self._fallback_node(
-                        node_id="node_researcher_search",
-                        role=RoleId.researcher,
-                        goal="根据检索计划搜集相关资料",
-                        inputs=self._preferred_inputs(latest_by_type, ["SearchPlan", "TopicBrief"]),
-                        allowed_skills=["search_papers"],
-                        success_criteria=["生成 SourceSet"],
-                        expected_outputs=["SourceSet"],
-                    )
-                ],
+                nodes=[search_node],
                 edges=[],
                 planner_notes=notes,
                 terminate=False,
             )
 
         if "EvidenceMap" not in available_types:
+            evidence_inputs = self._preferred_inputs(latest_by_type, ["PaperNotes", "SourceSet", "ExperimentResults"])
+            evidence_node = self._fallback_node(
+                node_id="node_researcher_evidence",
+                role=RoleId.researcher,
+                goal="综合已有材料构建证据图和研究空白",
+                inputs=evidence_inputs,
+                allowed_skills=["build_evidence_map"],
+                success_criteria=["生成 EvidenceMap 和 GapMap"],
+                expected_outputs=["EvidenceMap", "GapMap"],
+            )
+            loaded_ids = {s.spec.id for s in self._skill_registry.list()}
+            if "draft_report" in loaded_ids:
+                report_inputs = evidence_inputs + [
+                    artifact_ref_for(node_id="node_researcher_evidence", artifact_type="EvidenceMap"),
+                    artifact_ref_for(node_id="node_researcher_evidence", artifact_type="GapMap"),
+                ]
+                report_node = self._fallback_node(
+                    node_id="node_writer_report",
+                    role=RoleId.writer,
+                    goal="根据证据产出最终研究报告",
+                    inputs=report_inputs,
+                    allowed_skills=["draft_report"],
+                    success_criteria=["生成 ResearchReport"],
+                    expected_outputs=["ResearchReport"],
+                )
+                return RoutePlan(
+                    run_id=run_id,
+                    planning_iteration=planning_iteration,
+                    horizon=2,
+                    nodes=[evidence_node, report_node],
+                    edges=[PlanEdge(source="node_researcher_evidence", target="node_writer_report")],
+                    planner_notes=notes,
+                    terminate=False,
+                )
             return RoutePlan(
                 run_id=run_id,
                 planning_iteration=planning_iteration,
                 horizon=1,
-                nodes=[
-                    self._fallback_node(
-                        node_id="node_researcher_evidence",
-                        role=RoleId.researcher,
-                        goal="综合已有材料构建证据图和研究空白",
-                        inputs=self._preferred_inputs(latest_by_type, ["PaperNotes", "SourceSet", "ExperimentResults"]),
-                        allowed_skills=["build_evidence_map"],
-                        success_criteria=["生成 EvidenceMap 和 GapMap"],
-                        expected_outputs=["EvidenceMap", "GapMap"],
-                    )
-                ],
+                nodes=[evidence_node],
                 edges=[],
                 planner_notes=notes,
                 terminate=False,
@@ -410,7 +455,7 @@ class Planner:
                         goal="根据证据产出最终研究报告",
                         inputs=self._preferred_inputs(
                             latest_by_type,
-                            ["EvidenceMap", "GapMap", "ExperimentAnalysis", "PerformanceMetrics"],
+                            ["PaperNotes", "EvidenceMap", "GapMap", "SourceSet", "TopicBrief", "ExperimentAnalysis", "PerformanceMetrics"],
                         ),
                         allowed_skills=["draft_report"],
                         success_criteria=["生成 ResearchReport"],
@@ -454,7 +499,7 @@ class Planner:
                     goal=f"总结并结束当前任务：{user_request[:80]}",
                     inputs=self._preferred_inputs(
                         latest_by_type,
-                        ["ResearchReport", "EvidenceMap", "ExperimentAnalysis", "PerformanceMetrics"],
+                        ["ResearchReport", "PaperNotes", "EvidenceMap", "GapMap", "SourceSet", "TopicBrief", "ExperimentAnalysis", "PerformanceMetrics"],
                     ),
                     allowed_skills=["draft_report"],
                     success_criteria=["确认已有结果足以结束本轮任务"],

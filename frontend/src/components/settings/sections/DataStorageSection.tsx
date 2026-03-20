@@ -1,9 +1,9 @@
 import React from 'react';
 import { useAppContext } from '../../../store';
-import { Card, Input, Select } from '../../ui';
+import { Button, Card, Input, Select } from '../../ui';
 
 export const DataStorageSection: React.FC = () => {
-  const { state, updateProjectConfig } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
   const { projectConfig } = state;
 
   return (
@@ -68,6 +68,9 @@ export const DataStorageSection: React.FC = () => {
             value={projectConfig.metadata_store.sqlite_path}
             onChange={(event) => updateProjectConfig('metadata_store.sqlite_path', event.target.value)}
           />
+        </div>
+        <div className="mt-5 flex justify-end">
+          <Button onClick={() => void saveProjectConfig()}>保存存储设置</Button>
         </div>
       </Card>
     </div>

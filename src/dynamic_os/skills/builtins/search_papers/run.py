@@ -21,14 +21,15 @@ async def run(ctx: SkillContext) -> SkillOutput:
     payload = dict(search_plan.payload)
     queries = [str(item).strip() for item in payload.get("search_queries", []) if str(item).strip()]
     routes = dict(payload.get("query_routes", {})) if isinstance(payload.get("query_routes"), dict) else {}
-    resolved_queries = queries or [ctx.goal]
+    resolved_queries = queries or [ctx.user_request or ctx.goal]
     results: list[dict] = []
     warnings: list[str] = []
     seen: set[str] = set()
 
     for query in resolved_queries:
         route = dict(routes.get(query, {})) if isinstance(routes.get(query), dict) else {}
-        search_result = await ctx.tools.search(query, source=_route_source(route), max_results=5)
+        per_query_max = int(ctx.config.get("agent", {}).get("papers_per_query", 10))
+        search_result = await ctx.tools.search(query, source=_route_source(route), max_results=per_query_max)
         for item in search_result.get("results", []):
             if not isinstance(item, dict):
                 continue

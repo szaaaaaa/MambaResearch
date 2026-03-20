@@ -106,9 +106,12 @@ def planner_output_contract() -> str:
         "success_criteria must be a list of strings, never a single string. "
         "planner_notes exists only at the top level and must be a list of strings. "
         "failure_policy must be one of [replan, skip, abort]. "
+        "Each edge keys only: [source, target, condition]. "
+        "source and target must be valid node_id values. condition must be one of [on_success, on_failure, always] (default: on_success). "
+        "NEVER use source_id, target_id, or artifact_id in edges — these are forbidden. "
         "HITL node: role=hitl, allowed_skills=[hitl], expected_outputs=[UserGuidance], hitl_question=<question for human>. "
         "Example skeleton: "
-        '{"run_id":"<same run_id>","planning_iteration":0,"horizon":1,"nodes":[{"node_id":"node_plan_1","role":"conductor","goal":"...","inputs":[],"allowed_skills":["plan_research"],"success_criteria":["..."],"failure_policy":"replan","expected_outputs":["TopicBrief","SearchPlan"],"needs_review":false,"hitl_question":""}],"edges":[],"planner_notes":["..."],"terminate":false}'
+        '{"run_id":"<same run_id>","planning_iteration":0,"horizon":2,"nodes":[{"node_id":"node_plan_1","role":"conductor","goal":"...","inputs":[],"allowed_skills":["plan_research"],"success_criteria":["..."],"failure_policy":"replan","expected_outputs":["TopicBrief","SearchPlan"],"needs_review":false,"hitl_question":""},{"node_id":"node_search_1","role":"researcher","goal":"...","inputs":["artifact:SearchPlan:node_plan_1"],"allowed_skills":["search_papers"],"success_criteria":["..."],"failure_policy":"replan","expected_outputs":["SourceSet"],"needs_review":false,"hitl_question":""}],"edges":[{"source":"node_plan_1","target":"node_search_1","condition":"on_success"}],"planner_notes":["..."],"terminate":false}'
     )
 
 

@@ -278,7 +278,8 @@ class ConfiguredLLMClient:
                 headers=headers,
                 method="POST",
             )
-            with urllib.request.urlopen(request, timeout=90) as response:
+            request_timeout = 90 if max_tokens <= 4096 else 300
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
 
         try:

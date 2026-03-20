@@ -20,6 +20,7 @@ class SkillContext:
     goal: str
     input_artifacts: list[ArtifactRecord]
     tools: "ToolGateway"
+    user_request: str = ""
     config: dict[str, Any] = field(default_factory=dict)
     timeout_sec: int = 120
 

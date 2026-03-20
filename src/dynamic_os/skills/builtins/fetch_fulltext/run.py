@@ -13,6 +13,19 @@ def _find_artifact(ctx: SkillContext, artifact_type: str) -> ArtifactRecord | No
     return None
 
 
+def _match_retrieved(retrieved: list[dict], source: dict) -> dict | None:
+    source_id = str(source.get("paper_id") or "").strip().lower()
+    source_title = str(source.get("title") or "").strip().lower()
+    for doc in retrieved:
+        doc_id = str(doc.get("paper_id") or doc.get("id") or "").strip().lower()
+        doc_title = str(doc.get("title") or "").strip().lower()
+        if source_id and doc_id and source_id in doc_id:
+            return dict(doc)
+        if source_title and doc_title and (source_title in doc_title or doc_title in source_title):
+            return dict(doc)
+    return None
+
+
 def _retrieve_query(source: dict, fallback: str) -> str:
     parts = [
         str(source.get("title") or "").strip(),
@@ -47,11 +60,11 @@ async def run(ctx: SkillContext) -> SkillOutput:
             },
         )
         item = dict(source)
-        if retrieved:
-            document = dict(retrieved[0])
-            item["retrieved_document"] = document
-            item["content"] = str(document.get("content") or item.get("content") or item.get("abstract") or "").strip()
-            documents.append(document)
+        matched_doc = _match_retrieved(retrieved, source) if retrieved else None
+        if matched_doc is not None:
+            item["retrieved_document"] = matched_doc
+            item["content"] = str(matched_doc.get("content") or item.get("content") or item.get("abstract") or "").strip()
+            documents.append(matched_doc)
         elif str(item.get("content") or item.get("abstract") or "").strip():
             fallback_text = str(item.get("content") or item.get("abstract") or "").strip()
             document = {

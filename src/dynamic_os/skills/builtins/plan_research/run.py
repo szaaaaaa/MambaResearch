@@ -167,6 +167,7 @@ _GENERIC_EN_QUERY_MARKERS = (
 
 
 async def run(ctx: SkillContext) -> SkillOutput:
+    goal = ctx.user_request or ctx.goal
     raw_plan = await ctx.tools.llm_chat(
         [
             {
@@ -175,24 +176,27 @@ async def run(ctx: SkillContext) -> SkillOutput:
                     "Return JSON only. Convert the goal into a research topic brief and a search plan. "
                     "The topic must be a concise subject phrase, not a task instruction. "
                     "search_queries must be keyword-centric search strings, not imperative requests. "
+                    "search_queries MUST be in English, even if the user's goal is in another language. "
                     "Prefer 3 to 5 search queries. Use academic search by default and enable web only when the query is about tools, code, products, or implementations."
                 ),
             },
-            {"role": "user", "content": ctx.goal},
+            {"role": "user", "content": goal},
         ],
         temperature=0.2,
         response_format=SEARCH_PLAN_SCHEMA,
     )
     parsed = _parse_structured_plan(raw_plan)
-    topic = _derive_topic(goal=ctx.goal, parsed_topic=str(parsed.get("topic") or ""))
-    brief = _normalize_text(str(parsed.get("brief") or "")) or _fallback_brief(goal=ctx.goal, topic=topic)
-    research_questions = _normalize_questions(parsed.get("research_questions"), topic=topic, goal=ctx.goal)
+    topic = _derive_topic(goal=goal, parsed_topic=str(parsed.get("topic") or ""))
+    brief = _normalize_text(str(parsed.get("brief") or "")) or _fallback_brief(goal=goal, topic=topic)
+    research_questions = _normalize_questions(parsed.get("research_questions"), topic=topic, goal=goal)
     search_queries = _normalize_search_queries(
         parsed_queries=parsed.get("search_queries"),
         topic=topic,
         research_questions=research_questions,
-        goal=ctx.goal,
+        goal=goal,
     )
+    if any(_contains_cjk(q) for q in search_queries):
+        search_queries = await _translate_queries(ctx, search_queries)
     query_routes = _normalize_query_routes(parsed.get("query_routes"), search_queries)
 
     topic_brief = _artifact(
@@ -291,15 +295,51 @@ def _normalize_search_queries(
         normalized = _normalize_query(str(item), topic=topic)
         if normalized and normalized not in deduped:
             deduped.append(normalized)
-    if deduped:
-        return deduped[:5]
+    if not deduped:
+        fallback_queries = _fallback_queries(topic=topic, research_questions=research_questions, goal=goal)
+        for query in fallback_queries:
+            normalized = _normalize_query(query, topic=topic)
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+    if not deduped:
+        deduped = [topic]
+    return _ensure_english_queries(deduped[:5], goal=goal)
 
-    fallback_queries = _fallback_queries(topic=topic, research_questions=research_questions, goal=goal)
-    for query in fallback_queries:
-        normalized = _normalize_query(query, topic=topic)
-        if normalized and normalized not in deduped:
-            deduped.append(normalized)
-    return deduped[:5] or [topic]
+
+def _ensure_english_queries(queries: list[str], *, goal: str) -> list[str]:
+    if not any(_contains_cjk(q) for q in queries):
+        return queries
+    english_tokens = _extract_english_tokens(goal)
+    for q in queries:
+        english_tokens.extend(_extract_english_tokens(q))
+    english_tokens = list(dict.fromkeys(t for t in english_tokens if t not in _EN_STOPWORDS))
+    if not english_tokens:
+        return queries
+    base = " ".join(english_tokens[:6])
+    return [base, f"{base} survey", f"{base} methods", f"{base} recent advances", f"{base} evaluation"][:5]
+
+
+async def _translate_queries(ctx: SkillContext, queries: list[str]) -> list[str]:
+    joined = "\n".join(queries)
+    translated = await ctx.tools.llm_chat(
+        [
+            {
+                "role": "system",
+                "content": "Translate the following search queries to English academic keyword phrases. Return one query per line, nothing else.",
+            },
+            {"role": "user", "content": joined},
+        ],
+        temperature=0.0,
+        max_tokens=512,
+    )
+    lines = [line.strip() for line in translated.strip().splitlines() if line.strip()]
+    if not lines or all(_contains_cjk(line) for line in lines):
+        return queries
+    return [line for line in lines if not _contains_cjk(line)][:5] or queries
+
+
+def _extract_english_tokens(text: str) -> list[str]:
+    return [t for t in re.findall(r"[A-Za-z][A-Za-z0-9\-]*(?:\s*[A-Za-z][A-Za-z0-9\-]*)*", text) if len(t) > 1]
 
 
 def _normalize_query_routes(raw_routes: object, queries: list[str]) -> dict[str, dict[str, bool]]:

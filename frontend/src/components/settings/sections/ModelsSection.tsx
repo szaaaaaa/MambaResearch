@@ -5,7 +5,7 @@ import {
   getModelOptionsForProvider,
   LLM_PROVIDER_OPTIONS,
 } from '../../../modelOptions';
-import { useAppContext } from '../../../store';
+import { useAppContext, API_BASE } from '../../../store';
 import { Button, Card, Input, PasswordInput, Select, Textarea, Toggle } from '../../ui';
 
 const ROLE_LABELS: Record<AgentRoleId, string> = {
@@ -501,7 +501,26 @@ export const ModelsSection: React.FC = () => {
           />
         </div>
 
-        <div className="flex justify-end">
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              fetch(`${API_BASE}/api/credentials`)
+                .then((res) => res.json())
+                .then((data) => {
+                  const status = data?.status;
+                  if (status && typeof status === 'object') {
+                    const found = Object.entries(status)
+                      .filter(([, v]) => (v as { present: boolean }).present)
+                      .map(([k]) => k);
+                    alert(found.length > 0 ? `已检测到 ${found.length} 个凭证：\n${found.join('\n')}` : '未检测到任何已配置的凭证。');
+                  }
+                })
+                .catch(() => alert('检测失败，请确认后端已启动。'));
+            }}
+          >
+            检测凭证
+          </Button>
           <Button onClick={() => void saveCredentials()}>保存凭证</Button>
         </div>
       </Card>

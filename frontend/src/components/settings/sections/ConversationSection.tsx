@@ -3,7 +3,7 @@ import { useAppContext } from '../../../store';
 import { Button, Card, Input } from '../../ui';
 
 export const ConversationSection: React.FC = () => {
-  const { state, updateProjectConfig } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
   const { projectConfig } = state;
 
   const applyRecommendedConversationSettings = () => {
@@ -72,8 +72,9 @@ export const ConversationSection: React.FC = () => {
           />
         </div>
 
-        <div className="flex justify-end">
-          <Button onClick={applyRecommendedConversationSettings}>应用推荐参数</Button>
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <Button variant="secondary" onClick={applyRecommendedConversationSettings}>应用推荐参数</Button>
+          <Button onClick={() => void saveProjectConfig()}>保存对话设置</Button>
         </div>
       </Card>
     </div>

@@ -128,7 +128,7 @@ class Executor:
                 )
 
             try:
-                execution = await self.execute_plan(plan)
+                execution = await self.execute_plan(plan, user_request=user_request)
             except BudgetExceededError as exc:
                 return self._terminate(
                     run_id=run_id,
@@ -171,7 +171,7 @@ class Executor:
 
             planning_iteration += 1
 
-    async def execute_plan(self, plan: RoutePlan) -> PlanExecutionResult:
+    async def execute_plan(self, plan: RoutePlan, *, user_request: str = "") -> PlanExecutionResult:
         pending = {node.node_id for node in plan.nodes}
         statuses: dict[str, NodeStatus] = {}
         observations: list[Observation] = []
@@ -191,7 +191,7 @@ class Executor:
                     if node.role == RoleId.hitl:
                         result = await self._handle_hitl_node(node=node, run_id=plan.run_id)
                     else:
-                        result = await self._node_runner.run_node(run_id=plan.run_id, node=node)
+                        result = await self._node_runner.run_node(run_id=plan.run_id, node=node, user_request=user_request)
                     observations.append(result.observation)
                     statuses[node.node_id] = result.observation.status
                     pending.remove(node.node_id)

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, ChevronRight, LoaderCircle, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Download, LoaderCircle, X } from 'lucide-react';
 import { API_BASE } from '../../store';
 import { NodeStatusMap, RoutePlan, RoutePlanNode, RouteEdge, RunArtifact, RunEvent } from '../../types';
 import { Button } from '../ui';
@@ -356,7 +356,29 @@ function RunDetailView({
 
           {detail.report_text ? (
             <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">研究报告</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">研究报告</p>
+                <div className="flex gap-2">
+                  <a
+                    href={`${API_BASE}/api/runs/${detail.run_id}/report.pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    PDF
+                  </a>
+                  <a
+                    href={`${API_BASE}/api/runs/${detail.run_id}/latex.zip`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    LaTeX
+                  </a>
+                </div>
+              </div>
               <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{detail.report_text}</div>
             </section>
           ) : null}

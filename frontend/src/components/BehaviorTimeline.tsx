@@ -219,10 +219,16 @@ export const BehaviorTimeline: React.FC<{ events: RunEvent[] }> = ({ events }) =
 
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">时间线</p>
-        <h3 className="mt-2 text-base font-semibold text-slate-900">技能 / 工具 / 观察 / 重规划</h3>
-      </div>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">时间线</p>
+            <h3 className="mt-2 text-base font-semibold text-slate-900">技能 / 工具 / 观察 / 重规划</h3>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 transition group-open:bg-slate-900 group-open:text-white">
+            {visibleEvents.length} 条事件
+          </span>
+        </summary>
 
       <div className="mt-5 space-y-3">
         {visibleEvents
@@ -253,6 +259,7 @@ export const BehaviorTimeline: React.FC<{ events: RunEvent[] }> = ({ events }) =
             );
           })}
       </div>
+      </details>
     </section>
   );
 };
