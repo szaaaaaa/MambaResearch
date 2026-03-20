@@ -39,4 +39,6 @@ class RoleRegistry:
 
     def validate_route_plan(self, plan: RoutePlan) -> None:
         for node in plan.nodes:
+            if node.role == RoleId.hitl:
+                continue
             self.validate_skill_allowlist(node.role, node.allowed_skills)

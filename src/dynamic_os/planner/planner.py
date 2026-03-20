@@ -558,6 +558,22 @@ class Planner:
                     items["enum"] = role_output_types
             node_variants.append(variant)
 
+        hitl_variant = deepcopy(plan_node)
+        hitl_properties = hitl_variant.get("properties") or {}
+        if isinstance(hitl_properties, dict):
+            hitl_properties["role"] = {"type": "string", "enum": ["hitl"]}
+            hitl_allowed_skills = hitl_properties.get("allowed_skills")
+            if isinstance(hitl_allowed_skills, dict):
+                items = hitl_allowed_skills.get("items")
+                if isinstance(items, dict):
+                    items["enum"] = ["hitl"]
+            hitl_expected_outputs = hitl_properties.get("expected_outputs")
+            if isinstance(hitl_expected_outputs, dict):
+                items = hitl_expected_outputs.get("items")
+                if isinstance(items, dict):
+                    items["enum"] = ["UserGuidance"]
+        node_variants.append(hitl_variant)
+
         if node_variants:
             defs["PlanNode"] = {"anyOf": node_variants}
         return schema
@@ -573,6 +589,8 @@ class Planner:
         }
         upstream_by_node = self._upstream_nodes_by_node(plan)
         for node in plan.nodes:
+            if node.role == RoleId.hitl:
+                continue
             self._skill_registry.validate_role_assignment(
                 node.role.value,
                 node.allowed_skills,
@@ -638,9 +656,10 @@ class Planner:
         if plan.terminate:
             return
 
-        plan_roles = {node.role.value for node in plan.nodes}
+        non_hitl_nodes = [node for node in plan.nodes if node.role != RoleId.hitl]
+        plan_roles = {node.role.value for node in non_hitl_nodes}
         selected_roles = set(routing_policy.selected_roles)
-        invalid_roles = [node.role.value for node in plan.nodes if selected_roles and node.role.value not in selected_roles]
+        invalid_roles = [node.role.value for node in non_hitl_nodes if selected_roles and node.role.value not in selected_roles]
         if invalid_roles:
             raise ValueError(
                 "route plan used roles outside selected_roles: "
@@ -656,7 +675,7 @@ class Planner:
                 f"{', '.join(missing_required_roles)}"
             )
 
-        for node in plan.nodes:
+        for node in non_hitl_nodes:
             input_types = [self._parse_input_type(reference) for reference in node.inputs]
             if not role_can_activate_from_inputs(node.role.value, input_types):
                 required_input_types = routing_policy.activation_inputs.get(node.role.value, ())
@@ -688,7 +707,7 @@ class Planner:
         if plan.terminate:
             raise ValueError("review was requested and ResearchReport exists; next plan must schedule reviewer before terminate")
 
-        plan_roles = {node.role.value for node in plan.nodes}
+        plan_roles = {node.role.value for node in plan.nodes if node.role != RoleId.hitl}
         if plan_roles != {"reviewer"}:
             raise ValueError(
                 "review was requested and ResearchReport exists; only reviewer nodes are allowed before termination"

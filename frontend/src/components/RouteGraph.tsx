@@ -112,7 +112,7 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
             {routePlan.edges.map((edge) => {
               const sourceIndex = nodeIndex.get(edge.source);
               const targetIndex = nodeIndex.get(edge.target);
-              if (sourceIndex === undefined || targetIndex === undefined) {
+              if (typeof sourceIndex !== 'number' || typeof targetIndex !== 'number') {
                 return null;
               }
 

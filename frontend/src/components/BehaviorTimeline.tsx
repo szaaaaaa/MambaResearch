@@ -11,6 +11,8 @@ const VISIBLE_EVENTS = new Set([
   'artifact_created',
   'policy_block',
   'run_terminate',
+  'hitl_request',
+  'hitl_response',
 ]);
 
 const EVENT_STYLES: Record<string, string> = {
@@ -23,6 +25,8 @@ const EVENT_STYLES: Record<string, string> = {
   artifact_created: 'bg-emerald-100 text-emerald-700',
   policy_block: 'bg-rose-100 text-rose-700',
   run_terminate: 'bg-slate-200 text-slate-700',
+  hitl_request: 'bg-amber-200 text-amber-900',
+  hitl_response: 'bg-green-100 text-green-700',
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -106,6 +110,8 @@ function eventTypeLabel(type: string): string {
     artifact_created: '产物',
     policy_block: '策略',
     run_terminate: '终止',
+    hitl_request: '人工暂停',
+    hitl_response: '人工回应',
   };
   return labels[type] || type;
 }
@@ -186,6 +192,16 @@ function describeEvent(event: RunEvent): { title: string; detail: string } {
       return {
         title: '运行已终止',
         detail: reasonLabel(event.reason || event.detail || ''),
+      };
+    case 'hitl_request':
+      return {
+        title: '运行已暂停，等待人工指引',
+        detail: event.detail || '',
+      };
+    case 'hitl_response':
+      return {
+        title: '人工指引已提交，运行恢复',
+        detail: event.detail || '',
       };
     default:
       return {

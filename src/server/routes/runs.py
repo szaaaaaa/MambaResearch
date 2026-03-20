@@ -349,6 +349,30 @@ def _load_artifacts_full_from_disk(run_id: str) -> list[dict[str, Any]] | None:
         return None
 
 
+@router.post("/api/runs/{run_id}/hitl")
+async def submit_hitl_response(run_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="hitl payload must be an object")
+    response_text = str(payload.get("response", "") or "").strip()
+    if not response_text:
+        raise HTTPException(status_code=400, detail="response is required")
+
+    runtime = _ACTIVE_RUNTIMES.get(run_id)
+    if runtime is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} not found or not active")
+
+    try:
+        runtime.submit_hitl_response(response_text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {"status": "accepted"}
+
+
 @router.get("/api/runs/{run_id}/artifacts")
 async def list_run_artifacts(run_id: str):
     runtime = _ACTIVE_RUNTIMES.get(run_id)

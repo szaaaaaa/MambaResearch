@@ -6,6 +6,7 @@ import {
   ChatSession,
   Credentials,
   CredentialStatusMap,
+  HitlRequest,
   NodeStatusMap,
   ProjectConfig,
   RunArtifact,
@@ -432,6 +433,7 @@ function createEmptySession(): ChatSession {
     artifacts: [],
     runEvents: [],
     rawTerminalLog: '',
+    hitlRequest: null,
     messages: [
       {
         id: `assistant-${Date.now()}`,
@@ -523,6 +525,7 @@ function normalizeSession(value: unknown): ChatSession | null {
       ? value.runEvents.map(normalizeRunEvent).filter((item): item is RunEvent => Boolean(item))
       : [],
     rawTerminalLog: String(value.rawTerminalLog || ''),
+    hitlRequest: null,
     messages: messages.length > 0 ? messages : createEmptySession().messages,
   };
 }
@@ -842,6 +845,7 @@ interface AppContextType {
   updateRunOverrides: (updates: Partial<RunOverrides>) => void;
   startRun: () => Promise<void>;
   stopRun: () => Promise<void>;
+  submitHitlResponse: (runId: string, response: string) => Promise<void>;
   createConversation: () => void;
   selectConversation: (conversationId: string) => void;
   renameConversation: (conversationId: string, title: string) => void;
@@ -1446,6 +1450,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ].filter((item) => item.artifact_id && item.artifact_type)
           : session.artifacts;
 
+      const nextHitlRequest: HitlRequest | null =
+        event.type === 'hitl_request' && isRecord(payload)
+          ? {
+              node_id: String(payload.node_id || ''),
+              question: String(payload.question || ''),
+              context: String(payload.context || ''),
+            }
+          : event.type === 'hitl_response'
+            ? null
+            : session.hitlRequest;
+
       return {
         ...session,
         updatedAt: nowIso(),
@@ -1454,6 +1469,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         nodeStatus: nextNodeStatus,
         artifacts: nextArtifacts,
         runEvents: nextEvents,
+        hitlRequest: nextHitlRequest,
       };
     });
   };
@@ -1547,6 +1563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           artifacts: [],
           runEvents: [],
           rawTerminalLog: '',
+          hitlRequest: null,
           messages: [
             ...session.messages,
             {
@@ -1781,6 +1798,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const submitHitlResponse = async (runId: string, response: string) => {
+    const activeConversationId = activeConversationIdRef.current;
+    const res = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}/hitl`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ response }),
+    });
+    if (!res.ok) {
+      throw new Error(await readErrorDetail(res));
+    }
+    updateSession(activeConversationId, (session) => ({
+      ...session,
+      hitlRequest: null,
+    }));
+  };
+
   const toggleAdvancedMode = () => {
     setState((prev) => ({ ...prev, isAdvancedMode: !prev.isAdvancedMode }));
   };
@@ -1804,6 +1837,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateRunOverrides,
         startRun,
         stopRun,
+        submitHitlResponse,
         createConversation,
         selectConversation,
         renameConversation,

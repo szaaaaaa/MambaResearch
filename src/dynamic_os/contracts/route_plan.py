@@ -19,6 +19,7 @@ class RoleId(str, Enum):
     analyst = "analyst"
     writer = "writer"
     reviewer = "reviewer"
+    hitl = "hitl"
 
 
 class PlanNode(BaseModel):
@@ -36,6 +37,7 @@ class PlanNode(BaseModel):
     failure_policy: FailurePolicy = FailurePolicy.replan
     expected_outputs: list[str] = Field(default_factory=list)
     needs_review: bool = False
+    hitl_question: str = ""
 
 
 class EdgeCondition(str, Enum):
