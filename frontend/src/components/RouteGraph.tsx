@@ -116,8 +116,8 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
                 return null;
               }
 
-              const x1 = padding + sourceIndex * (cardWidth + gap) + cardWidth;
-              const x2 = padding + targetIndex * (cardWidth + gap);
+              const x1 = padding + (sourceIndex as number) * (cardWidth + gap) + cardWidth;
+              const x2 = padding + (targetIndex as number) * (cardWidth + gap);
               const y = 96;
               const midX = x1 + (x2 - x1) / 2;
               const path = `M ${x1} ${y} C ${midX} ${y}, ${midX} ${y}, ${x2} ${y}`;

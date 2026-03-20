@@ -1,5 +1,5 @@
 import React from 'react';
-import { Archive, Copy, MessageSquarePlus, Pencil, Settings2, Trash2 } from 'lucide-react';
+import { Archive, Clock, Copy, MessageSquarePlus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Button } from './ui';
 
@@ -91,6 +91,8 @@ interface SidebarProps {
   onArchiveConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onOpenSettings: () => void;
+  activeTab: 'run' | 'history';
+  onTabChange: (tab: 'run' | 'history') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -103,6 +105,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onArchiveConversation,
   onDeleteConversation,
   onOpenSettings,
+  activeTab,
+  onTabChange,
 }) => {
   const [contextMenu, setContextMenu] = React.useState<ContextMenuState | null>(null);
   const activeGroups = groupSessions(conversations.filter((session) => !session.archived));
@@ -199,15 +203,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <p className="text-xs font-semibold uppercase tracking-[0.44em] text-slate-400">MambaResearch</p>
               <h1 className="mt-2 text-lg font-semibold tracking-tight text-slate-900">会话</h1>
             </div>
-            <Button variant="secondary" size="sm" className="rounded-full px-3" onClick={onOpenSettings}>
-              <Settings2 className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" className="rounded-full px-3" onClick={onCreateConversation} title="新建会话">
+                <Plus className="h-4 w-4" />
+              </Button>
+              <Button variant="secondary" size="sm" className="rounded-full px-3" onClick={onOpenSettings}>
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
-          <Button className="mt-4 w-full justify-center rounded-2xl" onClick={onCreateConversation}>
-            <MessageSquarePlus className="h-4 w-4" />
-            新建会话
-          </Button>
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => onTabChange('run')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === 'run'
+                  ? 'bg-slate-900 text-white'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+              运行
+            </button>
+            <button
+              type="button"
+              onClick={() => onTabChange('history')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === 'history'
+                  ? 'bg-slate-900 text-white'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Clock className="h-4 w-4" />
+              历史
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-4">
