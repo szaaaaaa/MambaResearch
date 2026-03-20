@@ -248,6 +248,97 @@ async def run_agent(request: Request):
     )
 
 
+def _run_timestamp(run_dir: Path) -> str:
+    events_path = run_dir / "events.log"
+    if events_path.exists():
+        try:
+            first_line = events_path.read_text(encoding="utf-8").splitlines()[0]
+            return str(json.loads(first_line).get("ts") or "")
+        except (json.JSONDecodeError, OSError, IndexError):
+            pass
+    return ""
+
+
+def _run_topic(state: dict[str, Any]) -> str:
+    report_text = str(state.get("report_text") or "").strip()
+    for line in report_text.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    route_plan = state.get("route_plan") or {}
+    if not isinstance(route_plan, dict):
+        return ""
+    notes = route_plan.get("planner_notes")
+    if isinstance(notes, list) and notes:
+        first = str(notes[0] or "").strip()
+        if first:
+            return first
+    nodes = route_plan.get("nodes")
+    if isinstance(nodes, list) and nodes and isinstance(nodes[0], dict):
+        goal = str(nodes[0].get("goal") or "").strip()
+        if goal:
+            return goal
+    return ""
+
+
+@router.get("/api/runs")
+async def list_past_runs():
+    outputs_dir = ROOT / "outputs"
+    if not outputs_dir.exists():
+        return []
+    runs: list[dict[str, Any]] = []
+    for run_dir in sorted(outputs_dir.iterdir(), reverse=True):
+        if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
+            continue
+        state_path = run_dir / "research_state.json"
+        if not state_path.exists():
+            continue
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        runs.append(
+            {
+                "run_id": str(state.get("run_id") or run_dir.name),
+                "timestamp": _run_timestamp(run_dir),
+                "topic": _run_topic(state),
+                "status": str(state.get("status") or ""),
+                "artifact_count": len(state.get("artifacts") or []),
+            }
+        )
+    return runs
+
+
+@router.get("/api/runs/{run_id}/state")
+async def get_run_state(run_id: str):
+    state_path = ROOT / "outputs" / run_id / "research_state.json"
+    if not state_path.exists():
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=f"failed to read state: {exc}") from exc
+
+
+@router.get("/api/runs/{run_id}/events")
+async def get_run_events(run_id: str):
+    events_path = ROOT / "outputs" / run_id / "events.log"
+    if not events_path.exists():
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    events: list[dict[str, Any]] = []
+    try:
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"failed to read events: {exc}") from exc
+    return events
+
+
 def _load_artifacts_full_from_disk(run_id: str) -> list[dict[str, Any]] | None:
     artifacts_path = ROOT / "outputs" / run_id / "artifacts_full.json"
     if not artifacts_path.exists():

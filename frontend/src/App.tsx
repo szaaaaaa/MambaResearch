@@ -2,6 +2,7 @@ import React from 'react';
 import { AppProvider, useAppContext } from './store';
 import { Sidebar } from './components/Sidebar';
 import { RunTab } from './components/tabs/RunTab';
+import { HistoryTab } from './components/tabs/HistoryTab';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { UiPreferences } from './components/settings/types';
 
@@ -43,6 +44,7 @@ const AppContent: React.FC = () => {
   } = useAppContext();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(() => loadUiPreferences());
+  const [activeTab, setActiveTab] = React.useState<'run' | 'history'>('run');
 
   React.useEffect(() => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
@@ -53,17 +55,23 @@ const AppContent: React.FC = () => {
       <Sidebar
         conversations={state.conversations}
         activeConversationId={state.activeConversationId}
-        onSelectConversation={selectConversation}
-        onCreateConversation={createConversation}
+        onSelectConversation={(id) => { selectConversation(id); setActiveTab('run'); }}
+        onCreateConversation={() => { createConversation(); setActiveTab('run'); }}
         onRenameConversation={renameConversation}
         onDuplicateConversation={duplicateConversation}
         onArchiveConversation={archiveConversation}
         onDeleteConversation={deleteConversation}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
       />
 
       <main className="min-h-screen flex-1">
-        <RunTab uiPreferences={uiPreferences} />
+        {activeTab === 'history' ? (
+          <HistoryTab />
+        ) : (
+          <RunTab uiPreferences={uiPreferences} />
+        )}
       </main>
 
       {isSettingsOpen ? (
