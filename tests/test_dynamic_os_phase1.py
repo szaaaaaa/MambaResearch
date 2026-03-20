@@ -103,6 +103,7 @@ def test_memory_stores_round_trip() -> None:
         {
             "artifact_id": "tb_1",
             "artifact_type": "TopicBrief",
+            "artifact_ref": "artifact:TopicBrief:tb_1",
             "producer_role": "conductor",
         }
     ]
