@@ -1533,7 +1533,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const requestBody = JSON.stringify({
       client_request_id: clientRequestId,
       runOverrides: {
-        output_dir: latestRunOverrides.output_dir,
+        output_dir: projectConfigRef.current.paths.outputs_dir,
         verbose: latestRunOverrides.verbose,
         topic: prompt,
         user_request: prompt,

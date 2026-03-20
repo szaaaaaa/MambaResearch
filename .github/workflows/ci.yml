@@ -21,8 +21,8 @@ jobs:
       - name: Install
         run: |
           python -m pip install -U pip
-          pip install -e .
-          pip install pytest websocket-client httpx
+          pip install -e . --no-deps
+          pip install pytest pyyaml requests pydantic fastapi websocket-client httpx uvicorn
 
       - name: Dynamic OS Tests
         run: |

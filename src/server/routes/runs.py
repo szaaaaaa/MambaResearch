@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.common.config_utils import get_by_dotted, load_yaml
+from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.common.openai_codex import ensure_openai_codex_auth
 from src.dynamic_os.runtime import DynamicResearchRuntime
 from src.server.settings import CONFIG_PATH, ROOT
@@ -248,6 +248,14 @@ async def run_agent(request: Request):
     )
 
 
+def _get_outputs_dir() -> Path:
+    config = load_yaml(CONFIG_PATH) if CONFIG_PATH.exists() else {}
+    raw = get_by_dotted(config if isinstance(config, dict) else {}, "paths.outputs_dir")
+    if raw:
+        return resolve_path(ROOT, str(raw), config if isinstance(config, dict) else {})
+    return (ROOT / "outputs").resolve()
+
+
 def _run_timestamp(run_dir: Path) -> str:
     events_path = run_dir / "events.log"
     if events_path.exists():
@@ -283,7 +291,7 @@ def _run_topic(state: dict[str, Any]) -> str:
 
 @router.get("/api/runs")
 async def list_past_runs():
-    outputs_dir = ROOT / "outputs"
+    outputs_dir = _get_outputs_dir()
     if not outputs_dir.exists():
         return []
     runs: list[dict[str, Any]] = []
@@ -311,7 +319,7 @@ async def list_past_runs():
 
 @router.get("/api/runs/{run_id}/state")
 async def get_run_state(run_id: str):
-    state_path = ROOT / "outputs" / run_id / "research_state.json"
+    state_path = _get_outputs_dir() / run_id / "research_state.json"
     if not state_path.exists():
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
     try:
@@ -322,7 +330,7 @@ async def get_run_state(run_id: str):
 
 @router.get("/api/runs/{run_id}/events")
 async def get_run_events(run_id: str):
-    events_path = ROOT / "outputs" / run_id / "events.log"
+    events_path = _get_outputs_dir() / run_id / "events.log"
     if not events_path.exists():
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
     events: list[dict[str, Any]] = []
@@ -340,7 +348,7 @@ async def get_run_events(run_id: str):
 
 
 def _load_artifacts_full_from_disk(run_id: str) -> list[dict[str, Any]] | None:
-    artifacts_path = ROOT / "outputs" / run_id / "artifacts_full.json"
+    artifacts_path = _get_outputs_dir() / run_id / "artifacts_full.json"
     if not artifacts_path.exists():
         return None
     try:
