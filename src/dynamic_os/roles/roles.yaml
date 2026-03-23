@@ -18,6 +18,7 @@
     - fetch_fulltext
     - extract_notes
     - build_evidence_map
+    - analyze_trends
   input_artifact_types:
     - TopicBrief
     - SearchPlan
@@ -26,6 +27,7 @@
     - PaperNotes
     - EvidenceMap
     - GapMap
+    - TrendAnalysis
   forbidden:
     - Must not act as the final writer
 
@@ -39,6 +41,7 @@
     - SearchPlan
     - EvidenceMap
     - GapMap
+    - ExperimentIteration
   output_artifact_types:
     - ExperimentPlan
     - ExperimentResults
@@ -51,6 +54,10 @@
   default_allowed_skills:
     - analyze_metrics
     - build_evidence_map
+    - optimize_experiment
+    - analyze_trends
+    - compare_methods
+    - generate_figures
   input_artifact_types:
     - SourceSet
     - PaperNotes
@@ -59,6 +66,10 @@
     - ExperimentAnalysis
     - PerformanceMetrics
     - EvidenceMap
+    - ExperimentIteration
+    - TrendAnalysis
+    - MethodComparison
+    - FigureSet
   forbidden:
     - Must not own global workflow decisions
 
@@ -71,6 +82,11 @@
     - EvidenceMap
     - ExperimentAnalysis
     - PerformanceMetrics
+    - ReviewVerdict
+    - UserGuidance
+    - TrendAnalysis
+    - MethodComparison
+    - FigureSet
   output_artifact_types:
     - ResearchReport
   forbidden:

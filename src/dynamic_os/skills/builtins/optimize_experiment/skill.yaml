@@ -1,0 +1,19 @@
+id: optimize_experiment
+name: Optimize Experiment
+version: 1.0.0
+applicable_roles:
+  - analyst
+description: Evaluate experiment results against the objective and decide whether to iterate.
+input_contract:
+  required:
+    - ExperimentResults
+  optional:
+    - ExperimentIteration
+    - ExperimentPlan
+    - ExperimentAnalysis
+output_artifacts:
+  - ExperimentIteration
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

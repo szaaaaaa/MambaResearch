@@ -10,6 +10,7 @@ input_contract:
     - SearchPlan
     - EvidenceMap
     - GapMap
+    - ExperimentIteration
 output_artifacts:
   - ExperimentPlan
 allowed_tools:

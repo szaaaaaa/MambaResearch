@@ -357,6 +357,82 @@ class Planner:
                     terminate=False,
                 )
 
+        if "ExperimentIteration" in available_types:
+            iteration_records = [r for r in self._artifact_store.list_all() if r.artifact_type == "ExperimentIteration"]
+            if iteration_records:
+                latest_iter = iteration_records[-1]
+                if latest_iter.payload.get("should_continue"):
+                    return RoutePlan(
+                        run_id=run_id,
+                        planning_iteration=planning_iteration,
+                        horizon=1,
+                        nodes=[
+                            self._fallback_node(
+                                node_id="node_experimenter_redesign",
+                                role=RoleId.experimenter,
+                                goal="根据优化建议改进实验设计",
+                                inputs=self._preferred_inputs(latest_by_type, ["ExperimentIteration", "ExperimentPlan", "ExperimentResults"]),
+                                allowed_skills=["design_experiment"],
+                                success_criteria=["生成改进后的 ExperimentPlan"],
+                                expected_outputs=["ExperimentPlan"],
+                            )
+                        ],
+                        edges=[],
+                        planner_notes=notes,
+                        terminate=False,
+                    )
+
+        if "ReviewVerdict" in available_types:
+            review_records = [r for r in self._artifact_store.list_all() if r.artifact_type == "ReviewVerdict"]
+            if review_records:
+                latest_review = review_records[-1]
+                weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
+                threshold = float(latest_review.payload.get("threshold", 6.0))
+                max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
+                report_count = sum(1 for r in self._artifact_store.list_all() if r.artifact_type == "ResearchReport")
+                if weighted_score < threshold and report_count <= max_cycles:
+                    score_summary = f"评分 {weighted_score:.1f}/{threshold:.1f}，建议修改: {str(latest_review.payload.get('modification_suggestions', ''))[:200]}"
+                    hitl_node = self._fallback_node(
+                        node_id="node_hitl_review_confirm",
+                        role=RoleId.hitl,
+                        goal=f"审查评分未达标，请确认是否重写。{score_summary}",
+                        inputs=[],
+                        allowed_skills=["hitl"],
+                        success_criteria=["获取用户指导"],
+                        expected_outputs=["UserGuidance"],
+                    )
+                    hitl_node = PlanNode(
+                        node_id="node_hitl_review_confirm",
+                        role=RoleId.hitl,
+                        goal=f"审查评分未达标，请确认是否重写。{score_summary}"[:500],
+                        inputs=[],
+                        allowed_skills=["hitl"],
+                        success_criteria=["获取用户指导"],
+                        failure_policy=FailurePolicy.replan,
+                        expected_outputs=["UserGuidance"],
+                        needs_review=False,
+                        hitl_question=f"论文审查评分为 {weighted_score:.1f}/10（阈值 {threshold:.1f}）。是否自动重写？或提供修改指导。",
+                    )
+                    writer_node = self._fallback_node(
+                        node_id="node_writer_rewrite",
+                        role=RoleId.writer,
+                        goal="根据审查反馈和用户指导重写研究报告",
+                        inputs=self._preferred_inputs(latest_by_type, ["ResearchReport", "ReviewVerdict", "EvidenceMap"])
+                        + [artifact_ref_for(node_id="node_hitl_review_confirm", artifact_type="UserGuidance")],
+                        allowed_skills=["draft_report"],
+                        success_criteria=["生成修改后的 ResearchReport"],
+                        expected_outputs=["ResearchReport"],
+                    )
+                    return RoutePlan(
+                        run_id=run_id,
+                        planning_iteration=planning_iteration,
+                        horizon=2,
+                        nodes=[hitl_node, writer_node],
+                        edges=[PlanEdge(source="node_hitl_review_confirm", target="node_writer_rewrite")],
+                        planner_notes=notes,
+                        terminate=False,
+                    )
+
         if "SourceSet" not in available_types:
             search_inputs = self._preferred_inputs(latest_by_type, ["SearchPlan", "TopicBrief"])
             search_node = self._fallback_node(
@@ -731,14 +807,31 @@ class Planner:
                     )
 
     def _validate_post_report_progression(self, plan: RoutePlan, routing_policy: RoleRoutingPolicy) -> None:
-        artifact_types = {record.artifact_type for record in self._artifact_store.list_all()}
+        all_records = self._artifact_store.list_all()
+        artifact_types = {record.artifact_type for record in all_records}
         has_report = "ResearchReport" in artifact_types
         has_review = "ReviewVerdict" in artifact_types
         review_requested = "review" in set(routing_policy.intents)
 
         if has_review:
+            review_records = [r for r in all_records if r.artifact_type == "ReviewVerdict"]
+            if review_records:
+                latest_review = review_records[-1]
+                weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
+                threshold = float(latest_review.payload.get("threshold", 6.0))
+                max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
+                report_count = sum(1 for r in all_records if r.artifact_type == "ResearchReport")
+                if weighted_score < threshold and report_count <= max_cycles:
+                    plan_roles = {node.role.value for node in plan.nodes if node.role != RoleId.hitl}
+                    allowed_roles = {"writer", "reviewer"}
+                    invalid = plan_roles - allowed_roles
+                    if invalid:
+                        raise ValueError(
+                            f"review score below threshold; only writer/reviewer/hitl nodes allowed, got: {', '.join(sorted(invalid))}"
+                        )
+                    return
             if not plan.terminate:
-                raise ValueError("ReviewVerdict already exists; next plan must terminate")
+                raise ValueError("ReviewVerdict already exists and score passed; next plan must terminate")
             return
 
         if not has_report:

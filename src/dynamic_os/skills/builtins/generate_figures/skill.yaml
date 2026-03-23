@@ -1,0 +1,27 @@
+id: generate_figures
+name: Generate Figures
+version: 1.0.0
+applicable_roles:
+  - analyst
+description: Generate publication-quality matplotlib figures from analysis artifacts.
+input_contract:
+  required: []
+  requires_any:
+    - ExperimentResults
+    - ExperimentAnalysis
+    - MethodComparison
+    - TrendAnalysis
+  optional:
+    - ExperimentResults
+    - ExperimentAnalysis
+    - MethodComparison
+    - TrendAnalysis
+output_artifacts:
+  - FigureSet
+allowed_tools:
+  - mcp.llm.chat
+  - mcp.exec.execute_code
+permissions:
+  sandbox_exec: true
+  filesystem_write: true
+timeout_sec: 180

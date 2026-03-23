@@ -336,6 +336,15 @@ class Executor:
             return False
         artifact_types = {record.artifact_type for record in records}
         if "ReviewVerdict" in artifact_types:
+            review_records = [r for r in records if r.artifact_type == "ReviewVerdict"]
+            if review_records:
+                latest_review = review_records[-1]
+                weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
+                threshold = float(latest_review.payload.get("threshold", 6.0))
+                max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
+                report_count = sum(1 for r in records if r.artifact_type == "ResearchReport")
+                if weighted_score < threshold and report_count <= max_cycles:
+                    return False
             return True
         if "ResearchReport" not in artifact_types:
             return False

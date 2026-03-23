@@ -231,8 +231,22 @@ agent:
       temperature: 0.1
   experiment_plan:
     enabled: false
+    mode: survey
+    max_iterations: 6
+    gpu: cpu
+    objective: ""
+    exec_timeout_sec: 120
     max_per_rq: 2
     require_human_results: false
+  review:
+    score_threshold: 6.0
+    max_rewrite_cycles: 2
+    dimension_weights:
+      novelty: 1.0
+      soundness: 1.0
+      clarity: 1.0
+      significance: 1.0
+      completeness: 1.0
 ingest:
   text_extraction: auto
   latex:
@@ -265,3 +279,7 @@ budget_guard:
   max_tokens: 1000000
   max_api_calls: 1000
   max_wall_time_sec: 3600
+knowledge_graph:
+  persistence_mode: memory
+  sqlite_path: ""
+  cross_run_mode: manual

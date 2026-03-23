@@ -10,9 +10,10 @@ input_contract:
     - SourceSet
     - ExperimentPlan
     - ResearchReport
+    - ReviewVerdict
 output_artifacts:
   - ReviewVerdict
 allowed_tools:
   - mcp.llm.chat
 permissions: {}
-timeout_sec: 120
+timeout_sec: 180

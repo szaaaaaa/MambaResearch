@@ -135,7 +135,18 @@ export interface ProjectConfig {
     claim_alignment: { enabled: boolean; min_rq_relevance: number; anchor_terms_max: number };
     limits: { analysis_web_content_max_chars: number };
     topic_filter: { min_keyword_hits: number; min_anchor_hits: number; include_terms: string[]; block_terms: string[] };
-    experiment_plan: { enabled: boolean; max_per_rq: number; require_human_results: boolean };
+    experiment_plan: { enabled: boolean; max_per_rq: number; require_human_results: boolean; mode?: string; max_iterations?: number; gpu?: string; objective?: string; exec_timeout_sec?: number };
+    review?: {
+      score_threshold?: number;
+      max_rewrite_cycles?: number;
+      dimension_weights?: {
+        novelty?: number;
+        soundness?: number;
+        clarity?: number;
+        significance?: number;
+        completeness?: number;
+      };
+    };
     routing: {
       planner_llm: AgentModelConfig;
     };
@@ -155,6 +166,11 @@ export interface ProjectConfig {
   paths: { papers_dir: string; metadata_dir: string; indexes_dir: string; outputs_dir: string };
   metadata_store: { backend: string; sqlite_path: string };
   budget_guard: { max_tokens: number; max_api_calls: number; max_wall_time_sec: number };
+  knowledge_graph?: {
+    persistence_mode?: string;
+    sqlite_path?: string;
+    cross_run_mode?: string;
+  };
 }
 
 export interface RunOverrides {

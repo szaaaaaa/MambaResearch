@@ -40,7 +40,8 @@ async def run(ctx: SkillContext) -> SkillOutput:
     language = str(payload.get("language") or "python")
     if not code:
         return SkillOutput(success=False, error="run_experiment requires executable code in ExperimentPlan")
-    execution = await ctx.tools.execute_code(code, language=language, timeout_sec=min(ctx.timeout_sec, 60))
+    exec_timeout = int(ctx.config.get("agent", {}).get("experiment_plan", {}).get("exec_timeout_sec", 120))
+    execution = await ctx.tools.execute_code(code, language=language, timeout_sec=min(ctx.timeout_sec, exec_timeout))
     exit_code = execution.get("exit_code")
     if exit_code not in (None, 0):
         return SkillOutput(

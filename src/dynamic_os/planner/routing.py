@@ -10,9 +10,9 @@ from src.dynamic_os.contracts.route_plan import RoleId
 
 
 ROLE_ACTIVATION_INPUTS: dict[str, tuple[str, ...]] = {
-    "experimenter": ("SearchPlan", "EvidenceMap", "GapMap", "ExperimentPlan"),
-    "analyst": ("ExperimentResults",),
-    "writer": ("EvidenceMap", "ExperimentAnalysis", "PerformanceMetrics"),
+    "experimenter": ("SearchPlan", "EvidenceMap", "GapMap", "ExperimentPlan", "ExperimentIteration"),
+    "analyst": ("ExperimentResults", "PaperNotes", "SourceSet", "EvidenceMap"),
+    "writer": ("EvidenceMap", "ExperimentAnalysis", "PerformanceMetrics", "ReviewVerdict", "TrendAnalysis", "MethodComparison"),
     "reviewer": ("SourceSet", "ExperimentPlan", "ResearchReport"),
 }
 
@@ -64,11 +64,19 @@ INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
         "comparison",
         "interpret",
         "analy",
+        "trend",
+        "figure",
+        "plot",
+        "chart",
+        "method comparison",
         "分析",
         "对比",
         "比较",
         "解读",
         "归纳",
+        "趋势",
+        "图表",
+        "方法对比",
     ),
     "write": (
         "write",
@@ -218,6 +226,24 @@ def derive_role_routing_policy(*, user_request: str, artifacts: list[ArtifactRec
         elif not has_planning:
             _append_unique(preferred_roles, "conductor")
             reasons.append("评审型请求当前没有可评审产物，先由 conductor 组织上游步骤。")
+
+    if "ExperimentIteration" in artifact_types:
+        iter_records = [r for r in artifacts if r.artifact_type == "ExperimentIteration"]
+        if iter_records and iter_records[-1].payload.get("should_continue"):
+            _append_unique(required_roles, "experimenter")
+            _append_unique(required_roles, "analyst")
+            reasons.append("ExperimentIteration 标记 should_continue=true，需要 experimenter 重新设计 + analyst 评估。")
+
+    if "ReviewVerdict" in artifact_types:
+        review_records = [r for r in artifacts if r.artifact_type == "ReviewVerdict"]
+        if review_records:
+            latest = review_records[-1]
+            ws = float(latest.payload.get("weighted_score", 10.0))
+            th = float(latest.payload.get("threshold", 6.0))
+            if ws < th:
+                _append_unique(required_roles, "writer")
+                _append_unique(preferred_roles, "reviewer")
+                reasons.append(f"ReviewVerdict 评分 {ws:.1f} 低于阈值 {th:.1f}，需要 writer 重写后再次 review。")
 
     selected_roles = list(required_roles)
     for role_id in preferred_roles:

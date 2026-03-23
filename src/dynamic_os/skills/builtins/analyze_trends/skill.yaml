@@ -1,0 +1,23 @@
+id: analyze_trends
+name: Analyze Trends
+version: 1.0.0
+applicable_roles:
+  - analyst
+  - researcher
+description: Analyze temporal research trends from paper metadata and notes.
+input_contract:
+  required: []
+  requires_any:
+    - PaperNotes
+    - SourceSet
+    - EvidenceMap
+  optional:
+    - PaperNotes
+    - SourceSet
+    - EvidenceMap
+output_artifacts:
+  - TrendAnalysis
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

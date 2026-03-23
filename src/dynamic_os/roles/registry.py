@@ -25,6 +25,25 @@ class RoleRegistry:
         roles = [RoleSpec.model_validate(item) for item in payload]
         return cls(roles)
 
+    @classmethod
+    def from_file_with_custom(cls, cwd: str | Path, path: str | Path | None = None) -> "RoleRegistry":
+        registry = cls.from_file(path)
+        from src.dynamic_os.skills.custom_config import load_custom_skill_additions
+
+        additions = load_custom_skill_additions(Path(cwd))
+        if not additions:
+            return registry
+        updated_roles: list[RoleSpec] = []
+        for role in registry.list():
+            extra_skills = additions.get(role.id.value, [])
+            if extra_skills:
+                merged = list(role.default_allowed_skills) + [
+                    s for s in extra_skills if s not in role.default_allowed_skills
+                ]
+                role = role.model_copy(update={"default_allowed_skills": merged})
+            updated_roles.append(role)
+        return cls(updated_roles)
+
     def get(self, role_id: RoleId | str) -> RoleSpec:
         return self._roles[RoleId(role_id)]
 

@@ -10,6 +10,11 @@ input_contract:
     - EvidenceMap
     - ExperimentAnalysis
     - PerformanceMetrics
+    - ReviewVerdict
+    - UserGuidance
+    - TrendAnalysis
+    - MethodComparison
+    - FigureSet
 output_artifacts:
   - ResearchReport
 allowed_tools:

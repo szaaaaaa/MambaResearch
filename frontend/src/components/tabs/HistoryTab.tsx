@@ -36,6 +36,10 @@ const HISTORY_ARTIFACT_LABELS: Record<string, string> = {
   PerformanceMetrics: '性能指标',
   ResearchReport: '研究报告',
   ReviewVerdict: '审阅结论',
+  ExperimentIteration: '实验迭代',
+  TrendAnalysis: '趋势分析',
+  MethodComparison: '方法对比',
+  FigureSet: '图表集合',
 };
 
 const HISTORY_ROLE_LABELS: Record<string, string> = {
