@@ -1,10 +1,13 @@
 import React from 'react';
 import {
+  ClipboardCheck,
   Cpu,
   Database,
+  FlaskConical,
   Info,
   MessagesSquare,
   Palette,
+  Share2,
   Shield,
   SlidersHorizontal,
   Wrench,
@@ -15,6 +18,9 @@ import { AboutSection } from './sections/AboutSection';
 import { AppearanceSection } from './sections/AppearanceSection';
 import { ConversationSection } from './sections/ConversationSection';
 import { DataStorageSection } from './sections/DataStorageSection';
+import { ExperimentSection } from './sections/ExperimentSection';
+import { KnowledgeGraphSection } from './sections/KnowledgeGraphSection';
+import { ReviewSection } from './sections/ReviewSection';
 import { GeneralSection } from './sections/GeneralSection';
 import { ModelsSection } from './sections/ModelsSection';
 import { SecuritySection } from './sections/SecuritySection';
@@ -34,6 +40,9 @@ const CATEGORIES: {
   { id: 'appearance', label: '外观', description: '聊天界面的视觉偏好。', icon: Palette },
   { id: 'data', label: '数据 / 存储', description: '目录、索引和存储后端。', icon: Database },
   { id: 'security', label: '安全', description: '预算、断路器和下载安全。', icon: Shield },
+  { id: 'experiment', label: '实验模式', description: '配置实验优化循环与GPU设置', icon: FlaskConical },
+  { id: 'knowledge-graph', label: '知识图谱', description: '跨运行知识持久化配置', icon: Share2 },
+  { id: 'review', label: '论文审查', description: '质量评分维度与阈值设置', icon: ClipboardCheck },
   { id: 'about', label: '关于', description: '系统信息与当前状态。', icon: Info },
 ];
 
@@ -59,6 +68,12 @@ function renderSection(
       return <DataStorageSection />;
     case 'security':
       return <SecuritySection />;
+    case 'experiment':
+      return <ExperimentSection />;
+    case 'knowledge-graph':
+      return <KnowledgeGraphSection />;
+    case 'review':
+      return <ReviewSection />;
     case 'about':
       return <AboutSection />;
     default:

@@ -19,7 +19,40 @@ EXPERIMENT_PLAN_SCHEMA = {
 }
 
 
+def _find_artifact(ctx: SkillContext, artifact_type: str):
+    for artifact in ctx.input_artifacts:
+        if artifact.artifact_type == artifact_type:
+            return artifact
+    return None
+
+
 async def run(ctx: SkillContext) -> SkillOutput:
+    experiment_cfg = ctx.config.get("agent", {}).get("experiment_plan", {})
+    gpu_setting = str(experiment_cfg.get("gpu", "cpu")).strip()
+    objective = str(experiment_cfg.get("objective", "")).strip()
+
+    gpu_instruction = ""
+    if gpu_setting in ("cuda", "auto"):
+        gpu_instruction = (
+            "\nThe experiment should use GPU if available. "
+            "Include: import torch; device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') "
+            "and move models/tensors to the device."
+        )
+
+    objective_instruction = ""
+    if objective:
+        objective_instruction = f"\nOptimization objective: {objective}"
+
+    iteration_context = ""
+    prior_iteration = _find_artifact(ctx, "ExperimentIteration")
+    if prior_iteration is not None:
+        suggestions = str(prior_iteration.payload.get("modification_suggestions", ""))
+        iteration_num = int(prior_iteration.payload.get("iteration", 0))
+        iteration_context = (
+            f"\nThis is iteration {iteration_num + 1} of the experiment optimization loop. "
+            f"Previous modification suggestions: {suggestions}"
+        )
+
     raw_plan = await ctx.tools.llm_chat(
         [
             {
@@ -27,6 +60,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
                 "content": (
                     "Return JSON only. Produce a bounded experiment plan with runnable code. "
                     "The code must be executable as-is and print a metrics dict on the last line."
+                    f"{gpu_instruction}{objective_instruction}{iteration_context}"
                 ),
             },
             {

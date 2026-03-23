@@ -6,6 +6,9 @@ export type SettingsCategoryId =
   | 'appearance'
   | 'data'
   | 'security'
+  | 'experiment'
+  | 'knowledge-graph'
+  | 'review'
   | 'about';
 
 export interface UiPreferences {

@@ -23,6 +23,7 @@ class SkillContext:
     user_request: str = ""
     config: dict[str, Any] = field(default_factory=dict)
     timeout_sec: int = 120
+    knowledge_graph: Any = None
 
 
 class SkillOutput(BaseModel):

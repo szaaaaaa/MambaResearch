@@ -1,0 +1,11 @@
+# Custom skill role assignments
+# Map role IDs to lists of custom skill IDs to add to their allowlist.
+# Custom skills should be placed in ./skills/<skill_id>/ with skill.yaml, skill.md, and run.py.
+#
+# Example:
+# role_skill_additions:
+#   analyst:
+#     - my_custom_analyzer
+#   researcher:
+#     - my_custom_fetcher
+role_skill_additions: {}

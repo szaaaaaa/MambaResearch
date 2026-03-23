@@ -105,6 +105,38 @@ async def run(ctx: SkillContext) -> SkillOutput:
         },
         source_inputs=source_input_refs(ctx.input_artifacts),
     )
+    if ctx.knowledge_graph is not None:
+        for source in sources:
+            paper_id = str(source.get("paper_id") or source.get("id") or "").strip()
+            title = str(source.get("title") or "").strip()
+            if not paper_id and not title:
+                continue
+            node_id_kg = paper_id or f"paper:{title[:64]}"
+            ctx.knowledge_graph.add_node(
+                node_id=node_id_kg,
+                node_type="Paper",
+                properties={
+                    "title": title,
+                    "authors": source.get("authors", []),
+                    "year": source.get("year"),
+                    "abstract": str(source.get("abstract") or source.get("summary") or "")[:500],
+                },
+            )
+            for author in source.get("authors", []):
+                author_name = str(author).strip()
+                if author_name:
+                    author_node_id = f"researcher:{author_name[:64]}"
+                    ctx.knowledge_graph.add_node(
+                        node_id=author_node_id,
+                        node_type="Researcher",
+                        properties={"name": author_name},
+                    )
+                    ctx.knowledge_graph.add_edge(
+                        source_id=node_id_kg,
+                        target_id=author_node_id,
+                        relation_type="AUTHORED_BY",
+                    )
+
     return SkillOutput(
         success=True,
         output_artifacts=[artifact],

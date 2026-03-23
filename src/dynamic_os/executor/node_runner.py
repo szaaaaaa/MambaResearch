@@ -53,6 +53,7 @@ class NodeRunner:
         policy: PolicyEngine,
         event_sink: EventSink | None = None,
         config: dict | None = None,
+        knowledge_graph=None,
     ) -> None:
         self._role_registry = role_registry
         self._skill_registry = skill_registry
@@ -62,6 +63,7 @@ class NodeRunner:
         self._policy = policy
         self._event_sink = event_sink
         self._config = dict(config or {})
+        self._knowledge_graph = knowledge_graph
 
     async def run_node(self, *, run_id: str, node: PlanNode, user_request: str = "") -> NodeExecutionResult:
         self._policy.check_budget()
@@ -338,6 +340,7 @@ class NodeRunner:
             ).with_permissions(loaded_skill.spec.permissions).with_allowed_tools(loaded_skill.spec.allowed_tools),
             config=skill_config,
             timeout_sec=loaded_skill.spec.timeout_sec,
+            knowledge_graph=self._knowledge_graph,
         )
         return await loaded_skill.runner(ctx)
 

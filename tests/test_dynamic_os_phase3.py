@@ -438,6 +438,20 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
                 ),
                 "",
             )
+            if "rigorous academic reviewer" in system_message:
+                return json.dumps(
+                    {
+                        "novelty": 7,
+                        "soundness": 7,
+                        "clarity": 8,
+                        "significance": 7,
+                        "completeness": 7,
+                        "review_text": "Solid work with clear methodology.",
+                        "issues": [],
+                        "strengths": ["Clear structure", "Good coverage"],
+                        "modification_suggestions": "",
+                    }
+                )
             if "Return JSON only. Produce a bounded experiment plan with runnable code." in system_message:
                 return json.dumps(
                     {

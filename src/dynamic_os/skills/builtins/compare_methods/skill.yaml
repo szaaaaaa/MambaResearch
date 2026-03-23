@@ -1,0 +1,22 @@
+id: compare_methods
+name: Compare Methods
+version: 1.0.0
+applicable_roles:
+  - analyst
+description: Build a structured comparison of methods from evidence and notes.
+input_contract:
+  required: []
+  requires_any:
+    - PaperNotes
+    - EvidenceMap
+    - ExperimentResults
+  optional:
+    - PaperNotes
+    - EvidenceMap
+    - ExperimentResults
+output_artifacts:
+  - MethodComparison
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

@@ -9,3 +9,11 @@ services:
       - ./data:/app/data
       - ./configs/agent.yaml:/app/configs/agent.yaml
     restart: unless-stopped
+    # GPU passthrough (uncomment if host has NVIDIA GPU and nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

@@ -46,6 +46,17 @@ async def run(ctx: SkillContext) -> SkillOutput:
             "gap_count": len(gaps),
         },
     )
+    if ctx.knowledge_graph is not None:
+        for item in evidence_items:
+            summary_text = str(item.get("summary", "")).strip()
+            if summary_text and len(summary_text) > 10:
+                concept_id = f"concept:{summary_text[:64]}"
+                ctx.knowledge_graph.add_node(
+                    node_id=concept_id,
+                    node_type="Concept",
+                    properties={"name": summary_text[:120], "source_artifact": item.get("artifact_id", "")},
+                )
+
     return SkillOutput(
         success=True,
         output_artifacts=[evidence_map, gap_map],

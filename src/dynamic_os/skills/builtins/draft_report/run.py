@@ -103,6 +103,20 @@ async def run(ctx: SkillContext) -> SkillOutput:
         for artifact in ctx.input_artifacts
     )
 
+    review_feedback = ""
+    for art in ctx.input_artifacts:
+        if art.artifact_type == "ReviewVerdict" and art.payload.get("verdict") == "needs_revision":
+            suggestions = str(art.payload.get("modification_suggestions", ""))
+            issues = art.payload.get("issues", [])
+            review_feedback = f"\n\nREVISION REQUIRED based on prior review:\nSuggestions: {suggestions}\nIssues: {', '.join(issues)}"
+            break
+
+    user_guidance = ""
+    for art in ctx.input_artifacts:
+        if art.artifact_type == "UserGuidance":
+            user_guidance = f"\n\nUser guidance: {art.payload.get('response', '')}"
+            break
+
     cite_keys_info = ""
     if ctx.config.get("_cite_keys_map"):
         key_map = ctx.config["_cite_keys_map"]
@@ -120,6 +134,8 @@ async def run(ctx: SkillContext) -> SkillOutput:
         if artifact_text
         else ctx.user_request or ctx.goal
     )
+    user_content += review_feedback
+    user_content += user_guidance
     report_text = await ctx.tools.llm_chat(
         [
             {

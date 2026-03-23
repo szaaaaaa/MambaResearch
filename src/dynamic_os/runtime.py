@@ -18,6 +18,8 @@ from src.dynamic_os.policy.engine import PolicyEngine
 from src.dynamic_os.roles.registry import RoleRegistry
 from src.dynamic_os.skills.registry import SkillRegistry
 from src.dynamic_os.storage.memory import InMemoryArtifactStore, InMemoryObservationStore, InMemoryPlanStore
+from src.dynamic_os.storage.sqlite_store import SqliteArtifactStore, SqliteObservationStore, SqlitePlanStore, init_knowledge_db
+from src.dynamic_os.storage.knowledge_graph import KnowledgeGraph
 from src.dynamic_os.tools.backends import ConfiguredLLMClient
 from src.dynamic_os.tools.discovery import StartedMcpRuntime, start_mcp_runtime
 from src.dynamic_os.tools.gateway import ToolGateway
@@ -266,11 +268,25 @@ class DynamicResearchRuntime:
 
         config = load_yaml(_CONFIG_PATH)
         saved_env = read_env_file(_ENV_PATH)
-        artifact_store = InMemoryArtifactStore()
+
+        persistence_mode = str((config.get("knowledge_graph") or {}).get("persistence_mode", "memory")).strip()
+        knowledge_graph = None
+        if persistence_mode == "sqlite":
+            kg_sqlite_path = str((config.get("knowledge_graph") or {}).get("sqlite_path", "")).strip()
+            if not kg_sqlite_path:
+                kg_sqlite_path = str(self._root / "data" / "knowledge_graph.db")
+            kg_conn = init_knowledge_db(kg_sqlite_path)
+            artifact_store = SqliteArtifactStore(kg_conn, resolved_run_id)
+            observation_store = SqliteObservationStore(kg_conn, resolved_run_id)
+            plan_store = SqlitePlanStore(kg_conn, resolved_run_id)
+            knowledge_graph = KnowledgeGraph(kg_conn, resolved_run_id)
+        else:
+            artifact_store = InMemoryArtifactStore()
+            observation_store = InMemoryObservationStore()
+            plan_store = InMemoryPlanStore()
+
         self._artifact_store = artifact_store
-        observation_store = InMemoryObservationStore()
-        plan_store = InMemoryPlanStore()
-        role_registry = RoleRegistry.from_file()
+        role_registry = RoleRegistry.from_file_with_custom(cwd=self._root)
         skill_registry = SkillRegistry.discover()
         llm_client = ConfiguredLLMClient(saved_env=saved_env, workspace_root=self._root, config=config)
         events: list[dict[str, Any]] = []
@@ -348,6 +364,7 @@ class DynamicResearchRuntime:
             policy=policy,
             event_sink=emit,
             config=config,
+            knowledge_graph=knowledge_graph,
         )
         executor = Executor(
             planner=planner,
@@ -395,6 +412,8 @@ class DynamicResearchRuntime:
                 status = "failed"
         finally:
             self._active_executor = None
+            if knowledge_graph is not None:
+                knowledge_graph.close()
             await mcp_runtime.close()
 
             artifacts = artifact_store.list_all()
