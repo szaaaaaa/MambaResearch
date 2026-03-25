@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 
-import networkx
 from datetime import datetime, timezone
 
 # Node types
@@ -44,6 +43,7 @@ ALL_EDGE_TYPES = (
 
 class KnowledgeGraph:
     def __init__(self, conn: sqlite3.Connection, run_id: str) -> None:
+        import networkx  # lazy import – optional dependency
         self._graph: networkx.DiGraph = networkx.DiGraph()
         self._conn: sqlite3.Connection | None = conn
         self._run_id = run_id
