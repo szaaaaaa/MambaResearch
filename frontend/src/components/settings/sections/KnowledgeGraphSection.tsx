@@ -1,9 +1,9 @@
 import React from 'react';
 import { useAppContext } from '../../../store';
-import { Card, Select, Input } from '../../ui';
+import { Button, Card, Select, Input } from '../../ui';
 
 export const KnowledgeGraphSection: React.FC = () => {
-  const { state, updateProjectConfig } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
   const kgConfig = state.projectConfig?.knowledge_graph || {};
   const isSqlite = (kgConfig.persistence_mode || 'memory') === 'sqlite';
   const [kgStatus, setKgStatus] = React.useState<Record<string, unknown> | null>(null);
@@ -70,6 +70,9 @@ export const KnowledgeGraphSection: React.FC = () => {
           )}
         </>
       )}
+      <div className="mt-5 flex justify-end">
+        <Button onClick={() => void saveProjectConfig()}>保存知识图谱设置</Button>
+      </div>
     </Card>
   );
 };

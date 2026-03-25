@@ -15,15 +15,54 @@ export const ToolsSection: React.FC = () => {
   const applyRecommendedToolchain = () => {
     updateProjectConfig('retrieval.runtime_mode', 'standard');
     updateProjectConfig('retrieval.hybrid', true);
-    updateProjectConfig('sources.arxiv.enabled', true);
-    updateProjectConfig('sources.semantic_scholar.enabled', true);
     updateProjectConfig('sources.web.enabled', true);
+    updateProjectConfig('sources.paper_search_mcp.enabled', true);
+    updateProjectConfig('sources.paper_search_mcp.max_results_per_query', 20);
     updateProjectConfig('ingest.figure.enabled', false);
   };
 
   return (
     <div className="space-y-5">
-      <Card title="检索工具" description="控制主要研究工具链的启用方式。">
+      <Card title="学术搜索" description="通过 Paper Search MCP 一次查询 25+ 学术数据库。">
+        <div className="grid gap-5 md:grid-cols-2">
+          <Toggle
+            label="启用 Paper Search MCP"
+            description="覆盖 arXiv、Semantic Scholar、Crossref、PubMed、dblp、bioRxiv 等。"
+            checked={projectConfig.sources.paper_search_mcp.enabled}
+            onChange={(checked) => updateProjectConfig('sources.paper_search_mcp.enabled', checked)}
+          />
+          <Select
+            label="每次查询最大结果数"
+            options={[
+              { value: '10', label: '10' },
+              { value: '20', label: '20' },
+              { value: '30', label: '30' },
+              { value: '50', label: '50' },
+            ]}
+            value={String(projectConfig.sources.paper_search_mcp.max_results_per_query)}
+            onChange={(event) =>
+              updateProjectConfig('sources.paper_search_mcp.max_results_per_query', Number(event.target.value))
+            }
+          />
+        </div>
+        <div className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
+          <p className="font-medium">数据源覆盖范围</p>
+          <p className="mt-1">
+            免费可用：arXiv、bioRxiv、medRxiv、Crossref、OpenAlex、dblp、PubMed、HAL、Zenodo
+          </p>
+          <p className="mt-1">
+            需填邮箱/免费Key：Unpaywall（邮箱）、CORE（免费Key）、DOAJ、Zenodo
+          </p>
+          <p className="mt-1">
+            付费/机构：IEEE Xplore、ACM DL（需配置 API Key，不配则自动跳过）
+          </p>
+          <p className="mt-2 text-xs opacity-75">
+            API Key 在 configs/agent.yaml 的 mcp.servers.paper_search.env 中配置。
+          </p>
+        </div>
+      </Card>
+
+      <Card title="检索与通用工具" description="检索模式、网页搜索和其他通用能力。">
         <div className="grid gap-5 md:grid-cols-2">
           <Select
             label="检索模式"
@@ -42,16 +81,6 @@ export const ToolsSection: React.FC = () => {
             onChange={(checked) => updateProjectConfig('retrieval.hybrid', checked)}
           />
           <Toggle
-            label="启用 arXiv"
-            checked={projectConfig.sources.arxiv.enabled}
-            onChange={(checked) => updateProjectConfig('sources.arxiv.enabled', checked)}
-          />
-          <Toggle
-            label="启用 Semantic Scholar"
-            checked={projectConfig.sources.semantic_scholar.enabled}
-            onChange={(checked) => updateProjectConfig('sources.semantic_scholar.enabled', checked)}
-          />
-          <Toggle
             label="启用网页搜索"
             checked={projectConfig.sources.web.enabled}
             onChange={(checked) => updateProjectConfig('sources.web.enabled', checked)}
@@ -62,7 +91,6 @@ export const ToolsSection: React.FC = () => {
             onChange={(checked) => updateProjectConfig('ingest.figure.enabled', checked)}
           />
         </div>
-
         <div className="flex justify-end">
           <Button onClick={applyRecommendedToolchain}>启用推荐组合</Button>
         </div>

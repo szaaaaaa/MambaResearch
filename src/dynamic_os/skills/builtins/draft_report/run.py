@@ -11,65 +11,104 @@ from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
 _SURVEY_SYSTEM_PROMPT_EN = (
     "You are an academic survey paper writer. Based ONLY on the provided artifacts "
     "(paper notes, evidence maps, source sets), draft a comprehensive survey paper "
-    "in ENGLISH as a COMPLETE, COMPILABLE LaTeX document.\n\n"
+    "in ENGLISH as a COMPLETE, COMPILABLE LaTeX document.\n"
+    "CRITICAL: The entire paper — title, abstract, all section headings, all body text — "
+    "MUST be written in English. Do NOT include any Chinese characters anywhere in the output.\n\n"
 )
 
 _SURVEY_SYSTEM_PROMPT_ZH = (
     "You are an academic survey paper writer. Based ONLY on the provided artifacts "
     "(paper notes, evidence maps, source sets), draft a comprehensive survey paper "
-    "in CHINESE as a COMPLETE, COMPILABLE LaTeX document.\n\n"
+    "in CHINESE as a COMPLETE, COMPILABLE LaTeX document.\n"
+    "CRITICAL: The entire paper — title, abstract, all section headings, all body text — "
+    "MUST be written in Chinese. Section headings MUST use Chinese, NOT English.\n\n"
 )
 
-_SURVEY_TEMPLATE = (
+_SURVEY_PREAMBLE = (
     "Output the FULL LaTeX source code starting with \\documentclass and ending with \\end{document}.\n"
     "Do NOT wrap it in ```latex``` code fences. Output raw LaTeX only.\n\n"
-    "Use this exact template structure:\n\n"
     "\\documentclass{article}\n"
     "\\usepackage[utf8]{inputenc}\n"
     "\\usepackage[T1]{fontenc}\n"
     "\\usepackage{times}\n"
     "\\usepackage[margin=1in]{geometry}\n"
-    "\\usepackage{natbib}\n"
+    "\\usepackage[numbers,sort&compress]{natbib}\n"
     "\\usepackage{hyperref}\n"
     "\\usepackage{booktabs}\n"
     "\\usepackage{amsmath}\n"
-    "% For NeurIPS: replace the above with \\usepackage{neurips_2024} on Overleaf\n\n"
-    "\\title{[Survey Title]}\n"
+    "\\usepackage{graphicx}\n\n"
+)
+
+_SURVEY_STRUCTURE = (
+    "Document structure:\n"
+    "- Start with \\title, \\author{Research Agent}, \\date{}, \\begin{document}, \\maketitle.\n"
+    "- Include \\begin{abstract} ... \\end{abstract}.\n"
+    "- Design your own section structure (\\section, \\subsection) based on the research topic. "
+    "Choose section titles that best fit the content — do NOT use a generic fixed outline. "
+    "For example, a methods-comparison survey might use sections like 'Transformer-Based Approaches' "
+    "and 'Diffusion Models', while a domain survey might use 'Applications in Healthcare' and "
+    "'Applications in Finance'.\n"
+    "- The paper MUST include at minimum: an introduction, a main body with logical subdivisions, "
+    "and a conclusion. Beyond that, organize freely.\n"
+    "- End with \\bibliographystyle{unsrtnat}, \\bibliography{references}, \\end{document}.\n\n"
+)
+
+_SURVEY_TEMPLATE_EN = (
+    _SURVEY_STRUCTURE
+    + "Example skeleton (adapt section titles to the actual topic):\n\n"
+    "\\title{[Descriptive Survey Title]}\n"
     "\\author{Research Agent}\n"
-    "\\date{}\n\n"
+    "\\date{}\n"
     "\\begin{document}\n"
-    "\\maketitle\n\n"
-    "\\begin{abstract} ... \\end{abstract}\n\n"
-    "\\section{Introduction} ...\n"
-    "\\section{Background} ...\n"
-    "\\section{Taxonomy} ...\n"
-    "\\section{Review of Methods}\n"
-    "\\subsection{Category 1} ...\n"
-    "\\subsection{Category 2} ...\n"
-    "\\section{Comparison and Discussion} ...\n"
-    "\\section{Future Directions} ...\n"
-    "\\section{Conclusion} ...\n\n"
-    "\\bibliographystyle{plainnat}\n"
-    "\\bibliography{references}\n\n"
+    "\\maketitle\n"
+    "\\begin{abstract} ... \\end{abstract}\n"
+    "\\section{Introduction}\n"
+    "\\section{[Topic-Specific Section Title]} ...\n"
+    "\\subsection{[Subtopic]} ...\n"
+    "\\section{[Another Topic-Specific Section]} ...\n"
+    "\\section{Discussion} ...\n"
+    "\\section{Conclusion} ...\n"
+    "\\bibliographystyle{unsrtnat}\n"
+    "\\bibliography{references}\n"
     "\\end{document}\n\n"
+)
+
+_SURVEY_TEMPLATE_ZH = (
+    "\\usepackage{ctex}\n\n"
+    + _SURVEY_STRUCTURE
+    + "Example skeleton (adapt section titles to the actual topic — ALL titles in Chinese):\n\n"
+    "\\title{[根据主题拟定的中文标题]}\n"
+    "\\author{Research Agent}\n"
+    "\\date{}\n"
+    "\\begin{document}\n"
+    "\\maketitle\n"
+    "\\begin{abstract} ... \\end{abstract}\n"
+    "\\section{引言}\n"
+    "\\section{[根据主题自定的章节标题]} ...\n"
+    "\\subsection{[子主题]} ...\n"
+    "\\section{[根据主题自定的章节标题]} ...\n"
+    "\\section{讨论} ...\n"
+    "\\section{结论} ...\n"
+    "\\bibliographystyle{unsrtnat}\n"
+    "\\bibliography{references}\n"
+    "\\end{document}\n\n"
+)
+
+_SURVEY_REQUIREMENTS = (
     "Requirements:\n"
-    "- A references.bib file is provided separately. Use \\cite{citekey} to cite papers.\n"
+    "- A references.bib file is provided separately. Use \\cite{citekey} to cite papers. "
+    "Citations will render as numbered references like [1], [2, 3], etc.\n"
     "- EVERY paper listed in the available cite keys MUST be cited at least once using \\cite{}. Do not skip any.\n"
     "- Do NOT include \\begin{thebibliography}. Use \\bibliography{references} instead.\n"
-    "- Use \\subsection for each category in the Review of Methods section.\n"
     "- Be thorough and detailed. Each section should have substantive content.\n"
     "- Ensure the LaTeX compiles without errors.\n\n"
     "Writing style (CRITICAL):\n"
     "- Write in continuous, flowing academic prose. NEVER use bullet points (\\begin{itemize}), numbered lists (\\begin{enumerate}), or dash-prefixed lists.\n"
     "- Each paragraph should be a coherent block of text with topic sentences, supporting evidence, and transitions.\n"
-    "- Integrate citations naturally into sentences, e.g. 'Recent work by \\cite{key} demonstrated that...' rather than listing papers.\n"
+    "- Integrate citations naturally into sentences, e.g. 'Recent work \\cite{key} demonstrated that...' or 'as shown in \\cite{key1, key2}', rather than listing papers.\n"
     "- Use connective phrases to link ideas: 'furthermore', 'in contrast', 'building upon this', 'notably', etc.\n"
     "- Mimic the writing style of top-venue survey papers (NeurIPS, ICML, ACL). No informal language, no AI-generated patterns like 'Here are the key findings:' or 'Let us discuss'.\n"
     "- Vary sentence structure and length. Avoid repetitive sentence openings."
-)
-
-_SURVEY_ZH_EXTRA = (
-    "\n- Add \\usepackage{ctex} right after \\documentclass{article} for Chinese support."
 )
 
 
@@ -94,9 +133,10 @@ async def run(ctx: SkillContext) -> SkillOutput:
     language = str(ctx.config.get("agent", {}).get("language", "en")).strip().lower()
     is_zh = language in ("zh", "cn", "chinese")
 
-    system_prompt = (_SURVEY_SYSTEM_PROMPT_ZH if is_zh else _SURVEY_SYSTEM_PROMPT_EN) + _SURVEY_TEMPLATE
     if is_zh:
-        system_prompt += _SURVEY_ZH_EXTRA
+        system_prompt = _SURVEY_SYSTEM_PROMPT_ZH + _SURVEY_PREAMBLE + _SURVEY_TEMPLATE_ZH + _SURVEY_REQUIREMENTS
+    else:
+        system_prompt = _SURVEY_SYSTEM_PROMPT_EN + _SURVEY_PREAMBLE + _SURVEY_TEMPLATE_EN + _SURVEY_REQUIREMENTS
 
     artifact_text = "\n\n".join(
         f"{artifact.artifact_type}:\n{_serialize_artifact(artifact)}"
@@ -115,6 +155,31 @@ async def run(ctx: SkillContext) -> SkillOutput:
     for art in ctx.input_artifacts:
         if art.artifact_type == "UserGuidance":
             user_guidance = f"\n\nUser guidance: {art.payload.get('response', '')}"
+            break
+
+    figure_info = ""
+    for art in ctx.input_artifacts:
+        if art.artifact_type == "FigureSet":
+            paths = list(art.payload.get("figure_paths", []))
+            descriptions = list(art.payload.get("descriptions", []))
+            if paths:
+                figure_lines = []
+                for i, path in enumerate(paths):
+                    desc = descriptions[i] if i < len(descriptions) else f"Figure {i + 1}"
+                    filename = path.rsplit("/", 1)[-1] if "/" in path else path
+                    figure_lines.append(f"  - {filename}: {desc}")
+                figure_info = (
+                    "\n\nAvailable figures (include ALL of them in the paper using \\includegraphics):\n"
+                    + "\n".join(figure_lines)
+                    + "\n\nFor each figure, use this LaTeX pattern:\n"
+                    + "\\begin{figure}[htbp]\n"
+                    + "  \\centering\n"
+                    + "  \\includegraphics[width=0.8\\textwidth]{figures/FILENAME}\n"
+                    + "  \\caption{DESCRIPTION}\n"
+                    + "  \\label{fig:LABEL}\n"
+                    + "\\end{figure}\n"
+                    + "\nPlace each figure in a relevant section and reference it in the text using \\ref{fig:LABEL}."
+                )
             break
 
     cite_keys_info = ""
@@ -136,6 +201,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
     )
     user_content += review_feedback
     user_content += user_guidance
+    user_content += figure_info
     report_text = await ctx.tools.llm_chat(
         [
             {

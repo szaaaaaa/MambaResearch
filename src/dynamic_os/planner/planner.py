@@ -361,26 +361,68 @@ class Planner:
             iteration_records = [r for r in self._artifact_store.list_all() if r.artifact_type == "ExperimentIteration"]
             if iteration_records:
                 latest_iter = iteration_records[-1]
-                if latest_iter.payload.get("should_continue"):
+                strategy = str(latest_iter.payload.get("strategy", "continue"))
+                should_continue = latest_iter.payload.get("should_continue", False)
+
+                if strategy == "early_stop" or not should_continue:
+                    # Experiment loop done — analyze and report
+                    analyze_node = self._fallback_node(
+                        node_id="node_analyst_final",
+                        role=RoleId.analyst,
+                        goal="分析实验最终结果并生成指标摘要",
+                        inputs=self._preferred_inputs(latest_by_type, ["ExperimentResults", "ExperimentIteration"]),
+                        allowed_skills=["analyze_metrics"],
+                        success_criteria=["生成 ExperimentAnalysis 和 PerformanceMetrics"],
+                        expected_outputs=["ExperimentAnalysis", "PerformanceMetrics"],
+                    )
+                    report_node = self._fallback_node(
+                        node_id="node_writer_experiment_report",
+                        role=RoleId.writer,
+                        goal="根据实验分析结果撰写最终报告",
+                        inputs=self._preferred_inputs(latest_by_type, ["ExperimentAnalysis", "PerformanceMetrics", "EvidenceMap", "PaperNotes"])
+                        + [artifact_ref_for(node_id="node_analyst_final", artifact_type="ExperimentAnalysis"),
+                           artifact_ref_for(node_id="node_analyst_final", artifact_type="PerformanceMetrics")],
+                        allowed_skills=["draft_report"],
+                        success_criteria=["生成 ResearchReport"],
+                        expected_outputs=["ResearchReport"],
+                    )
                     return RoutePlan(
                         run_id=run_id,
                         planning_iteration=planning_iteration,
-                        horizon=1,
-                        nodes=[
-                            self._fallback_node(
-                                node_id="node_experimenter_redesign",
-                                role=RoleId.experimenter,
-                                goal="根据优化建议改进实验设计",
-                                inputs=self._preferred_inputs(latest_by_type, ["ExperimentIteration", "ExperimentPlan", "ExperimentResults"]),
-                                allowed_skills=["design_experiment"],
-                                success_criteria=["生成改进后的 ExperimentPlan"],
-                                expected_outputs=["ExperimentPlan"],
-                            )
-                        ],
-                        edges=[],
+                        horizon=2,
+                        nodes=[analyze_node, report_node],
+                        edges=[PlanEdge(source="node_analyst_final", target="node_writer_experiment_report")],
                         planner_notes=notes,
                         terminate=False,
                     )
+
+                # Experiment continues — route back to design
+                if strategy == "pivot":
+                    redesign_goal = "尝试完全不同的实验方法（PIVOT策略）"
+                elif strategy == "refine":
+                    redesign_goal = "微调当前实验方案（REFINE策略）"
+                else:
+                    redesign_goal = "根据优化建议改进实验设计"
+
+                return RoutePlan(
+                    run_id=run_id,
+                    planning_iteration=planning_iteration,
+                    horizon=1,
+                    nodes=[
+                        self._fallback_node(
+                            node_id="node_experimenter_redesign",
+                            role=RoleId.experimenter,
+                            goal=redesign_goal,
+                            inputs=self._preferred_inputs(latest_by_type, ["ExperimentIteration", "ExperimentPlan", "ExperimentResults"]),
+                            allowed_skills=["design_experiment"],
+                            success_criteria=["生成改进后的 ExperimentPlan"],
+                            expected_outputs=["ExperimentPlan"],
+                        )
+                    ],
+                    edges=[],
+                    planner_notes=notes,
+                    terminate=False,
+                )
 
         if "ReviewVerdict" in available_types:
             review_records = [r for r in self._artifact_store.list_all() if r.artifact_type == "ReviewVerdict"]
@@ -487,10 +529,50 @@ class Planner:
             )
             loaded_ids = {s.spec.id for s in self._skill_registry.list()}
             if "draft_report" in loaded_ids:
+                should_generate_figures = (
+                    "generate_figures" in loaded_ids
+                    and "FigureSet" not in available_types
+                    and bool(available_types & {"EvidenceMap", "ExperimentResults", "ExperimentAnalysis", "PerformanceMetrics", "MethodComparison"})
+                )
                 report_inputs = evidence_inputs + [
                     artifact_ref_for(node_id="node_researcher_evidence", artifact_type="EvidenceMap"),
                     artifact_ref_for(node_id="node_researcher_evidence", artifact_type="GapMap"),
                 ]
+                if should_generate_figures:
+                    figure_node = self._fallback_node(
+                        node_id="node_analyst_figures",
+                        role=RoleId.analyst,
+                        goal="根据证据和分析数据生成可视化图表",
+                        inputs=self._preferred_inputs(latest_by_type, ["EvidenceMap", "ExperimentResults", "ExperimentAnalysis", "PerformanceMetrics", "MethodComparison"])
+                        + [artifact_ref_for(node_id="node_researcher_evidence", artifact_type="EvidenceMap")],
+                        allowed_skills=["generate_figures"],
+                        success_criteria=["生成 FigureSet"],
+                        expected_outputs=["FigureSet"],
+                    )
+                    report_inputs = report_inputs + [
+                        artifact_ref_for(node_id="node_analyst_figures", artifact_type="FigureSet"),
+                    ]
+                    report_node = self._fallback_node(
+                        node_id="node_writer_report",
+                        role=RoleId.writer,
+                        goal="根据证据产出最终研究报告",
+                        inputs=report_inputs,
+                        allowed_skills=["draft_report"],
+                        success_criteria=["生成 ResearchReport"],
+                        expected_outputs=["ResearchReport"],
+                    )
+                    return RoutePlan(
+                        run_id=run_id,
+                        planning_iteration=planning_iteration,
+                        horizon=3,
+                        nodes=[evidence_node, figure_node, report_node],
+                        edges=[
+                            PlanEdge(source="node_researcher_evidence", target="node_analyst_figures"),
+                            PlanEdge(source="node_analyst_figures", target="node_writer_report"),
+                        ],
+                        planner_notes=notes,
+                        terminate=False,
+                    )
                 report_node = self._fallback_node(
                     node_id="node_writer_report",
                     role=RoleId.writer,
@@ -520,6 +602,44 @@ class Planner:
             )
 
         if "ResearchReport" not in available_types:
+            loaded_ids = {s.spec.id for s in self._skill_registry.list()}
+            should_generate_figures = (
+                "generate_figures" in loaded_ids
+                and "FigureSet" not in available_types
+                and bool(available_types & {"EvidenceMap", "ExperimentResults", "ExperimentAnalysis", "PerformanceMetrics", "MethodComparison"})
+            )
+            if should_generate_figures:
+                figure_node = self._fallback_node(
+                    node_id="node_analyst_figures",
+                    role=RoleId.analyst,
+                    goal="根据证据和分析数据生成可视化图表",
+                    inputs=self._preferred_inputs(latest_by_type, ["EvidenceMap", "ExperimentResults", "ExperimentAnalysis", "PerformanceMetrics", "MethodComparison"]),
+                    allowed_skills=["generate_figures"],
+                    success_criteria=["生成 FigureSet"],
+                    expected_outputs=["FigureSet"],
+                )
+                report_node = self._fallback_node(
+                    node_id="node_writer_report",
+                    role=RoleId.writer,
+                    goal="根据证据产出最终研究报告",
+                    inputs=self._preferred_inputs(
+                        latest_by_type,
+                        ["PaperNotes", "EvidenceMap", "GapMap", "SourceSet", "TopicBrief", "ExperimentAnalysis", "PerformanceMetrics"],
+                    )
+                    + [artifact_ref_for(node_id="node_analyst_figures", artifact_type="FigureSet")],
+                    allowed_skills=["draft_report"],
+                    success_criteria=["生成 ResearchReport"],
+                    expected_outputs=["ResearchReport"],
+                )
+                return RoutePlan(
+                    run_id=run_id,
+                    planning_iteration=planning_iteration,
+                    horizon=2,
+                    nodes=[figure_node, report_node],
+                    edges=[PlanEdge(source="node_analyst_figures", target="node_writer_report")],
+                    planner_notes=notes,
+                    terminate=False,
+                )
             return RoutePlan(
                 run_id=run_id,
                 planning_iteration=planning_iteration,

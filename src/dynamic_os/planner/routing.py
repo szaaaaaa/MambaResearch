@@ -229,10 +229,17 @@ def derive_role_routing_policy(*, user_request: str, artifacts: list[ArtifactRec
 
     if "ExperimentIteration" in artifact_types:
         iter_records = [r for r in artifacts if r.artifact_type == "ExperimentIteration"]
-        if iter_records and iter_records[-1].payload.get("should_continue"):
-            _append_unique(required_roles, "experimenter")
-            _append_unique(required_roles, "analyst")
-            reasons.append("ExperimentIteration 标记 should_continue=true，需要 experimenter 重新设计 + analyst 评估。")
+        if iter_records:
+            latest_iter = iter_records[-1]
+            strategy = str(latest_iter.payload.get("strategy", "continue"))
+            if strategy == "early_stop" or not latest_iter.payload.get("should_continue"):
+                _append_unique(required_roles, "analyst")
+                _append_unique(required_roles, "writer")
+                reasons.append(f"实验循环结束（strategy={strategy}），需要 analyst 分析结果 + writer 撰写报告。")
+            elif latest_iter.payload.get("should_continue"):
+                _append_unique(required_roles, "experimenter")
+                _append_unique(required_roles, "analyst")
+                reasons.append(f"ExperimentIteration strategy={strategy}，需要 experimenter 重新设计 + analyst 评估。")
 
     if "ReviewVerdict" in artifact_types:
         review_records = [r for r in artifacts if r.artifact_type == "ReviewVerdict"]

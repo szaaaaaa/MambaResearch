@@ -30,4 +30,5 @@ dependencies = [
     "uvicorn>=0.30.0",
     "marker-pdf>=1.0.0",
     "networkx>=3.0",
+    "uv>=0.6.0",
 ]

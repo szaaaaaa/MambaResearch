@@ -363,7 +363,11 @@ def _phase5_inputs(skill_id: str) -> list[ArtifactRecord]:
                 payload={
                     "plan": "Compare retrieval planning against a baseline.",
                     "language": "python",
-                    "code": "metrics = {'accuracy': 0.93, 'latency_ms': 115}\nprint(metrics)",
+                    "workspace_path": str(Path(__file__).parent / "_test_workspace"),
+                    "entry_point": "train.py",
+                    "eval_script": "evaluate.py",
+                    "mutable_files": ["configs/hparams.yaml", "models/model.py"],
+                    "snapshot": {},
                 },
             )
         ]
@@ -452,12 +456,14 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
                         "modification_suggestions": "",
                     }
                 )
-            if "Return JSON only. Produce a bounded experiment plan with runnable code." in system_message:
+            if "You are modifying experiment files" in system_message:
                 return json.dumps(
                     {
                         "plan": f"Evaluate retrieval planning for: {user_message[:80]}",
-                        "language": "python",
-                        "code": "metrics = {'accuracy': 0.93, 'latency_ms': 115}\nprint(metrics)",
+                        "files": {
+                            "configs/hparams.yaml": "epochs: 5\nlearning_rate: 0.001\n",
+                            "models/model.py": "import torch\ndef build_model(hp): return torch.nn.Linear(10,10)\n",
+                        },
                     }
                 )
             return f"LLM summary: {user_message[:120]}"
@@ -2202,25 +2208,37 @@ def test_phase5_run_experiment_returns_failure_on_executor_error() -> None:
                 "ExperimentPlan",
                 role=RoleId.experimenter,
                 skill="design_experiment",
-                payload={"language": "python", "code": "raise RuntimeError('boom')"},
+                payload={
+                    "language": "python",
+                    "workspace_path": str(Path(__file__).parent / "_test_workspace"),
+                    "entry_point": "train.py",
+                    "eval_script": "evaluate.py",
+                    "mutable_files": [],
+                    "snapshot": {},
+                },
             )
         ],
         tools=ToolGateway(
             registry=ToolRegistry.from_servers(
-                [{"server_id": "exec", "tools": [{"name": "execute_code", "capability": "execute_code"}]}]
+                [
+                    {"server_id": "llm", "tools": [{"name": "chat", "capability": "llm_chat"}]},
+                    {"server_id": "exec", "tools": [{"name": "execute_code", "capability": "execute_code"}]},
+                ]
             ),
             policy=policy,
+            mcp_invoker=lambda tool, payload: "{}",
             code_executor=lambda **kwargs: {"exit_code": 1, "stderr": "boom"},
         ),
+        config={"agent": {"experiment_plan": {"recovery": {"max_retries": 0}}}},
     )
 
     output = asyncio.run(loaded.runner(ctx))
 
     assert output.success is False
-    assert "exit_code=1" in (output.error or "")
+    assert "failed" in (output.error or "").lower()
 
 
-def test_phase5_design_experiment_emits_llm_generated_code() -> None:
+def test_phase5_design_experiment_emits_workspace_plan() -> None:
     registry = SkillRegistry.discover([BUILTINS_DIR])
     loaded = registry.get("design_experiment")
     ctx = SkillContext(
@@ -2231,6 +2249,21 @@ def test_phase5_design_experiment_emits_llm_generated_code() -> None:
         goal="Design an experiment for retrieval planning",
         input_artifacts=_phase5_inputs("design_experiment"),
         tools=_phase5_gateway(),
+        config={
+            "project": {"data_dir": str(Path(__file__).parent / "_test_data")},
+            "agent": {
+                "experiment_plan": {
+                    "gpu": "cpu",
+                    "objective": "test objective",
+                    "workspace": {
+                        "template": "builtin",
+                        "mutable_files": ["configs/hparams.yaml", "models/model.py"],
+                        "entry_point": "train.py",
+                        "eval_script": "evaluate.py",
+                    },
+                }
+            },
+        },
     )
 
     output = asyncio.run(loaded.runner(ctx))
@@ -2238,34 +2271,54 @@ def test_phase5_design_experiment_emits_llm_generated_code() -> None:
     assert output.success is True
     artifact = output.output_artifacts[0]
     assert artifact.payload["plan"].startswith("Evaluate retrieval planning")
-    assert artifact.payload["code"] == "metrics = {'accuracy': 0.93, 'latency_ms': 115}\nprint(metrics)"
+    assert "workspace_path" in artifact.payload
+    assert artifact.payload["mutable_files"] == ["configs/hparams.yaml", "models/model.py"]
 
 
-def test_phase5_run_experiment_requires_executable_code() -> None:
+def test_phase5_run_experiment_fails_with_bad_executor() -> None:
     registry = SkillRegistry.discover([BUILTINS_DIR])
     loaded = registry.get("run_experiment")
+    policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
     ctx = SkillContext(
         skill_id="run_experiment",
         role_id="experimenter",
-        run_id="run_phase5_missing_code",
-        node_id="node_run_experiment_missing_code",
+        run_id="run_phase5_missing_workspace",
+        node_id="node_run_experiment_missing_workspace",
         goal="Run the experiment",
         input_artifacts=[
             _phase5_artifact(
-                "experiment_plan_missing_code_1",
+                "experiment_plan_missing_ws_1",
                 "ExperimentPlan",
                 role=RoleId.experimenter,
                 skill="design_experiment",
-                payload={"language": "python"},
+                payload={
+                    "language": "python",
+                    "workspace_path": "/nonexistent/workspace",
+                    "entry_point": "train.py",
+                    "eval_script": "evaluate.py",
+                    "mutable_files": [],
+                    "snapshot": {},
+                },
             )
         ],
-        tools=_phase5_gateway(),
+        tools=ToolGateway(
+            registry=ToolRegistry.from_servers(
+                [
+                    {"server_id": "llm", "tools": [{"name": "chat", "capability": "llm_chat"}]},
+                    {"server_id": "exec", "tools": [{"name": "execute_code", "capability": "execute_code"}]},
+                ]
+            ),
+            policy=policy,
+            mcp_invoker=lambda tool, payload: "{}",
+            code_executor=lambda **kwargs: {"exit_code": 1, "stderr": "workspace not found"},
+        ),
+        config={"agent": {"experiment_plan": {"recovery": {"max_retries": 0}}}},
     )
 
     output = asyncio.run(loaded.runner(ctx))
 
     assert output.success is False
-    assert output.error == "run_experiment requires executable code in ExperimentPlan"
+    assert "failed" in (output.error or "").lower()
 
 
 def test_phase5_fetch_fulltext_and_extract_notes_use_retrieved_documents() -> None:
@@ -3435,6 +3488,20 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
             return SimpleNamespace(termination_reason="planner_terminated")
 
     monkeypatch.setattr(runtime_module, "Executor", FakeExecutor)
+    # Force memory persistence so CI doesn't need networkx
+    monkeypatch.setattr(
+        runtime_module,
+        "load_yaml",
+        lambda _path: {"knowledge_graph": {"persistence_mode": "memory"}},
+    )
+    # Bypass MCP startup — no real servers in CI
+    async def _fake_mcp(_self, _config):
+        from src.dynamic_os.tools.discovery import StartedMcpRuntime
+        from src.dynamic_os.tools.registry import ToolRegistry
+        return StartedMcpRuntime(registry=ToolRegistry([]), snapshot=[], _sessions={})
+    monkeypatch.setattr(
+        runtime_module.DynamicResearchRuntime, "_start_mcp_runtime", _fake_mcp,
+    )
     output_root = Path(".tmp_phase7_runtime_test")
     output_root.mkdir(parents=True, exist_ok=True)
     runtime = runtime_module.DynamicResearchRuntime(root=Path.cwd(), output_root=output_root)

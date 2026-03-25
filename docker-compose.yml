@@ -8,6 +8,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./configs/agent.yaml:/app/configs/agent.yaml
+      - ./src:/app/src
+      - ./app.py:/app/app.py
+      - ./scripts:/app/scripts
     restart: unless-stopped
     # GPU passthrough (uncomment if host has NVIDIA GPU and nvidia-container-toolkit):
     # deploy:

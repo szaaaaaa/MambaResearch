@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from src.common.config_utils import get_by_dotted, load_yaml, read_env_file
+from src.common.config_utils import as_bool, get_by_dotted, load_yaml, read_env_file
 from src.dynamic_os.artifact_refs import artifact_ref_for_record
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.observation import NodeStatus, Observation
@@ -50,13 +50,51 @@ def _artifact_ref(artifact: ArtifactRecord) -> str:
     return artifact_ref_for_record(artifact)
 
 
+def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
+    """Generate an AuthorYear cite key like 'vaswani2017attention'."""
+    import re as _re
+
+    authors_raw = source.get("authors", [])
+    year = str(source.get("year", "")).strip()
+    title = str(source.get("title", "")).strip()
+
+    # First author surname
+    first_author = ""
+    if authors_raw:
+        name = str(authors_raw[0]).strip()
+        parts = name.replace(",", " ").split()
+        if parts:
+            first_author = _re.sub(r"[^a-zA-Z]", "", parts[-1]).lower() if len(parts) > 1 else _re.sub(r"[^a-zA-Z]", "", parts[0]).lower()
+
+    # Title keyword (first English word >= 4 chars, skip stopwords)
+    stopwords = {"the", "a", "an", "of", "for", "and", "in", "on", "to", "with", "from", "by"}
+    title_word = ""
+    for w in _re.findall(r"[a-zA-Z]+", title):
+        if w.lower() not in stopwords and len(w) >= 3:
+            title_word = w.lower()
+            break
+
+    year_short = year[:4] if year else ""
+    key = f"{first_author}{year_short}{title_word}".strip()
+    if not key:
+        paper_id = str(source.get("paper_id", "")).strip()
+        key = _re.sub(r"[^a-zA-Z0-9]", "", paper_id.split(":")[-1].split("/")[-1]) if paper_id else "unknown"
+
+    base_key = key
+    counter = 2
+    while key in seen_keys:
+        key = f"{base_key}{chr(96 + counter)}" if counter <= 26 else f"{base_key}{counter}"
+        counter += 1
+    seen_keys.add(key)
+    return key
+
+
 def _build_bib_from_artifacts(artifacts: list) -> str:
     import re as _re
 
     bib_lines: list[str] = []
     seen_keys: set[str] = set()
     seen_papers: set[str] = set()
-    index = 0
     for a in artifacts:
         if a.artifact_type != "SourceSet":
             continue
@@ -69,27 +107,64 @@ def _build_bib_from_artifacts(artifacts: list) -> str:
             if dedup_id in seen_papers:
                 continue
             seen_papers.add(dedup_id)
-            if paper_id:
-                key = _re.sub(r"[^a-zA-Z0-9]", "", paper_id.split(":")[-1].split("/")[-1])
-            else:
-                words = _re.findall(r"[a-zA-Z]+", title)
-                key = (words[0].lower() + str(index)) if words else f"paper{index}"
-            if not key or key in seen_keys:
-                key = f"{key or 'paper'}{index}"
-            seen_keys.add(key)
+
+            key = _make_cite_key(source, seen_keys)
             authors = " and ".join(str(a_) for a_ in source.get("authors", [])) or "Unknown"
             year = str(source.get("year", "")).strip() or "n.d."
             url = str(source.get("url", source.get("pdf_url", ""))).strip()
-            venue = f"arXiv preprint {paper_id}" if "arxiv" in paper_id.lower() else (url or "Online")
-            bib_lines.append(
-                f"@article{{{key},\n"
-                f"  author = {{{authors}}},\n"
-                f"  title = {{{{{title}}}}},\n"
-                f"  journal = {{{venue}}},\n"
-                f"  year = {{{year}}},\n"
-                f"}}\n"
-            )
-            index += 1
+            doi = str(source.get("doi", "")).strip()
+            venue = str(source.get("venue", source.get("journal", ""))).strip()
+
+            is_arxiv = "arxiv" in paper_id.lower()
+            is_conference = any(kw in venue.lower() for kw in (
+                "conference", "proceedings", "workshop", "neurips", "icml", "iclr",
+                "cvpr", "eccv", "iccv", "acl", "emnlp", "naacl", "aaai", "ijcai",
+                "sigir", "kdd", "www", "chi", "uist",
+            )) if venue else False
+
+            # Choose entry type
+            if is_arxiv:
+                arxiv_id = _re.sub(r"^arxiv:", "", paper_id, flags=_re.IGNORECASE).strip()
+                entry = (
+                    f"@misc{{{key},\n"
+                    f"  author = {{{authors}}},\n"
+                    f"  title = {{{{{title}}}}},\n"
+                    f"  year = {{{year}}},\n"
+                    f"  eprint = {{{arxiv_id}}},\n"
+                    f"  archivePrefix = {{arXiv}},\n"
+                )
+                if url:
+                    entry += f"  url = {{{url}}},\n"
+                entry += f"}}\n"
+            elif is_conference:
+                entry = (
+                    f"@inproceedings{{{key},\n"
+                    f"  author = {{{authors}}},\n"
+                    f"  title = {{{{{title}}}}},\n"
+                    f"  booktitle = {{{venue}}},\n"
+                    f"  year = {{{year}}},\n"
+                )
+                if doi:
+                    entry += f"  doi = {{{doi}}},\n"
+                if url:
+                    entry += f"  url = {{{url}}},\n"
+                entry += f"}}\n"
+            else:
+                journal_name = venue or "Online"
+                entry = (
+                    f"@article{{{key},\n"
+                    f"  author = {{{authors}}},\n"
+                    f"  title = {{{{{title}}}}},\n"
+                    f"  journal = {{{journal_name}}},\n"
+                    f"  year = {{{year}}},\n"
+                )
+                if doi:
+                    entry += f"  doi = {{{doi}}},\n"
+                if url:
+                    entry += f"  url = {{{url}}},\n"
+                entry += f"}}\n"
+
+            bib_lines.append(entry)
     return "\n".join(bib_lines)
 
 
@@ -462,7 +537,18 @@ class DynamicResearchRuntime:
         servers = list(get_by_dotted(config, "mcp.servers") or [])
         if not servers:
             raise RuntimeError("mcp.servers must be configured for startup tool discovery")
-        return await start_mcp_runtime(servers, root=self._root)
+        optional: set[str] = set()
+        filtered: list[dict[str, Any]] = []
+        for srv in servers:
+            sid = str(srv.get("server_id") or "").strip()
+            source_key = f"sources.{sid}.enabled"
+            enabled = get_by_dotted(config, source_key)
+            if enabled is not None and not as_bool(enabled, True):
+                continue
+            if sid not in {"llm", "search", "retrieval", "exec"}:
+                optional.add(sid)
+            filtered.append(srv)
+        return await start_mcp_runtime(filtered, root=self._root, optional_servers=optional)
 
     def _write_run_snapshot(
         self,

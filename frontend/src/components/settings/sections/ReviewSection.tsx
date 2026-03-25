@@ -1,9 +1,9 @@
 import React from 'react';
 import { useAppContext } from '../../../store';
-import { Card, Input } from '../../ui';
+import { Button, Card, Input } from '../../ui';
 
 export const ReviewSection: React.FC = () => {
-  const { state, updateProjectConfig } = useAppContext();
+  const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
   const reviewCfg = state.projectConfig?.agent?.review || {};
   const weights = reviewCfg.dimension_weights || {};
 
@@ -46,6 +46,9 @@ export const ReviewSection: React.FC = () => {
             onChange={(e) => updateProjectConfig(`agent.review.dimension_weights.${key}`, Number(e.target.value))}
           />
         ))}
+      </div>
+      <div className="mt-5 flex justify-end">
+        <Button onClick={() => void saveProjectConfig()}>保存审查设置</Button>
       </div>
     </Card>
   );

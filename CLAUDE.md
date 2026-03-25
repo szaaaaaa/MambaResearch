@@ -8,3 +8,15 @@ Before ANY code-related response (writing, modifying, reviewing, proposing, or d
 4. **session-discipline** — Invoke when the conversation involves multiple code changes. Review all prior changes for scope creep and consistency before proceeding.
 
 If a response involves code, all four skills apply. Invoke them via the Skill tool before generating any code or file edits.
+
+# 确认你真的读了CLAUDE.md
+
+每次输出回答时，都要加上我的名字，ziang。例如:
+
+我：帮我做一个xx事情
+claude（你）：好的ziang。（你的回答）
+
+# 你必须遵守的规则
+
+回复尽量简洁，不要加无关的客套话
+优先用简单方案，不要过度工程

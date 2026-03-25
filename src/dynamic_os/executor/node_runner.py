@@ -390,10 +390,11 @@ class NodeRunner:
         )
 
     def _collect_cite_keys_map(self) -> dict[str, str]:
+        from src.dynamic_os.runtime import _make_cite_key
+
         key_map: dict[str, str] = {}
         seen_keys: set[str] = set()
         seen_papers: set[str] = set()
-        index = 0
         for record in self._artifact_store.list_all():
             if record.artifact_type != "SourceSet":
                 continue
@@ -406,16 +407,8 @@ class NodeRunner:
                 if dedup_id in seen_papers:
                     continue
                 seen_papers.add(dedup_id)
-                if paper_id:
-                    key = re.sub(r"[^a-zA-Z0-9]", "", paper_id.split(":")[-1].split("/")[-1])
-                else:
-                    words = re.findall(r"[a-zA-Z]+", title)
-                    key = (words[0].lower() + str(index)) if words else f"paper{index}"
-                if not key or key in seen_keys:
-                    key = f"{key or 'paper'}{index}"
-                seen_keys.add(key)
+                key = _make_cite_key(source, seen_keys)
                 key_map[key] = title
-                index += 1
         return key_map
 
     def _build_error_observation(

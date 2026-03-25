@@ -56,6 +56,20 @@ mcp:
     - ${workspace_root}
     - --server-id
     - exec
+  - server_id: paper_search
+    command:
+    - uvx
+    - paper-search-mcp
+    default_capability: search
+    env:
+      PAPER_SEARCH_MCP_UNPAYWALL_EMAIL: ''
+      PAPER_SEARCH_MCP_CORE_API_KEY: ''
+      PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY: ''
+      PAPER_SEARCH_MCP_ZENODO_ACCESS_TOKEN: ''
+      PAPER_SEARCH_MCP_DOAJ_API_KEY: ''
+      PAPER_SEARCH_MCP_GOOGLE_SCHOLAR_PROXY_URL: ''
+      PAPER_SEARCH_MCP_IEEE_API_KEY: ''
+      PAPER_SEARCH_MCP_ACM_API_KEY: ''
 llm:
   provider: openrouter
   model: google/gemini-2.0-flash-001
@@ -91,7 +105,7 @@ auth:
     require_explicit_switch: true
 retrieval:
   openai_api_key_env: OPENAI_API_KEY
-  runtime_mode: lite
+  runtime_mode: standard
   embedding_backend: openai_embedding
   embedding_model: text-embedding-3-small
   remote_embedding_model: text-embedding-3-small
@@ -127,6 +141,9 @@ sources:
     enabled: false
   github:
     enabled: false
+  paper_search_mcp:
+    enabled: true
+    max_results_per_query: 20
   pdf_download:
     only_allowed_hosts: false
     allowed_hosts:
@@ -154,7 +171,7 @@ agent:
   papers_per_query: 20
   max_queries_per_iteration: 3
   top_k_for_analysis: 10
-  language: zh
+  language: en
   report_max_sources: 40
   budget:
     max_research_questions: 3
@@ -230,23 +247,38 @@ agent:
       model: google/gemini-2.0-flash-001
       temperature: 0.1
   experiment_plan:
-    enabled: false
-    mode: survey
+    enabled: true
+    mode: optimize
     max_iterations: 6
-    gpu: cpu
-    objective: ""
+    gpu: cuda
+    objective: ''
     exec_timeout_sec: 120
     max_per_rq: 2
     require_human_results: false
+    workspace:
+      template: builtin
+      custom_path: ''
+      mutable_files:
+      - configs/hparams.yaml
+      - models/model.py
+      entry_point: train.py
+      eval_script: evaluate.py
+    recovery:
+      max_retries: 3
+      refine_after: 3
+      pivot_after: 5
+    stopping:
+      patience: 3
+      min_improvement: 0.001
   review:
-    score_threshold: 6.0
+    score_threshold: 6
     max_rewrite_cycles: 2
     dimension_weights:
-      novelty: 1.0
-      soundness: 1.0
-      clarity: 1.0
-      significance: 1.0
-      completeness: 1.0
+      novelty: 1
+      soundness: 1
+      clarity: 1
+      significance: 1
+      completeness: 1
 ingest:
   text_extraction: auto
   latex:
@@ -280,6 +312,6 @@ budget_guard:
   max_api_calls: 1000
   max_wall_time_sec: 3600
 knowledge_graph:
-  persistence_mode: memory
-  sqlite_path: ""
+  persistence_mode: sqlite
+  sqlite_path: ''
   cross_run_mode: manual

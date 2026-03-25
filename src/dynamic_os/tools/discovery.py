@@ -31,6 +31,7 @@ class McpServerConfig(BaseModel):
     cwd: str = ""
     env: dict[str, str] = Field(default_factory=dict)
     tools: list[McpToolConfig] = Field(default_factory=list)
+    default_capability: str = ""
 
 
 def discover_mcp_tools(servers: list[dict[str, Any]] | list[McpServerConfig]) -> list[ToolDescriptor]:
@@ -108,15 +109,22 @@ class _StdioMcpSession:
         result = await self._request("tools/list", {})
         tools = list(result.get("tools") or [])
         discovered: list[ToolDescriptor] = []
+        default_cap = self._server.default_capability.strip()
         for tool in tools:
             annotations = dict(tool.get("annotations") or {})
             metadata = dict(tool.get("metadata") or {})
-            capability = annotations.get("capability") or tool.get("capability")
+            raw_capability = annotations.get("capability") or tool.get("capability") or default_cap
+            if not raw_capability:
+                continue
+            try:
+                capability = ToolCapability(raw_capability)
+            except ValueError:
+                continue
             tool_name = normalize_tool_token(str(tool.get("name") or ""))
             discovered.append(
                 ToolDescriptor(
                     tool_id=f"mcp.{self.server_id}.{tool_name}",
-                    capability=ToolCapability(capability),
+                    capability=capability,
                     server_id=self.server_id,
                     name=tool_name,
                     description=str(tool.get("description") or ""),
@@ -215,16 +223,23 @@ async def start_mcp_runtime(
     servers: list[dict[str, Any]] | list[McpServerConfig],
     *,
     root: str | Path,
+    optional_servers: frozenset[str] | set[str] | None = None,
 ) -> StartedMcpRuntime:
     resolved_root = Path(root).resolve()
     sessions: dict[str, _StdioMcpSession] = {}
     descriptors: list[ToolDescriptor] = []
     snapshots: list[dict[str, Any]] = []
+    _optional = frozenset(optional_servers or ())
     try:
         for server_payload in servers:
             server = McpServerConfig.model_validate(server_payload)
             session = _StdioMcpSession(server=server, root=resolved_root)
-            await session.start()
+            try:
+                await session.start()
+            except Exception:
+                if session.server_id in _optional:
+                    continue
+                raise
             sessions[session.server_id] = session
             tools = await session.discover_tools()
             descriptors.extend(tools)

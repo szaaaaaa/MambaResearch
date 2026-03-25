@@ -108,6 +108,7 @@ export interface ProjectConfig {
     google_cse: { enabled: boolean };
     bing: { enabled: boolean };
     github: { enabled: boolean };
+    paper_search_mcp: { enabled: boolean; max_results_per_query: number };
     pdf_download: { only_allowed_hosts: boolean; allowed_hosts: string[]; forbidden_host_ttl_sec: number };
   };
   index: {
@@ -135,7 +136,32 @@ export interface ProjectConfig {
     claim_alignment: { enabled: boolean; min_rq_relevance: number; anchor_terms_max: number };
     limits: { analysis_web_content_max_chars: number };
     topic_filter: { min_keyword_hits: number; min_anchor_hits: number; include_terms: string[]; block_terms: string[] };
-    experiment_plan: { enabled: boolean; max_per_rq: number; require_human_results: boolean; mode?: string; max_iterations?: number; gpu?: string; objective?: string; exec_timeout_sec?: number };
+    experiment_plan: {
+      enabled: boolean;
+      max_per_rq: number;
+      require_human_results: boolean;
+      mode?: string;
+      max_iterations?: number;
+      gpu?: string;
+      objective?: string;
+      exec_timeout_sec?: number;
+      workspace?: {
+        template?: string;
+        custom_path?: string;
+        mutable_files?: string[];
+        entry_point?: string;
+        eval_script?: string;
+      };
+      recovery?: {
+        max_retries?: number;
+        refine_after?: number;
+        pivot_after?: number;
+      };
+      stopping?: {
+        patience?: number;
+        min_improvement?: number;
+      };
+    };
     review?: {
       score_threshold?: number;
       max_rewrite_cycles?: number;

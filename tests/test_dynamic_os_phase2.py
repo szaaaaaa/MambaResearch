@@ -143,14 +143,14 @@ def test_tool_gateway_search_uses_registry_and_policy() -> None:
 
     async def invoker(tool, payload):
         calls.append((tool.tool_id, payload))
-        return [{"tool_id": tool.tool_id, "query": payload["query"]}]
+        return {"results": [{"paper_id": "arxiv:2401.00001", "title": "Test Paper", "query": payload["query"]}], "warnings": []}
 
     gateway = ToolGateway(registry=registry, policy=engine, mcp_invoker=invoker)
 
     result = asyncio.run(gateway.search("retrieval planning", source="arxiv", max_results=5))
 
     assert result == {
-        "results": [{"tool_id": "mcp.search.arxiv", "query": "retrieval planning"}],
+        "results": [{"paper_id": "arxiv:2401.00001", "title": "Test Paper", "query": "retrieval planning"}],
         "warnings": [],
     }
     assert calls == [
