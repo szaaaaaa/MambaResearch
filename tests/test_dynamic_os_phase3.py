@@ -3488,6 +3488,12 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
             return SimpleNamespace(termination_reason="planner_terminated")
 
     monkeypatch.setattr(runtime_module, "Executor", FakeExecutor)
+    # Force memory persistence so CI doesn't need networkx
+    monkeypatch.setattr(
+        runtime_module,
+        "load_yaml",
+        lambda _path: {"knowledge_graph": {"persistence_mode": "memory"}},
+    )
     output_root = Path(".tmp_phase7_runtime_test")
     output_root.mkdir(parents=True, exist_ok=True)
     runtime = runtime_module.DynamicResearchRuntime(root=Path.cwd(), output_root=output_root)
