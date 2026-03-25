@@ -3494,6 +3494,14 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
         "load_yaml",
         lambda _path: {"knowledge_graph": {"persistence_mode": "memory"}},
     )
+    # Bypass MCP startup — no real servers in CI
+    async def _fake_mcp(_self, _config):
+        from src.dynamic_os.tools.discovery import StartedMcpRuntime
+        from src.dynamic_os.tools.registry import ToolRegistry
+        return StartedMcpRuntime(registry=ToolRegistry(), snapshot=[], _sessions={})
+    monkeypatch.setattr(
+        runtime_module.DynamicResearchRuntime, "_start_mcp_runtime", _fake_mcp,
+    )
     output_root = Path(".tmp_phase7_runtime_test")
     output_root.mkdir(parents=True, exist_ok=True)
     runtime = runtime_module.DynamicResearchRuntime(root=Path.cwd(), output_root=output_root)
