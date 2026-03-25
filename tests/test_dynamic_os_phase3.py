@@ -3498,7 +3498,7 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
     async def _fake_mcp(_self, _config):
         from src.dynamic_os.tools.discovery import StartedMcpRuntime
         from src.dynamic_os.tools.registry import ToolRegistry
-        return StartedMcpRuntime(registry=ToolRegistry(), snapshot=[], _sessions={})
+        return StartedMcpRuntime(registry=ToolRegistry([]), snapshot=[], _sessions={})
     monkeypatch.setattr(
         runtime_module.DynamicResearchRuntime, "_start_mcp_runtime", _fake_mcp,
     )
