@@ -12,20 +12,17 @@ from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_ar
 from src.dynamic_os.skills.validation import validate_skill_source
 
 
-_BUILTINS_ROOT = Path(__file__).resolve().parent.parent
-_EVOLVED_ROOT = Path.cwd() / "evolved_skills"
-
-
-def _read_original_skill(skill_id: str) -> tuple[str, str]:
-    """Return (run_py_source, skill_yaml_source) for the original skill."""
-    skill_dir = _BUILTINS_ROOT / skill_id
-    run_py = ""
-    skill_yaml = ""
-    if (skill_dir / "run.py").is_file():
-        run_py = (skill_dir / "run.py").read_text(encoding="utf-8")
-    if (skill_dir / "skill.yaml").is_file():
-        skill_yaml = (skill_dir / "skill.yaml").read_text(encoding="utf-8")
-    return run_py, skill_yaml
+def _read_original_skill(skill_id: str, skill_roots: list[Path]) -> tuple[str, str]:
+    """从所有技能根目录中查找并返回 (run_py_source, skill_yaml_source)。"""
+    for root in skill_roots:
+        skill_dir = root / skill_id
+        if (skill_dir / "run.py").is_file():
+            run_py = (skill_dir / "run.py").read_text(encoding="utf-8")
+            skill_yaml = ""
+            if (skill_dir / "skill.yaml").is_file():
+                skill_yaml = (skill_dir / "skill.yaml").read_text(encoding="utf-8")
+            return run_py, skill_yaml
+    return "", ""
 
 
 def _write_evolved_skill(
@@ -33,8 +30,9 @@ def _write_evolved_skill(
     original_yaml_src: str,
     new_run_py: str,
     original_skill_id: str,
+    evolved_root: Path,
 ) -> Path:
-    evolved_dir = _EVOLVED_ROOT / evolved_id
+    evolved_dir = evolved_root / evolved_id
     evolved_dir.mkdir(parents=True, exist_ok=True)
 
     if original_yaml_src:
@@ -78,7 +76,8 @@ async def run(ctx: SkillContext) -> SkillOutput:
     if not failed_skill_id:
         return SkillOutput(success=False, error="ReflectionReport missing failed_skill_id")
 
-    original_run_py, original_yaml = _read_original_skill(failed_skill_id)
+    skill_roots = [Path(r) for r in ctx.config.get("skill_roots", [])]
+    original_run_py, original_yaml = _read_original_skill(failed_skill_id, skill_roots)
     if not original_run_py:
         return SkillOutput(success=False, error=f"Cannot read source for skill: {failed_skill_id}")
 
@@ -119,8 +118,9 @@ async def run(ctx: SkillContext) -> SkillOutput:
             metadata={"raw_output": raw[:2000]},
         )
 
+    evolved_root = Path(ctx.config.get("workspace_root", Path.cwd())) / "evolved_skills"
     evolved_id = f"{failed_skill_id}_evolved"
-    evolved_dir = _write_evolved_skill(evolved_id, original_yaml, new_source, failed_skill_id)
+    evolved_dir = _write_evolved_skill(evolved_id, original_yaml, new_source, failed_skill_id, evolved_root)
 
     payload = {
         "original_skill_id": failed_skill_id,

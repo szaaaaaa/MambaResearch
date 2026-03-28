@@ -414,11 +414,14 @@ class DynamicResearchRuntime:
         role_registry = RoleRegistry.from_file_with_custom(cwd=self._root)
         evolved_root = self._root / "evolved_skills"
         evolved_root.mkdir(parents=True, exist_ok=True)
-        skill_registry = SkillRegistry.discover(roots=[
+        skill_roots = [
             Path(__file__).resolve().parent / "skills" / "builtins",
             self._root / "skills",
             evolved_root,
-        ])
+        ]
+        skill_registry = SkillRegistry.discover(roots=skill_roots)
+        config["workspace_root"] = str(self._root)
+        config["skill_roots"] = [str(r) for r in skill_roots]
         llm_client = ConfiguredLLMClient(saved_env=saved_env, workspace_root=self._root, config=config)
         events: list[dict[str, Any]] = []
         node_status: dict[str, str] = {}

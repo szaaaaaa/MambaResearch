@@ -9,9 +9,6 @@ from src.dynamic_os.contracts.route_plan import RoleId
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact
 from src.dynamic_os.skills.validation import validate_skill_source, validate_skill_yaml
 
-
-_EVOLVED_ROOT = Path.cwd() / "evolved_skills"
-
 _CREATION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -89,6 +86,22 @@ async def run(ctx: SkillContext) -> SkillOutput:
             error=f"Generated skill.yaml failed validation: {'; '.join(yaml_errors)}",
         )
 
+    # 校验 skill_id 与 YAML 中定义的 id 一致
+    if spec and spec.id != skill_id:
+        return SkillOutput(
+            success=False,
+            error=f"skill_id mismatch: JSON says '{skill_id}' but skill.yaml defines '{spec.id}'",
+        )
+
+    # 校验与已有技能不冲突
+    existing_roots = [Path(r) for r in ctx.config.get("skill_roots", [])]
+    for root in existing_roots:
+        if (root / skill_id).is_dir():
+            return SkillOutput(
+                success=False,
+                error=f"skill '{skill_id}' already exists in {root}",
+            )
+
     source_errors = validate_skill_source(run_py_content)
     if source_errors:
         return SkillOutput(
@@ -96,7 +109,8 @@ async def run(ctx: SkillContext) -> SkillOutput:
             error=f"Generated run.py failed validation: {'; '.join(source_errors)}",
         )
 
-    skill_dir = _EVOLVED_ROOT / skill_id
+    evolved_root = Path(ctx.config.get("workspace_root", Path.cwd())) / "evolved_skills"
+    skill_dir = evolved_root / skill_id
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "skill.yaml").write_text(yaml_content, encoding="utf-8")
     (skill_dir / "run.py").write_text(run_py_content, encoding="utf-8")
