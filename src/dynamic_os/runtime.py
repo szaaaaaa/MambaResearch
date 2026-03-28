@@ -46,15 +46,44 @@ def _artifact_ref(artifact: ArtifactRecord) -> str:
     return artifact_ref_for_record(artifact)
 
 
+def _format_prior_memories(memories: list, max_chars: int) -> str:
+    """将历史研究记忆格式化为 planner 可读的上下文字符串。"""
+    if not memories:
+        return ""
+    lines: list[str] = []
+    for mem in memories:
+        line = f"- Run {mem.run_id}: {mem.user_request[:80]}"
+        if mem.topics:
+            line += f" | Topics: {', '.join(mem.topics[:5])}"
+        if mem.key_papers:
+            line += f" | {len(mem.key_papers)} papers found"
+        lines.append(line)
+    result = "\n".join(lines)
+    return result[:max_chars]
+
+
 def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
-    """Generate an AuthorYear cite key like 'vaswani2017attention'."""
+    """生成 AuthorYear 格式的引用键，如 'vaswani2017attention'。
+
+    参数
+    ----------
+    source : dict
+        文献来源信息字典。
+    seen_keys : set[str]
+        已使用的引用键集合，用于去重。
+
+    返回
+    -------
+    str
+        生成的唯一引用键。
+    """
     import re as _re
 
     authors_raw = source.get("authors", [])
     year = str(source.get("year", "")).strip()
     title = str(source.get("title", "")).strip()
 
-    # First author surname
+    # 第一作者姓氏
     first_author = ""
     if authors_raw:
         name = str(authors_raw[0]).strip()
@@ -62,7 +91,7 @@ def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
         if parts:
             first_author = _re.sub(r"[^a-zA-Z]", "", parts[-1]).lower() if len(parts) > 1 else _re.sub(r"[^a-zA-Z]", "", parts[0]).lower()
 
-    # Title keyword (first English word >= 4 chars, skip stopwords)
+    # 标题关键词（第一个长度>=3的英文单词，跳过停用词）
     stopwords = {"the", "a", "an", "of", "for", "and", "in", "on", "to", "with", "from", "by"}
     title_word = ""
     for w in _re.findall(r"[a-zA-Z]+", title):
@@ -118,7 +147,7 @@ def _build_bib_from_artifacts(artifacts: list) -> str:
                 "sigir", "kdd", "www", "chi", "uist",
             )) if venue else False
 
-            # Choose entry type
+            # 选择条目类型
             if is_arxiv:
                 arxiv_id = _re.sub(r"^arxiv:", "", paper_id, flags=_re.IGNORECASE).strip()
                 entry = (
@@ -340,9 +369,14 @@ class DynamicResearchRuntime:
 
         persistence_mode = str((config.get("knowledge_graph") or {}).get("persistence_mode", "memory")).strip()
         knowledge_graph = None
+        user_memory_store = None
+        prior_research_context = ""
+        kg_conn = None
         if persistence_mode == "sqlite":
             from src.dynamic_os.storage.sqlite_store import SqliteArtifactStore, SqliteObservationStore, SqlitePlanStore, init_knowledge_db
             from src.dynamic_os.storage.knowledge_graph import KnowledgeGraph
+            from src.dynamic_os.storage.skill_metrics import SqliteSkillMetricsStore
+            from src.dynamic_os.storage.user_memory import SqliteUserMemoryStore
 
             kg_sqlite_path = str((config.get("knowledge_graph") or {}).get("sqlite_path", "")).strip()
             if not kg_sqlite_path:
@@ -352,14 +386,39 @@ class DynamicResearchRuntime:
             observation_store = SqliteObservationStore(kg_conn, resolved_run_id)
             plan_store = SqlitePlanStore(kg_conn, resolved_run_id)
             knowledge_graph = KnowledgeGraph(kg_conn, resolved_run_id)
+            skill_metrics_store = SqliteSkillMetricsStore(kg_conn)
+            user_memory_store = SqliteUserMemoryStore(kg_conn)
+
+            # 记录本次 run
+            kg_conn.execute(
+                "INSERT OR IGNORE INTO runs (id, topic, created_at, status) VALUES (?, ?, ?, ?)",
+                (resolved_run_id, user_request[:200], _now_iso(), "running"),
+            )
+            kg_conn.commit()
+
+            # 加载跨运行记忆
+            memory_config = config.get("agent", {}).get("memory", {})
+            max_findings = int(memory_config.get("max_findings_for_context", 20))
+            max_chars = int(memory_config.get("max_context_chars", 10000))
+            prior_memories = user_memory_store.find_relevant_memories(user_request, top_k=max_findings)
+            prior_research_context = _format_prior_memories(prior_memories, max_chars)
         else:
+            from src.dynamic_os.storage.skill_metrics import InMemorySkillMetricsStore
+
             artifact_store = InMemoryArtifactStore()
             observation_store = InMemoryObservationStore()
             plan_store = InMemoryPlanStore()
+            skill_metrics_store = InMemorySkillMetricsStore()
 
         self._artifact_store = artifact_store
         role_registry = RoleRegistry.from_file_with_custom(cwd=self._root)
-        skill_registry = SkillRegistry.discover()
+        evolved_root = self._root / "evolved_skills"
+        evolved_root.mkdir(parents=True, exist_ok=True)
+        skill_registry = SkillRegistry.discover(roots=[
+            Path(__file__).resolve().parent / "skills" / "builtins",
+            self._root / "skills",
+            evolved_root,
+        ])
         llm_client = ConfiguredLLMClient(saved_env=saved_env, workspace_root=self._root, config=config)
         events: list[dict[str, Any]] = []
         node_status: dict[str, str] = {}
@@ -426,6 +485,7 @@ class DynamicResearchRuntime:
             artifact_store=artifact_store,
             observation_store=observation_store,
             plan_store=plan_store,
+            prior_research_context=prior_research_context,
         )
         node_runner = NodeRunner(
             role_registry=role_registry,
@@ -437,6 +497,7 @@ class DynamicResearchRuntime:
             event_sink=emit,
             config=config,
             knowledge_graph=knowledge_graph,
+            skill_metrics_store=skill_metrics_store,
         )
         executor = Executor(
             planner=planner,
@@ -517,6 +578,20 @@ class DynamicResearchRuntime:
             (run_dir / "artifacts.json").write_text(json.dumps(artifact_summary, ensure_ascii=False, indent=2), encoding="utf-8")
             artifacts_full = [artifact.model_dump(mode="json") for artifact in artifacts]
             (run_dir / "artifacts_full.json").write_text(json.dumps(artifacts_full, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # 保存研究记忆 + 更新 run 状态
+            if user_memory_store is not None and artifacts:
+                from src.dynamic_os.storage.user_memory import extract_research_memory
+                memory = extract_research_memory(
+                    run_id=resolved_run_id,
+                    user_request=user_request,
+                    artifacts=artifacts,
+                    observations=list(observations),
+                )
+                user_memory_store.save_research_memory(memory)
+            if kg_conn is not None:
+                kg_conn.execute("UPDATE runs SET status = ? WHERE id = ?", (status, resolved_run_id))
+                kg_conn.commit()
 
         return DynamicRunResult(
             run_id=resolved_run_id,

@@ -51,6 +51,7 @@ class Planner:
         artifact_store: Any,
         observation_store: Any,
         plan_store: Any,
+        prior_research_context: str = "",
     ) -> None:
         self._model = model
         self._role_registry = role_registry
@@ -58,6 +59,7 @@ class Planner:
         self._artifact_store = artifact_store
         self._observation_store = observation_store
         self._plan_store = plan_store
+        self._prior_research_context = prior_research_context
 
     async def plan(
         self,
@@ -89,6 +91,7 @@ class Planner:
             observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
             budget_snapshot=budget_snapshot or {},
             planning_iteration=planning_iteration,
+            prior_research_context=self._prior_research_context,
         )
         response_schema = self._response_schema(run_id=run_id, planning_iteration=planning_iteration)
 
@@ -120,6 +123,7 @@ class Planner:
                         observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
                         budget_snapshot=budget_snapshot or {},
                         planning_iteration=planning_iteration,
+                        prior_research_context=self._prior_research_context,
                         validation_error=self._validation_feedback(
                             detail=last_error,
                             plan=parsed_plan,
@@ -164,6 +168,7 @@ class Planner:
             budget_snapshot=budget_snapshot,
             planning_iteration=planning_iteration,
             role_routing_policy=base_policy,
+            prior_research_context=self._prior_research_context,
         )
         response_schema = RoleRoutingDecision.model_json_schema()
         current_messages = list(messages)
@@ -365,7 +370,7 @@ class Planner:
                 should_continue = latest_iter.payload.get("should_continue", False)
 
                 if strategy == "early_stop" or not should_continue:
-                    # Experiment loop done — analyze and report
+                    # 实验循环结束 - 分析并生成报告
                     analyze_node = self._fallback_node(
                         node_id="node_analyst_final",
                         role=RoleId.analyst,
@@ -396,7 +401,7 @@ class Planner:
                         terminate=False,
                     )
 
-                # Experiment continues — route back to design
+                # 实验继续 - 路由回设计阶段
                 if strategy == "pivot":
                     redesign_goal = "尝试完全不同的实验方法（PIVOT策略）"
                 elif strategy == "refine":

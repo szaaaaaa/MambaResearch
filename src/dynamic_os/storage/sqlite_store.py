@@ -75,6 +75,34 @@ def init_knowledge_db(sqlite_path: str) -> sqlite3.Connection:
             created_at      TEXT,
             run_id          TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS skill_metrics (
+            skill_id        TEXT PRIMARY KEY,
+            execution_count INTEGER DEFAULT 0,
+            success_count   INTEGER DEFAULT 0,
+            fail_count      INTEGER DEFAULT 0,
+            avg_duration_ms REAL    DEFAULT 0.0,
+            utility_score   REAL    DEFAULT 0.5,
+            updated_at      TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS research_memory (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          TEXT NOT NULL,
+            user_request    TEXT,
+            topics_json     TEXT,
+            key_papers_json TEXT,
+            methods_json    TEXT,
+            findings_json   TEXT,
+            quality_score   REAL,
+            created_at      TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS user_profile (
+            key             TEXT PRIMARY KEY,
+            value_json      TEXT,
+            updated_at      TEXT
+        );
         """
     )
     return conn

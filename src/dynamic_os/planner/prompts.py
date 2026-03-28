@@ -18,6 +18,9 @@ for the next segment.
 ## Available Skills per Role
 {skill_allowlist_summary}
 
+## Prior Research Context (from previous runs)
+{prior_research_context}
+
 ## Current State
 - Artifacts produced so far: {artifact_summary}
 - Exact artifact refs available now: {artifact_refs}
@@ -53,6 +56,9 @@ meaningful segment.
 
 ## Skill Contracts
 {skill_contract_summary}
+
+## Prior Research Context (from previous runs)
+{prior_research_context}
 
 ## Current State
 - Artifacts produced so far: {artifact_summary}
@@ -153,6 +159,32 @@ def summarize_artifacts(artifacts: list[dict[str, str]]) -> str:
     return json.dumps(artifacts, ensure_ascii=False)
 
 
+def summarize_artifacts_tiered(
+    artifacts: list[dict[str, str]],
+    planning_iteration: int,
+    hot_window: int = 3,
+) -> str:
+    """将 artifact 列表分层摘要：热区保留完整，冷区压缩为类型计数。"""
+    if not artifacts:
+        return "[]"
+    if len(artifacts) <= hot_window:
+        return json.dumps(artifacts, ensure_ascii=False)
+
+    # 冷区：按类型计数
+    cold = artifacts[:-hot_window]
+    type_counts: dict[str, int] = {}
+    for a in cold:
+        t = a.get("artifact_type", "unknown")
+        type_counts[t] = type_counts.get(t, 0) + 1
+    cold_summary = "Earlier artifacts: " + ", ".join(
+        f"{count}× {atype}" for atype, count in type_counts.items()
+    )
+
+    # 热区：完整保留
+    hot = artifacts[-hot_window:]
+    return cold_summary + "\nRecent artifacts: " + json.dumps(hot, ensure_ascii=False)
+
+
 def summarize_artifact_refs(artifact_refs: list[str]) -> str:
     if not artifact_refs:
         return "[]"
@@ -188,12 +220,13 @@ def build_planner_messages(
     observation_summary: list[dict[str, Any]],
     budget_snapshot: dict[str, Any],
     planning_iteration: int,
+    prior_research_context: str = "",
 ) -> list[dict[str, str]]:
     system_prompt = PLANNER_SYSTEM_PROMPT.format(
         role_registry_summary=summarize_roles(role_registry),
         skill_allowlist_summary=summarize_skill_allowlists(role_registry, available_skills_by_role),
         skill_contract_summary=summarize_skill_contracts(skill_contract_summary),
-        artifact_summary=summarize_artifacts(artifact_summary),
+        artifact_summary=summarize_artifacts_tiered(artifact_summary, planning_iteration),
         artifact_refs=summarize_artifact_refs(artifact_refs),
         artifact_ref_templates=summarize_artifact_ref_templates(artifact_ref_templates),
         role_routing_summary=summarize_role_routing_policy(role_routing_policy),
@@ -201,6 +234,7 @@ def build_planner_messages(
         budget_snapshot=json.dumps(budget_snapshot, ensure_ascii=False),
         iteration=planning_iteration,
         planner_output_contract=planner_output_contract(),
+        prior_research_context=prior_research_context or "(none)",
     )
     return [
         {"role": "system", "content": system_prompt},
@@ -223,6 +257,7 @@ def build_planner_repair_messages(
     planning_iteration: int,
     validation_error: str,
     raw_output: str,
+    prior_research_context: str = "",
 ) -> list[dict[str, str]]:
     system_prompt = (
         "You are a JSON repair assistant for RoutePlan. "
@@ -232,7 +267,7 @@ def build_planner_repair_messages(
         f"## Available Skills per Role\n{summarize_skill_allowlists(role_registry, available_skills_by_role)}\n\n"
         f"## Skill Contracts\n{summarize_skill_contracts(skill_contract_summary)}\n\n"
         f"## Current State\n"
-        f"- Artifacts produced so far: {summarize_artifacts(artifact_summary)}\n"
+        f"- Artifacts produced so far: {summarize_artifacts_tiered(artifact_summary, planning_iteration)}\n"
         f"- Exact artifact refs available now: {summarize_artifact_refs(artifact_refs)}\n"
         f"- Deterministic future artifact ref templates: {summarize_artifact_ref_templates(artifact_ref_templates)}\n"
         f"- Role routing policy now: {summarize_role_routing_policy(role_routing_policy)}\n"
@@ -263,16 +298,18 @@ def build_role_routing_messages(
     budget_snapshot: dict[str, Any],
     planning_iteration: int,
     role_routing_policy: RoleRoutingPolicy,
+    prior_research_context: str = "",
 ) -> list[dict[str, str]]:
     system_prompt = ROLE_ROUTER_SYSTEM_PROMPT.format(
         role_registry_summary=summarize_roles(role_registry),
         skill_allowlist_summary=summarize_skill_allowlists(role_registry, available_skills_by_role),
-        artifact_summary=summarize_artifacts(artifact_summary),
+        artifact_summary=summarize_artifacts_tiered(artifact_summary, planning_iteration),
         artifact_refs=summarize_artifact_refs(artifact_refs),
         observation_summary=summarize_observations(observation_summary),
         budget_snapshot=json.dumps(budget_snapshot, ensure_ascii=False),
         iteration=planning_iteration,
         role_routing_summary=summarize_role_routing_policy(role_routing_policy),
+        prior_research_context=prior_research_context or "(none)",
     )
     return [
         {"role": "system", "content": system_prompt},
