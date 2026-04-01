@@ -521,8 +521,8 @@ class DynamicResearchRuntime:
                 allow_remote_exec=self._remote_exec_configured(config),
             ),
             budget_policy=BudgetPolicy(
-                max_planning_iterations=max(1, int(get_by_dotted(config, "agent.max_iterations") or 5)),
-                max_node_executions=max(4, int(get_by_dotted(config, "agent.max_iterations") or 5) * 4),
+                max_planning_iterations=max(1, int(get_by_dotted(config, "agent.max_iterations") or 15)),
+                max_node_executions=max(4, int(get_by_dotted(config, "agent.max_iterations") or 15) * 4),
                 max_tool_invocations=max(10, int(budget_guard.get("max_api_calls") or 1000)),
                 max_wall_time_sec=max(30.0, float(budget_guard.get("max_wall_time_sec") or 3600.0)),
                 max_tokens=max(10_000, int(budget_guard.get("max_tokens") or 500_000)),

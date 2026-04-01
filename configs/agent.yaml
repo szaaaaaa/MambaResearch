@@ -163,7 +163,7 @@ index:
   overlap: 200
 agent:
   seed: 42
-  max_iterations: 8
+  max_iterations: 15
   papers_per_query: 20
   max_queries_per_iteration: 3
   top_k_for_analysis: 10
@@ -252,11 +252,15 @@ agent:
     max_per_rq: 2
     require_human_results: false
     workspace:
-      template: builtin
+      template: generic
       custom_path: ''
       mutable_files:
       - configs/hparams.yaml
-      - models/model.py
+      - models/__init__.py
+      - datasets/__init__.py
+      - metrics/__init__.py
+      - train.py
+      - evaluate.py
       entry_point: train.py
       eval_script: evaluate.py
     recovery:

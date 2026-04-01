@@ -70,6 +70,10 @@ meaningful segment.
     Use hitl nodes when: research direction is unclear and needs human validation, multiple equally valid paths exist,
     or a critical decision requires human judgment before proceeding.
     A UserGuidance artifact from a hitl node can be referenced as input by subsequent nodes.
+11. EXPERIMENT TRIGGER: If the user request explicitly or implicitly asks for experiments, benchmarks, ablation studies, or empirical validation, you MUST include experimenter nodes (design_experiment → run_experiment) in your plan. Signals: words like "实验", "验证", "benchmark", "ablation", "train", "evaluate", "compare performance". If no experiment is needed, skip directly to evidence synthesis and report writing.
+12. EXPERIMENT ITERATION: When you see an ExperimentIteration artifact with should_continue=true (visible in the hint field), you MUST plan the next experiment cycle: design_experiment → run_experiment → optimize_experiment. Do NOT skip to report writing until should_continue=false or strategy=early_stop.
+13. PAPER REVISION: When you see a ReviewVerdict with verdict=needs_revision (visible in the hint field), plan a revision cycle: writer (draft_report with ReviewVerdict as input) → reviewer (review_artifact). Repeat until verdict=accept or max_rewrite_cycles is reached.
+14. EXPERIMENT COMPLETION: When ExperimentIteration has should_continue=false or strategy=early_stop, transition to the reporting phase: analyze_metrics (or aggregate_results if multiple experiment rounds exist) → generate_figures → draft_report → review_artifact, then set terminate=true.
 """
 
 

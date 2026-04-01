@@ -92,6 +92,29 @@ def find_artifact(ctx: SkillContext, artifact_type: str) -> ArtifactRecord | Non
     return None
 
 
+def metric_higher_is_better(name: str, metric_directions: dict[str, str] | None = None) -> bool:
+    """判断指标是否越大越好。
+
+    优先从 LLM 在 design_experiment 中定义的 metric_directions 读取，
+    无数据时使用保守的名称推断作为 fallback。
+
+    参数
+    ----------
+    name : str
+        指标名称。
+    metric_directions : dict, optional
+        LLM 定义的指标方向映射，如 {"accuracy": "maximize", "loss": "minimize"}。
+    """
+    if metric_directions:
+        direction = metric_directions.get(name, "").lower()
+        if direction == "maximize":
+            return True
+        if direction == "minimize":
+            return False
+    # fallback：仅在 LLM 未提供方向时使用名称推断
+    return not any(tag in name.lower() for tag in ("loss", "error", "latency", "perplexity"))
+
+
 def serialize_payload(artifact: ArtifactRecord) -> str:
     """将产物的 payload 序列化为格式化的 JSON 字符串。
 

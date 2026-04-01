@@ -6,7 +6,7 @@ from pathlib import Path
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact
+from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact, metric_higher_is_better
 from src.dynamic_os.experiment.workspace import restore_snapshot, snapshot_mutable
 
 
@@ -23,13 +23,11 @@ def _extract_metrics(payload: dict) -> dict[str, float]:
     return {}
 
 
-def _is_improved(current: dict[str, float], best: dict[str, float], min_improvement: float) -> bool:
+def _is_improved(current: dict[str, float], best: dict[str, float], min_improvement: float, metric_directions: dict[str, str] | None = None) -> bool:
     for name, value in current.items():
         if name not in best:
             return True
-        higher_is_better = not any(
-            tag in name.lower() for tag in ("loss", "error", "latency", "time")
-        )
+        higher_is_better = metric_higher_is_better(name, metric_directions)
         prior_value = best[name]
         if higher_is_better:
             if value - prior_value > min_improvement:
@@ -40,12 +38,10 @@ def _is_improved(current: dict[str, float], best: dict[str, float], min_improvem
     return False
 
 
-def _update_best(current: dict[str, float], best: dict[str, float]) -> dict[str, float]:
+def _update_best(current: dict[str, float], best: dict[str, float], metric_directions: dict[str, str] | None = None) -> dict[str, float]:
     merged: dict[str, float] = dict(best)
     for name, value in current.items():
-        higher_is_better = not any(
-            tag in name.lower() for tag in ("loss", "error", "latency", "time")
-        )
+        higher_is_better = metric_higher_is_better(name, metric_directions)
         prior_value = merged.get(name)
         if prior_value is None:
             merged[name] = value
@@ -66,7 +62,9 @@ async def run(ctx: SkillContext) -> SkillOutput:
     # --- 配置 ---
     experiment_cfg = ctx.config.get("agent", {}).get("experiment_plan", {})
     max_iterations = int(experiment_cfg.get("max_iterations", 6))
-    objective = str(experiment_cfg.get("objective", ""))
+    objective = str(experiment_cfg.get("objective", "")).strip()
+    if not objective:
+        objective = ctx.user_request or ctx.goal or "optimize model performance"
     recovery_cfg = experiment_cfg.get("recovery", {})
     refine_after = int(recovery_cfg.get("refine_after", 3))
     pivot_after = int(recovery_cfg.get("pivot_after", 5))
@@ -97,9 +95,11 @@ async def run(ctx: SkillContext) -> SkillOutput:
     results_status = str(results_payload.get("status", ""))
     workspace_path = str(results_payload.get("workspace_path", ""))
 
-    # 从生成这些结果的 ExperimentPlan 中获取 mutable_files
+    # 从生成这些结果的 ExperimentPlan 中获取 mutable_files 和 metric_directions
     experiment_plan = _find_artifact(ctx, "ExperimentPlan")
-    mutable_files = list((experiment_plan.payload if experiment_plan else {}).get("mutable_files", []))
+    plan_payload = experiment_plan.payload if experiment_plan else {}
+    mutable_files = list(plan_payload.get("mutable_files", []))
+    metric_directions = plan_payload.get("metric_directions") or {}
 
     # --- 处理执行失败 ---
     if results_status == "failed" or experiment_results.payload.get("metrics") == {}:
@@ -163,9 +163,9 @@ async def run(ctx: SkillContext) -> SkillOutput:
         else:
             best_snapshot = {}
         no_improvement_streak = 0
-    elif _is_improved(current_metrics, prior_best, min_improvement):
+    elif _is_improved(current_metrics, prior_best, min_improvement, metric_directions):
         verdict = "keep"
-        best_metric = _update_best(current_metrics, prior_best)
+        best_metric = _update_best(current_metrics, prior_best, metric_directions)
         if workspace_path and mutable_files:
             best_snapshot = snapshot_mutable(Path(workspace_path), mutable_files)
         else:
