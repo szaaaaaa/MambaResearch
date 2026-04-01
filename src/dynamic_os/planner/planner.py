@@ -138,7 +138,7 @@ class Planner:
             role_registry=self._role_registry,
             available_skills_by_role=self._available_skills_by_role(),
             skill_contract_summary=self._skill_contract_summary(),
-            artifact_summary=self._enriched_artifact_summary(),
+            artifact_summary=self._artifact_store.summary(),
             artifact_refs=self._existing_artifact_refs(),
             artifact_ref_templates=self._artifact_ref_templates(),
             observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
@@ -172,7 +172,7 @@ class Planner:
                         role_registry=self._role_registry,
                         available_skills_by_role=self._available_skills_by_role(),
                         skill_contract_summary=self._skill_contract_summary(),
-                        artifact_summary=self._enriched_artifact_summary(),
+                        artifact_summary=self._artifact_store.summary(),
                         artifact_refs=self._existing_artifact_refs(),
                         artifact_ref_templates=self._artifact_ref_templates(),
                         observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
@@ -979,33 +979,6 @@ class Planner:
 
         if not plan.terminate:
             raise ValueError("ReviewVerdict already exists and score passed; next plan must terminate")
-
-    def _enriched_artifact_summary(self) -> list[dict[str, str]]:
-        """为 artifact 摘要附加决策关键字段（ExperimentIteration / ReviewVerdict）。
-
-        普通 summary 只含 artifact_id/type/ref/role，planner 无法据此判断
-        实验是否应继续迭代、审稿是否通过。此方法从 payload 中提取决策字段，
-        以 hint 字段形式附加到摘要中。
-        """
-        summary = self._artifact_store.summary()
-        records_by_id = {r.artifact_id: r for r in self._artifact_store.list_all()}
-        for entry in summary:
-            record = records_by_id.get(entry["artifact_id"])
-            if record is None:
-                continue
-            if record.artifact_type == "ExperimentIteration":
-                entry["hint"] = (
-                    f"iteration={record.payload.get('iteration')}, "
-                    f"should_continue={record.payload.get('should_continue')}, "
-                    f"strategy={record.payload.get('strategy')}"
-                )
-            elif record.artifact_type == "ReviewVerdict":
-                entry["hint"] = (
-                    f"verdict={record.payload.get('verdict')}, "
-                    f"weighted_score={record.payload.get('weighted_score')}, "
-                    f"threshold={record.payload.get('threshold')}"
-                )
-        return summary
 
     def _skill_contract_summary(self) -> dict[str, dict[str, dict[str, list[str]]]]:
         """生成按角色分组的技能输入/输出契约摘要，用于嵌入 prompt。"""

@@ -8,8 +8,6 @@ import { RouteGraph } from '../RouteGraph';
 import { BehaviorTimeline } from '../BehaviorTimeline';
 import { RawTerminalPanel } from '../RawTerminalPanel';
 import { HitlModal } from '../HitlModal';
-import { ExperimentProgress } from '../ExperimentProgress';
-import { ReviewStatus } from '../ReviewStatus';
 import { roleLabel, artifactLabel, runStatusLabel, formatTimestamp } from '../../labels';
 
 const PROMPT_TEMPLATES = [
@@ -446,14 +444,6 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
 
               {activeConversation.routePlan?.nodes.length ? (
                 <RouteGraph routePlan={activeConversation.routePlan} nodeStatus={activeConversation.nodeStatus} />
-              ) : null}
-
-              {activeConversation.runId && activeConversation.artifacts.some((a) => a.artifact_type === 'ExperimentIteration') ? (
-                <ExperimentProgress runId={activeConversation.runId} artifacts={activeConversation.artifacts} />
-              ) : null}
-
-              {activeConversation.runId && activeConversation.artifacts.some((a) => a.artifact_type === 'ReviewVerdict') ? (
-                <ReviewStatus runId={activeConversation.runId} artifacts={activeConversation.artifacts} />
               ) : null}
 
               {activeConversation.artifacts.length > 0 ? (

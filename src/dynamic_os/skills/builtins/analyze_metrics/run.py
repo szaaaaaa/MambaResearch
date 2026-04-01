@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact, metric_higher_is_better
+from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact
 
 
 async def run(ctx: SkillContext) -> SkillOutput:
@@ -11,9 +11,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
         return SkillOutput(success=False, error="analyze_metrics requires an ExperimentResults artifact")
 
     payload = dict(experiment_results.payload)
-    experiment_plan = _find_artifact(ctx, "ExperimentPlan")
-    metric_directions = (experiment_plan.payload if experiment_plan else {}).get("metric_directions") or {}
-    metric_stats, runs = _metric_stats(payload, metric_directions)
+    metric_stats, runs = _metric_stats(payload)
     analysis_text = await ctx.tools.llm_chat(
         [
             {
@@ -58,7 +56,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
     )
 
 
-def _metric_stats(payload: dict, metric_directions: dict[str, str] | None = None) -> tuple[dict[str, dict], list[dict]]:
+def _metric_stats(payload: dict) -> tuple[dict[str, dict], list[dict]]:
     runs_payload = list(payload.get("runs") or []) if isinstance(payload.get("runs"), list) else []
     runs: list[dict] = []
     if runs_payload:
@@ -99,6 +97,6 @@ def _metric_stats(payload: dict, metric_directions: dict[str, str] | None = None
             "min": min(values),
             "max": max(values),
             "avg": round(sum(values) / len(values), 6),
-            "higher_is_better": metric_higher_is_better(name, metric_directions),
+            "higher_is_better": not any(token in name.lower() for token in ("loss", "error", "latency", "time")),
         }
     return stats, runs

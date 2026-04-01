@@ -7,7 +7,7 @@ import re
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact, metric_higher_is_better
+from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact
 
 METRIC_PATTERN = re.compile(r"^METRIC\s+(\w+)\s*=\s*([\d.eE+-]+)$", re.MULTILINE)
 
@@ -24,7 +24,7 @@ def _parse_metrics(stdout: str) -> dict[str, float]:
     return metrics
 
 
-def _metric_list(metrics: dict[str, float], metric_directions: dict[str, str] | None = None) -> list[dict]:
+def _metric_list(metrics: dict[str, float]) -> list[dict]:
     """将指标字典转换为制品载荷所需的列表格式。"""
     items: list[dict] = []
     for name, value in metrics.items():
@@ -32,7 +32,9 @@ def _metric_list(metrics: dict[str, float], metric_directions: dict[str, str] | 
             {
                 "name": name,
                 "value": value,
-                "higher_is_better": metric_higher_is_better(name, metric_directions),
+                "higher_is_better": not any(
+                    t in name.lower() for t in ("loss", "error", "latency", "time")
+                ),
             }
         )
     return items
@@ -141,7 +143,6 @@ async def run(ctx: SkillContext) -> SkillOutput:
     entry_point = payload.get("entry_point", "train.py")
     eval_script = payload.get("eval_script", "evaluate.py")
     mutable_files = list(payload.get("mutable_files", []))
-    metric_directions = payload.get("metric_directions") or {}
 
     experiment_cfg = ctx.config.get("agent", {}).get("experiment_plan", {})
     exec_timeout = int(experiment_cfg.get("exec_timeout_sec", 120))
@@ -178,7 +179,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
                     "runs": [
                         {
                             "run_id": f"{ctx.node_id}_run_1",
-                            "metrics": _metric_list(metrics, metric_directions),
+                            "metrics": _metric_list(metrics),
                         }
                     ],
                     "workspace_path": workspace_path,

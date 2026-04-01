@@ -20,10 +20,6 @@ DESIGN_SCHEMA = {
     "properties": {
         "plan": {"type": "string"},
         "files": {"type": "object"},
-        "metric_directions": {
-            "type": "object",
-            "description": "Map metric name to optimization direction: 'maximize' or 'minimize'",
-        },
     },
     "required": ["plan", "files"],
     "additionalProperties": False,
@@ -46,11 +42,9 @@ def _build_first_iteration_prompt(
             "content": (
                 "You are modifying experiment files. "
                 f"You may ONLY modify these files: {mutable_files}. "
-                "Return JSON with three keys: "
-                '"plan" (string describing what you did and why), '
-                '"files" (object mapping filenames to their new content), '
-                'and "metric_directions" (object mapping each METRIC name your code will output '
-                'to "maximize" or "minimize", e.g. {"accuracy": "maximize", "loss": "minimize"}). '
+                "Return JSON with two keys: "
+                '"plan" (string describing what you did and why) and '
+                '"files" (object mapping filenames to their new content). '
                 "Every file you modify must be executable as-is."
                 f"{gpu_instruction}"
             ),
@@ -97,10 +91,9 @@ def _build_subsequent_iteration_prompt(
             "content": (
                 "You are modifying experiment files based on prior results. "
                 f"You may ONLY modify these files: {mutable_files}. "
-                "Return JSON with three keys: "
-                '"plan" (string describing what you changed and why), '
-                '"files" (object mapping filenames to their new content), '
-                'and "metric_directions" (object mapping each METRIC name to "maximize" or "minimize"). '
+                "Return JSON with two keys: "
+                '"plan" (string describing what you changed and why) and '
+                '"files" (object mapping filenames to their new content). '
                 "Every file you modify must be executable as-is."
                 f"{gpu_instruction}{strategy_hint}"
             ),
@@ -122,9 +115,6 @@ async def run(ctx: SkillContext) -> SkillOutput:
     experiment_cfg = ctx.config.get("agent", {}).get("experiment_plan", {})
     gpu_setting = str(experiment_cfg.get("gpu", "cpu")).strip()
     objective = str(experiment_cfg.get("objective", "")).strip()
-    if not objective:
-        # 从用户请求或节点目标中推导实验目标
-        objective = ctx.user_request or ctx.goal or "optimize model performance"
 
     gpu_instruction = ""
     if gpu_setting in ("cuda", "auto"):
@@ -166,13 +156,10 @@ async def run(ctx: SkillContext) -> SkillOutput:
 
         plan_text = str(parsed.get("plan") or "").strip()
         file_changes = parsed.get("files", {})
-        metric_directions = parsed.get("metric_directions", {})
         if not isinstance(file_changes, dict):
             return SkillOutput(success=False, error="design_experiment 'files' must be a JSON object")
         if not plan_text:
             return SkillOutput(success=False, error="design_experiment did not provide a plan")
-        if not isinstance(metric_directions, dict):
-            metric_directions = {}
 
         safe_changes = {k: v for k, v in file_changes.items() if k in ws_config.mutable_files}
         write_mutable_files(workspace, safe_changes)
@@ -190,7 +177,6 @@ async def run(ctx: SkillContext) -> SkillOutput:
                 "mutable_files": ws_config.mutable_files,
                 "snapshot": snapshot,
                 "plan": plan_text,
-                "metric_directions": metric_directions,
                 "language": "python",
             },
             source_inputs=source_input_refs(ctx.input_artifacts),
@@ -249,13 +235,10 @@ async def run(ctx: SkillContext) -> SkillOutput:
 
     plan_text = str(parsed.get("plan") or "").strip()
     file_changes = parsed.get("files", {})
-    metric_directions = parsed.get("metric_directions", {})
     if not isinstance(file_changes, dict):
         return SkillOutput(success=False, error="design_experiment 'files' must be a JSON object")
     if not plan_text:
         return SkillOutput(success=False, error="design_experiment did not provide a plan")
-    if not isinstance(metric_directions, dict):
-        metric_directions = {}
 
     write_mutable_files(workspace, file_changes)
     snapshot = snapshot_mutable(workspace, mutable_files)
@@ -272,7 +255,6 @@ async def run(ctx: SkillContext) -> SkillOutput:
             "mutable_files": mutable_files,
             "snapshot": snapshot,
             "plan": plan_text,
-            "metric_directions": metric_directions,
             "language": "python",
         },
         source_inputs=source_input_refs(ctx.input_artifacts),
