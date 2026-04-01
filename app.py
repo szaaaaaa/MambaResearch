@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from src.server.routes.config import router as config_router
 from src.server.routes.models import router as model_router
 from src.server.routes.runs import router as runs_router
+from src.server.routes.skills import router as skills_router
 from src.server.settings import FRONTEND_DIST
 
 _ALLOWED_ORIGINS = [
@@ -29,6 +30,7 @@ app.add_middleware(
 app.include_router(model_router)
 app.include_router(config_router)
 app.include_router(runs_router)
+app.include_router(skills_router)
 
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="static")

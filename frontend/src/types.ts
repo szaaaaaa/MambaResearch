@@ -345,3 +345,27 @@ export interface AppState {
   siliconflowCatalog: ProviderModelCatalog;
   isAdvancedMode: boolean;
 }
+
+export interface SkillMetricsData {
+  execution_count: number;
+  success_count: number;
+  fail_count: number;
+  avg_duration_ms: number;
+  utility_score: number;
+}
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  applicable_roles: string[];
+  input_contract: { required: string[]; optional: string[] };
+  output_artifacts: string[];
+  allowed_tools: string[];
+  timeout_sec: number;
+  source: 'builtin' | 'user' | 'evolved';
+  deletable: boolean;
+  metrics: SkillMetricsData | null;
+  documentation?: string;
+}
