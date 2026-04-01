@@ -1,0 +1,19 @@
+id: aggregate_results
+name: Aggregate Results
+version: 1.0.0
+applicable_roles:
+  - analyst
+description: Aggregate and compare results from multiple experiment iterations into a unified analysis.
+input_contract:
+  required:
+    - ExperimentResults
+  optional:
+    - ExperimentIteration
+    - PerformanceMetrics
+output_artifacts:
+  - ExperimentAnalysis
+  - PerformanceMetrics
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120

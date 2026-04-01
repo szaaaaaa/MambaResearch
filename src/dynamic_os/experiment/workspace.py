@@ -25,8 +25,9 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 内置默认模板目录，包含标准的 CIFAR-10 训练/评估代码
+# 内置模板目录
 _BUILTIN_TEMPLATE_DIR: Path = Path(__file__).parent / "templates" / "default"
+_GENERIC_TEMPLATE_DIR: Path = Path(__file__).parent / "templates" / "generic"
 
 
 @dataclass(frozen=True)
@@ -86,12 +87,12 @@ def init_workspace(config: WorkspaceConfig, run_dir: str | Path) -> Path:
     run_dir = Path(run_dir)
     dest = run_dir / "experiment_workspace"  # 工作区固定命名，便于后续定位
 
-    if config.template == "builtin":
-        # 使用内置模板：包含标准的 CIFAR-10 CNN 训练/评估代码
-        source = _BUILTIN_TEMPLATE_DIR
+    if config.template in ("builtin", "generic"):
+        # builtin = CIFAR-10 专用模板，generic = 通用模板（LLM 可完全重写）
+        source = _GENERIC_TEMPLATE_DIR if config.template == "generic" else _BUILTIN_TEMPLATE_DIR
         if not source.is_dir():
             raise FileNotFoundError(
-                f"Built-in template directory not found: {source}"
+                f"Template directory not found: {source}"
             )
         shutil.copytree(source, dest, dirs_exist_ok=True)
     elif config.template == "custom":

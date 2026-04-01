@@ -63,6 +63,7 @@ export const SKILL_LABELS: Record<string, string> = {
   design_experiment: '设计实验',
   run_experiment: '执行实验',
   optimize_experiment: '优化实验',
+  aggregate_results: '聚合结果',
   optimize_skill: '优化技能',
   create_skill: '创建技能',
   draft_report: '撰写报告',
