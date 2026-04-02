@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.route_plan import RoleId

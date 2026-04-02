@@ -1,4 +1,4 @@
-# src/ingest/fetchers.py
+# src/ingest/fetchers.py — arXiv 论文抓取与元数据存储
 from dataclasses import dataclass
 from typing import Optional, List
 from datetime import datetime
@@ -196,10 +196,10 @@ def fetch_arxiv_and_store(
     return recs
 
 
-# ── Run-level tracking tables ─────────────────────────────────────────
+# ── 运行级别跟踪表 ─────────────────────────────────────────
 
 def init_run_tables(sqlite_path: str) -> None:
-    """Create run_sessions and run_docs tables if they don't exist."""
+    """如果不存在则创建 run_sessions 和 run_docs 表。"""
     Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(sqlite_path)
     cur = conn.cursor()
@@ -227,7 +227,7 @@ def init_run_tables(sqlite_path: str) -> None:
 
 
 def upsert_run_session(sqlite_path: str, *, run_id: str, topic: str) -> None:
-    """Record a new research run in run_sessions."""
+    """在 run_sessions 中记录新的研究运行。"""
     conn = sqlite3.connect(sqlite_path)
     cur = conn.cursor()
     cur.execute(
@@ -245,7 +245,7 @@ def upsert_run_docs(
     doc_uids: List[str],
     doc_type: str,
 ) -> None:
-    """Record which doc_uids are accessible to a given run."""
+    """记录给定运行可访问的 doc_uid 列表。"""
     if not doc_uids:
         return
     conn = sqlite3.connect(sqlite_path)

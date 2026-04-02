@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 import numpy as np
 
 from src.ingest.chunking import Chunk
+from src.ingest.indexer import _coerce_chunk
 from src.retrieval.bm25_index import rebuild_bm25_sidecar
 from src.retrieval.embeddings import DEFAULT_BACKEND, DEFAULT_MODEL, embed_texts
 
@@ -20,34 +21,6 @@ def _require_faiss():
         ) from exc
     return faiss
 
-
-def _coerce_chunk(chunk: Any, idx: int) -> Chunk:
-    if isinstance(chunk, Chunk):
-        return chunk
-    if isinstance(chunk, dict):
-        return Chunk(
-            chunk_id=str(chunk.get("chunk_id") or f"chunk_{idx:06d}"),
-            text=str(chunk.get("text", "")),
-            start_char=int(chunk.get("start_char", 0)),
-            end_char=int(chunk.get("end_char", 0)),
-            metadata=dict(chunk.get("metadata") or {}),
-        )
-    if hasattr(chunk, "text"):
-        return Chunk(
-            chunk_id=str(getattr(chunk, "chunk_id", f"chunk_{idx:06d}")),
-            text=str(getattr(chunk, "text", "")),
-            start_char=int(getattr(chunk, "start_char", 0)),
-            end_char=int(getattr(chunk, "end_char", 0)),
-            metadata=dict(getattr(chunk, "metadata", {}) or {}),
-        )
-    text = str(chunk)
-    return Chunk(
-        chunk_id=f"chunk_{idx:06d}",
-        text=text,
-        start_char=0,
-        end_char=len(text),
-        metadata={},
-    )
 
 
 def _index_path(persist_dir: str, collection_name: str) -> Path:

@@ -6,7 +6,7 @@ export const RawTerminalPanel: React.FC<{ content: string; defaultOpen?: boolean
 }) => {
   const text = String(content || '').trim();
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
       <details className="group" open={defaultOpen}>
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
           <div>

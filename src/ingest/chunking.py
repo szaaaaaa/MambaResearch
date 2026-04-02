@@ -1,4 +1,4 @@
-# src/ingest/chunking.py
+# src/ingest/chunking.py — 文本分块
 from __future__ import annotations
 
 from dataclasses import dataclass, field

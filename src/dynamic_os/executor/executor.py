@@ -1,3 +1,16 @@
+"""顶层执行器模块 —— 驱动"规划-执行-观测-重规划"主循环。
+
+Executor 是 Dynamic OS 的核心调度引擎，负责：
+1. 调用 Planner 生成执行计划（RoutePlan）
+2. 按 DAG 拓扑序逐节点执行
+3. 收集观测结果，判断是否需要 replan
+4. 管理预算检查和运行终止
+5. 处理人机交互（HITL）节点的暂停/恢复
+
+主循环：plan → execute → observe → replan（如需要）→ plan → ...
+直到 Planner 标记 terminate 或预算耗尽。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,7 +18,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from src.dynamic_os.artifact_refs import make_artifact
-from src.dynamic_os.contracts.artifact import ArtifactRecord
+from src.dynamic_os.contracts.artifact import ArtifactRecord, now_iso as _now_iso
 from src.dynamic_os.contracts.events import (
     ArtifactEvent,
     HitlRequestEvent,
@@ -19,43 +32,62 @@ from src.dynamic_os.contracts.events import (
 from src.dynamic_os.contracts.observation import ErrorType, NodeStatus, Observation
 from src.dynamic_os.contracts.route_plan import EdgeCondition, PlanEdge, PlanNode, RoleId, RoutePlan
 from src.dynamic_os.executor.node_runner import NodeExecutionResult, NodeRunner
-from src.dynamic_os.planner import decide_termination
-from src.dynamic_os.planner.routing import derive_role_routing_policy
 from src.dynamic_os.planner.planner import Planner, PlannerOutputError
 from src.dynamic_os.policy.engine import BudgetExceededError, PolicyEngine
 
 
+# 事件接收回调类型，用于将事件推送到前端（SSE）或日志系统
 EventSink = Callable[[object], None]
 
 
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _artifact_ref(record) -> str:
+    """将产物记录转为标准引用字符串 'artifact:<type>:<id>'。"""
     return f"artifact:{record.artifact_type}:{record.artifact_id}"
 
 
 @dataclass(frozen=True)
 class PlanExecutionResult:
+    """单次计划执行的结果。
+
+    包含该轮执行产生的所有观测，以及是否需要触发 replan。
+    """
+
+    # 本轮执行产生的所有观测结果
     observations: list[Observation]
+    # 是否需要触发重新规划
     should_replan: bool
+    # 重新规划的原因描述
     replan_reason: str
 
 
 @dataclass(frozen=True)
 class ExecutorRunResult:
+    """整个运行的最终结果。
+
+    运行终止后返回，包含所有产物、观测和事件的完整记录。
+    """
+
+    # 运行唯一标识
     run_id: str
+    # 最终产出的所有产物引用
     final_artifacts: list[str]
+    # 运行期间的所有观测结果
     observations: list[Observation]
+    # 运行期间发布的所有事件
     events: list[object]
+    # 终止原因（如 "planner_terminated"、预算超限等）
     termination_reason: str
+    # 总共经历的规划迭代次数
     planning_iterations: int
 
 
 class Executor:
+    """顶层执行器 —— 管理"规划→执行→观测→重规划"主循环。
+
+    协调 Planner（规划器）和 NodeRunner（节点执行器），
+    在预算约束下驱动研究任务从开始到完成。
+    """
+
     def __init__(
         self,
         *,
@@ -66,22 +98,24 @@ class Executor:
         policy: PolicyEngine,
         event_sink: EventSink | None = None,
     ) -> None:
-        self._planner = planner
-        self._node_runner = node_runner
-        self._artifact_store = artifact_store
-        self._observation_store = observation_store
-        self._policy = policy
-        self._event_sink = event_sink
-        self._events: list[object] = []
-        self._hitl_event: asyncio.Event | None = None
-        self._hitl_response: str = ""
+        self._planner = planner           # 规划器，生成 RoutePlan
+        self._node_runner = node_runner     # 节点执行器，运行单个节点
+        self._artifact_store = artifact_store     # 产物存储
+        self._observation_store = observation_store  # 观测存储
+        self._policy = policy               # 策略引擎，执行预算和权限检查
+        self._event_sink = event_sink       # 事件推送回调
+        self._events: list[object] = []     # 运行期间收集的所有事件
+        self._hitl_event: asyncio.Event | None = None  # HITL 异步等待信号
+        self._hitl_response: str = ""       # 用户的 HITL 回复内容
 
     def submit_hitl_response(self, response: str) -> None:
+        """接收用户的人机交互回复，唤醒等待中的 HITL 节点。"""
         self._hitl_response = response
         if self._hitl_event is not None:
             self._hitl_event.set()
 
     async def run(self, *, user_request: str, run_id: str) -> ExecutorRunResult:
+        """执行主循环：反复调用 Planner 和 execute_plan，直到终止。"""
         planning_iteration = 0
         observations: list[Observation] = []
 
@@ -139,17 +173,6 @@ class Executor:
 
             observations.extend(execution.observations)
 
-            if self._should_terminate_after_final_artifact(
-                user_request=user_request,
-                execution=execution,
-            ):
-                return self._terminate(
-                    run_id=run_id,
-                    reason="final_artifact_produced",
-                    observations=observations,
-                    planning_iterations=planning_iteration + 1,
-                )
-
             if plan.terminate and not execution.should_replan:
                 return self._terminate(
                     run_id=run_id,
@@ -172,6 +195,11 @@ class Executor:
             planning_iteration += 1
 
     async def execute_plan(self, plan: RoutePlan, *, user_request: str = "") -> PlanExecutionResult:
+        """执行单个路由计划中的所有节点。
+
+        按 DAG 拓扑序选择就绪节点执行。如果节点执行触发 replan，
+        立即中断当前计划执行并返回。无法执行也无法跳过的节点会抛出异常。
+        """
         pending = {node.node_id for node in plan.nodes}
         statuses: dict[str, NodeStatus] = {}
         observations: list[Observation] = []
@@ -229,6 +257,11 @@ class Executor:
         return PlanExecutionResult(observations=observations, should_replan=False, replan_reason="")
 
     async def _handle_hitl_node(self, *, node: PlanNode, run_id: str) -> NodeExecutionResult:
+        """处理人机交互（HITL）节点。
+
+        向前端发送问题，异步等待用户回复，
+        将回复封装为 UserGuidance 产物供下游节点使用。
+        """
         self._emit(
             NodeStatusEvent(
                 ts=_now_iso(),
@@ -322,36 +355,8 @@ class Executor:
             should_replan=False,
         )
 
-    def _should_terminate_after_final_artifact(
-        self,
-        *,
-        user_request: str,
-        execution: PlanExecutionResult,
-    ) -> bool:
-        if execution.should_replan:
-            return False
-        records = list(self._artifact_store.list_all())
-        artifact_summaries = [{"artifact_type": record.artifact_type} for record in records]
-        if not decide_termination(artifact_summaries):
-            return False
-        artifact_types = {record.artifact_type for record in records}
-        if "ReviewVerdict" in artifact_types:
-            review_records = [r for r in records if r.artifact_type == "ReviewVerdict"]
-            if review_records:
-                latest_review = review_records[-1]
-                weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
-                threshold = float(latest_review.payload.get("threshold", 6.0))
-                max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
-                report_count = sum(1 for r in records if r.artifact_type == "ResearchReport")
-                if weighted_score < threshold and report_count <= max_cycles:
-                    return False
-            return True
-        if "ResearchReport" not in artifact_types:
-            return False
-        routing_policy = derive_role_routing_policy(user_request=user_request, artifacts=records)
-        return "review" not in set(routing_policy.intents)
-
     def _is_ready(self, node: PlanNode, edges: list[PlanEdge], statuses: dict[str, NodeStatus]) -> bool:
+        """判断节点是否满足所有入边条件，可以开始执行。"""
         if not edges:
             return True
         for edge in edges:
@@ -369,6 +374,7 @@ class Executor:
         return True
 
     def _is_skippable(self, node: PlanNode, edges: list[PlanEdge], statuses: dict[str, NodeStatus]) -> bool:
+        """判断节点是否因上游条件不满足而可以被跳过（所有上游已完成但条件不匹配）。"""
         if not edges:
             return False
         for edge in edges:
@@ -393,6 +399,7 @@ class Executor:
         observations: list[Observation],
         planning_iterations: int,
     ) -> ExecutorRunResult:
+        """终止运行，发布 RunTerminateEvent 并返回最终结果。"""
         final_artifacts = [_artifact_ref(record) for record in self._artifact_store.list_all()]
         self._emit(
             RunTerminateEvent(
@@ -412,6 +419,7 @@ class Executor:
         )
 
     def _planner_error_observation(self, *, planning_iteration: int, detail: str) -> Observation:
+        """为 Planner 输出错误构造一个失败观测记录。"""
         return Observation(
             node_id=f"planner_iteration_{planning_iteration}",
             role="planner",
@@ -426,12 +434,14 @@ class Executor:
         )
 
     def _validate_plan_identity(self, *, plan: RoutePlan, run_id: str) -> None:
+        """验证 Planner 返回的计划 run_id 与当前运行一致。"""
         if plan.run_id != run_id:
             raise PlannerOutputError(
                 f"planner output run_id mismatch: expected {run_id}, got {plan.run_id}"
             )
 
     def _emit(self, event: object) -> None:
+        """发布事件：记录到本地列表，并通过 event_sink 推送到外部。"""
         self._events.append(event)
         if self._event_sink is not None:
             self._event_sink(event)

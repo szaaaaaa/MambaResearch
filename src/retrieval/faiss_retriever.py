@@ -3,15 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from src.ingest.faiss_indexer import _index_path, _require_faiss, load_collection_state
-from src.retrieval.chroma_retriever import (
-    apply_intent_prior,
-    collapse_figure_duplicates,
-    detect_query_intent,
-    ensure_figure_presence,
-    _reciprocal_rank_fusion,
-)
+from src.retrieval.common import postprocess, reciprocal_rank_fusion
 from src.retrieval.embeddings import DEFAULT_BACKEND, DEFAULT_MODEL, embed_text
-from src.retrieval.reranker_backends import rerank_hits as rerank_hits_with_backend
 
 
 def retrieve(
@@ -93,7 +86,7 @@ def retrieve(
                 else:
                     enriched_bm25.append({"id": hit["id"], "text": "", "meta": {}, "bm25_score": hit["bm25_score"]})
 
-            fused = _reciprocal_rank_fusion(dense_hits, enriched_bm25)
+            fused = reciprocal_rank_fusion(dense_hits, enriched_bm25)
             state_map = {
                 chunk_id: (text, meta)
                 for chunk_id, text, meta in zip(
@@ -107,18 +100,9 @@ def retrieve(
                     hit["text"], hit["meta"] = state_map[hit["id"]]
             out = [hit for hit in fused if hit.get("text")]
 
-    intent = detect_query_intent(query)
-    if intent != "general":
-        out = apply_intent_prior(out, intent)
-    if reranker_model:
-        out = rerank_hits_with_backend(
-            query,
-            out,
-            model_name=reranker_model,
-            backend_name=reranker_backend_name,
-            cfg=cfg,
-        )
-    out = collapse_figure_duplicates(out)
-    if intent == "visual":
-        out = ensure_figure_presence(out, top_k=top_k)
-    return out[:top_k]
+    return postprocess(
+        out, query, top_k,
+        reranker_model=reranker_model,
+        reranker_backend_name=reranker_backend_name,
+        cfg=cfg,
+    )

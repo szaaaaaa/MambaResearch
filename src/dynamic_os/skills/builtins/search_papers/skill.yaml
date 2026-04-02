@@ -12,6 +12,7 @@ input_contract:
 output_artifacts:
   - SourceSet
 allowed_tools:
+  - mcp.paper_search.search_papers
   - mcp.search.papers
 permissions:
   network: true

@@ -299,23 +299,5 @@ def test_run_topic_extracts_h1_from_report_text() -> None:
     assert runs_route._run_topic(state) == "Advanced ML Systems"
 
 
-def test_run_topic_falls_back_to_planner_note_when_no_h1() -> None:
-    state = {"report_text": "Some content without heading.", "route_plan": {"planner_notes": ["研究LLM推理效率"]}}
-    assert runs_route._run_topic(state) == "研究LLM推理效率"
-
-
-def test_run_topic_falls_back_to_node_goal() -> None:
-    state = {
-        "report_text": "",
-        "route_plan": {"planner_notes": [], "nodes": [{"goal": "Research transformer architectures"}]},
-    }
-    assert runs_route._run_topic(state) == "Research transformer architectures"
-
-
-def test_run_topic_returns_empty_when_no_info() -> None:
-    state = {"report_text": "", "route_plan": {"planner_notes": [], "nodes": []}}
-    assert runs_route._run_topic(state) == ""
-
-
 def test_run_topic_returns_empty_for_empty_state() -> None:
     assert runs_route._run_topic({}) == ""

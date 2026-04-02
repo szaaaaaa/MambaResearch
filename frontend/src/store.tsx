@@ -77,9 +77,7 @@ const defaultProjectConfig: ProjectConfig = {
     },
     search: {
       backend: 'default_search',
-      academic_order: ['arxiv', 'semantic_scholar'],
       web_order: ['google_cse', 'bing'],
-      query_all_academic: false,
       query_all_web: false,
       circuit_breaker: {
         enabled: true,

@@ -5,9 +5,9 @@ type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
 type ButtonSize = 'sm' | 'md';
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-[#2563eb] text-white hover:bg-[#1d4ed8] focus:ring-[#2563eb]/20',
+  primary: 'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] focus:ring-[var(--color-primary-ring)]',
   secondary: 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 focus:ring-slate-300/40',
-  danger: 'bg-[#dc2626] text-white hover:bg-[#b91c1c] focus:ring-[#dc2626]/20',
+  danger: 'bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger-hover)] focus:ring-[var(--color-danger)]/20',
   ghost: 'text-slate-600 hover:bg-slate-100 focus:ring-slate-300/30',
 };
 
@@ -24,7 +24,7 @@ export const Button: React.FC<
 > = ({ variant = 'primary', size = 'md', className, type = 'button', ...props }) => (
   <button
     type={type}
-    className={`inline-flex items-center justify-center gap-2 rounded-xl font-medium transition focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60 ${BUTTON_SIZES[size]} ${BUTTON_VARIANTS[variant]} ${className || ''}`}
+    className={`inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60 ${BUTTON_SIZES[size]} ${BUTTON_VARIANTS[variant]} ${className || ''}`}
     {...props}
   />
 );
@@ -36,7 +36,7 @@ export const Input: React.FC<
     <label className="text-sm font-medium text-slate-800">{label}</label>
     {description ? <p className="text-xs leading-5 text-slate-500">{description}</p> : null}
     <input
-      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#2563eb]/10"
+      className="w-full rounded-[var(--radius-md)] border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[var(--color-primary)] focus:outline-none focus:ring-4 focus:ring-[var(--color-primary-ring)]"
       {...props}
     />
   </div>
@@ -49,7 +49,7 @@ export const Textarea: React.FC<
     <label className="text-sm font-medium text-slate-800">{label}</label>
     {description ? <p className="text-xs leading-5 text-slate-500">{description}</p> : null}
     <textarea
-      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#2563eb]/10"
+      className="w-full rounded-[var(--radius-md)] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[var(--color-primary)] focus:outline-none focus:ring-4 focus:ring-[var(--color-primary-ring)]"
       {...props}
     />
   </div>
@@ -91,7 +91,7 @@ export const PasswordInput: React.FC<
       <div className="relative">
         <input
           type={show ? 'text' : 'password'}
-          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-4 pr-11 font-mono text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#2563eb]/10"
+          className="w-full rounded-[var(--radius-md)] border border-slate-200 bg-white py-2.5 pl-4 pr-11 font-mono text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[var(--color-primary)] focus:outline-none focus:ring-4 focus:ring-[var(--color-primary-ring)]"
           {...props}
         />
         <button
@@ -117,7 +117,7 @@ export const Select: React.FC<
     <label className="text-sm font-medium text-slate-800">{label}</label>
     {description ? <p className="text-xs leading-5 text-slate-500">{description}</p> : null}
     <select
-      className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition focus:border-[#2563eb] focus:outline-none focus:ring-4 focus:ring-[#2563eb]/10"
+      className="w-full appearance-none rounded-[var(--radius-md)] border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition focus:border-[var(--color-primary)] focus:outline-none focus:ring-4 focus:ring-[var(--color-primary-ring)]"
       {...props}
     >
       {options.map((opt) => (
@@ -153,8 +153,8 @@ export const Toggle: React.FC<{
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
-        checked ? 'bg-[#2563eb]' : 'bg-slate-300'
-      } focus:outline-none focus:ring-4 focus:ring-[#2563eb]/20`}
+        checked ? 'bg-[var(--color-primary)]' : 'bg-slate-300'
+      } focus:outline-none focus:ring-4 focus:ring-[var(--color-primary-ring)]`}
     >
       <span className="sr-only">切换 {label}</span>
       <span
@@ -173,7 +173,7 @@ export const Card: React.FC<{
   children: React.ReactNode;
   className?: string;
 }> = ({ title, description, children, className }) => (
-  <section className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ${className || ''}`}>
+  <section className={`rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)] ${className || ''}`}>
     <div className="mb-5 border-b border-slate-100 pb-4">
       <h3 className="text-base font-semibold tracking-tight text-slate-900">{title}</h3>
       {description ? <p className="mt-1.5 text-sm leading-6 text-slate-500">{description}</p> : null}

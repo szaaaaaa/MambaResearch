@@ -1,14 +1,8 @@
 from __future__ import annotations
 
-import json
-
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
-
-
-def _serialize_payload(artifact) -> str:
-    return json.dumps(artifact.payload, ensure_ascii=False, indent=2, default=str)
+from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, serialize_payload as _serialize_payload
 
 
 async def run(ctx: SkillContext) -> SkillOutput:

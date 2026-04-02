@@ -1,27 +1,6 @@
 import React from 'react';
 import { NodeStatusMap, RoutePlan } from '../types';
-
-const ROLE_LABELS: Record<string, string> = {
-  conductor: '统筹',
-  researcher: '研究',
-  experimenter: '实验',
-  analyst: '分析',
-  writer: '写作',
-  reviewer: '审阅',
-};
-
-const SKILL_LABELS: Record<string, string> = {
-  plan_research: '规划研究',
-  search_papers: '检索论文',
-  fetch_fulltext: '抓取全文',
-  extract_notes: '提取笔记',
-  build_evidence_map: '构建证据图谱',
-  design_experiment: '设计实验',
-  run_experiment: '执行实验',
-  analyze_metrics: '分析指标',
-  draft_report: '撰写报告',
-  review_artifact: '审阅产出',
-};
+import { roleLabel, skillLabel, nodeStatusLabel } from '../labels';
 
 const ROLE_COLORS: Record<string, string> = {
   conductor: '#0f766e',
@@ -30,6 +9,7 @@ const ROLE_COLORS: Record<string, string> = {
   analyst: '#ea580c',
   writer: '#16a34a',
   reviewer: '#d97706',
+  hitl: '#6366f1',
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -43,30 +23,8 @@ const STATUS_STYLES: Record<string, string> = {
   stopped: 'border-slate-300 bg-slate-100 text-slate-600',
 };
 
-function roleLabel(roleId: string): string {
-  return ROLE_LABELS[roleId] || roleId;
-}
-
-function skillLabel(skillId: string): string {
-  return SKILL_LABELS[skillId] || skillId;
-}
-
 function roleColor(roleId: string): string {
   return ROLE_COLORS[roleId] || '#475569';
-}
-
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    pending: '等待中',
-    running: '执行中',
-    success: '成功',
-    partial: '部分完成',
-    needs_replan: '需要重规划',
-    failed: '失败',
-    skipped: '已跳过',
-    stopped: '已停止',
-  };
-  return labels[status] || status || '等待中';
 }
 
 function statusClass(status: string): string {
@@ -90,7 +48,7 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
   const nodeIndex = new Map(routePlan.nodes.map((node, index) => [node.node_id, index]));
 
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
       <details className="group" open>
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
           <div>
@@ -147,7 +105,7 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
             return (
               <div
                 key={node.node_id}
-                className="absolute top-6 rounded-3xl border bg-white px-4 py-3 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]"
+                className="absolute top-6 rounded-3xl border bg-white px-4 py-3 shadow-[var(--shadow-elevated)]"
                 style={{ left, width: cardWidth, height: cardHeight, borderColor: `${accent}33` }}
               >
                 <div className="flex items-center justify-between gap-3">
@@ -158,7 +116,7 @@ export const RouteGraph: React.FC<{ routePlan: RoutePlan; nodeStatus?: NodeStatu
                   <span
                     className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusClass(status)}`}
                   >
-                    {statusLabel(status)}
+                    {nodeStatusLabel(status)}
                   </span>
                 </div>
 

@@ -7,20 +7,15 @@ import re
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
+from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact, metric_higher_is_better
 
 METRIC_PATTERN = re.compile(r"^METRIC\s+(\w+)\s*=\s*([\d.eE+-]+)$", re.MULTILINE)
 
 
-def _find_artifact(ctx: SkillContext, artifact_type: str) -> ArtifactRecord | None:
-    for artifact in ctx.input_artifacts:
-        if artifact.artifact_type == artifact_type:
-            return artifact
-    return None
 
 
 def _parse_metrics(stdout: str) -> dict[str, float]:
-    """Extract all METRIC name=value lines from stdout."""
+    """从标准输出中提取所有 METRIC name=value 行。"""
     metrics: dict[str, float] = {}
     for match in METRIC_PATTERN.finditer(stdout):
         name = match.group(1)
@@ -29,24 +24,22 @@ def _parse_metrics(stdout: str) -> dict[str, float]:
     return metrics
 
 
-def _metric_list(metrics: dict[str, float]) -> list[dict]:
-    """Convert metrics dict to list format for artifact payload."""
+def _metric_list(metrics: dict[str, float], metric_directions: dict[str, str] | None = None) -> list[dict]:
+    """将指标字典转换为制品载荷所需的列表格式。"""
     items: list[dict] = []
     for name, value in metrics.items():
         items.append(
             {
                 "name": name,
                 "value": value,
-                "higher_is_better": not any(
-                    t in name.lower() for t in ("loss", "error", "latency", "time")
-                ),
+                "higher_is_better": metric_higher_is_better(name, metric_directions),
             }
         )
     return items
 
 
 def _build_run_script(workspace_path: str, entry_point: str, eval_script: str) -> str:
-    """Build a Python script that runs entry_point then eval_script in the workspace."""
+    """构建一个在工作空间中依次运行 entry_point 和 eval_script 的 Python 脚本。"""
     return (
         f"import subprocess, sys, os\n"
         f"os.chdir({workspace_path!r})\n"
@@ -63,7 +56,7 @@ def _build_run_script(workspace_path: str, entry_point: str, eval_script: str) -
 
 
 def _format_files(file_contents: dict[str, str]) -> str:
-    """Format file contents for inclusion in an LLM prompt."""
+    """将文件内容格式化以便嵌入 LLM 提示词。"""
     parts: list[str] = []
     for filename, content in file_contents.items():
         parts.append(f"--- {filename} ---\n{content}\n")
@@ -73,7 +66,7 @@ def _format_files(file_contents: dict[str, str]) -> str:
 async def _read_mutable_files(
     ctx: SkillContext, workspace_path: str, mutable_files: list[str],
 ) -> dict[str, str]:
-    """Read current contents of all mutable files from workspace."""
+    """从工作空间读取所有可变文件的当前内容。"""
     contents: dict[str, str] = {}
     for filename in mutable_files:
         filepath = os.path.join(workspace_path, filename)
@@ -87,7 +80,7 @@ async def _read_mutable_files(
 async def _write_fixed_files(
     ctx: SkillContext, workspace_path: str, files: dict[str, str],
 ) -> None:
-    """Write fixed file contents back to workspace."""
+    """将修复后的文件内容写回工作空间。"""
     for filename, content in files.items():
         filepath = os.path.join(workspace_path, filename)
         await ctx.tools.write_file(filepath, content)
@@ -100,7 +93,7 @@ async def _attempt_debug_fix(
     error_log: str,
     stdout: str,
 ) -> bool:
-    """Ask LLM to diagnose and fix the error. Returns True if a fix was applied."""
+    """让 LLM 诊断并修复错误。如果成功应用修复则返回 True。"""
     current_files = await _read_mutable_files(ctx, workspace_path, mutable_files)
 
     response = await ctx.tools.llm_chat(
@@ -148,6 +141,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
     entry_point = payload.get("entry_point", "train.py")
     eval_script = payload.get("eval_script", "evaluate.py")
     mutable_files = list(payload.get("mutable_files", []))
+    metric_directions = payload.get("metric_directions") or {}
 
     experiment_cfg = ctx.config.get("agent", {}).get("experiment_plan", {})
     exec_timeout = int(experiment_cfg.get("exec_timeout_sec", 120))
@@ -184,7 +178,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
                     "runs": [
                         {
                             "run_id": f"{ctx.node_id}_run_1",
-                            "metrics": _metric_list(metrics),
+                            "metrics": _metric_list(metrics, metric_directions),
                         }
                     ],
                     "workspace_path": workspace_path,

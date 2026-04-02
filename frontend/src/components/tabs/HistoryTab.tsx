@@ -5,6 +5,7 @@ import { NodeStatusMap, RoutePlan, RoutePlanNode, RouteEdge, RunArtifact, RunEve
 import { Button } from '../ui';
 import { RouteGraph } from '../RouteGraph';
 import { BehaviorTimeline } from '../BehaviorTimeline';
+import { artifactLabel, roleLabel, formatTimestamp } from '../../labels';
 
 interface HistoryRunSummary {
   run_id: string;
@@ -21,42 +22,6 @@ interface HistoryRunDetail {
   node_status: NodeStatusMap;
   artifacts: RunArtifact[];
   report_text: string;
-}
-
-const HISTORY_ARTIFACT_LABELS: Record<string, string> = {
-  TopicBrief: '主题简报',
-  SearchPlan: '检索计划',
-  SourceSet: '来源集合',
-  PaperNotes: '论文笔记',
-  EvidenceMap: '证据图谱',
-  GapMap: '缺口图谱',
-  ExperimentPlan: '实验方案',
-  ExperimentResults: '实验结果',
-  ExperimentAnalysis: '实验分析',
-  PerformanceMetrics: '性能指标',
-  ResearchReport: '研究报告',
-  ReviewVerdict: '审阅结论',
-  ExperimentIteration: '实验迭代',
-  TrendAnalysis: '趋势分析',
-  MethodComparison: '方法对比',
-  FigureSet: '图表集合',
-};
-
-const HISTORY_ROLE_LABELS: Record<string, string> = {
-  conductor: '统筹',
-  researcher: '研究',
-  experimenter: '实验',
-  analyst: '分析',
-  writer: '写作',
-  reviewer: '审阅',
-};
-
-function historyArtifactLabel(type: string): string {
-  return HISTORY_ARTIFACT_LABELS[type] || type;
-}
-
-function historyRoleLabel(role: string): string {
-  return HISTORY_ROLE_LABELS[role] || role;
 }
 
 function formatHistoryTimestamp(value: string): string {
@@ -245,13 +210,13 @@ function ArtifactDetailModal({ detail, onClose }: { detail: ArtifactDetailState;
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_90px_-45px_rgba(15,23,42,0.45)]"
+        className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[var(--shadow-modal)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-3">
           <div>
             <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-              {historyArtifactLabel(detail.artifactType)}
+              {artifactLabel(detail.artifactType)}
             </span>
             <p className="mt-2 font-mono text-xs text-slate-500">{detail.artifactId}</p>
           </div>
@@ -318,7 +283,7 @@ function RunDetailView({
           ) : null}
 
           {detail.artifacts.length > 0 ? (
-            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">产物</p>
@@ -341,14 +306,14 @@ function RunDetailView({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-                          {historyArtifactLabel(artifact.artifact_type)}
+                          {artifactLabel(artifact.artifact_type)}
                         </span>
                         <span className="font-mono text-xs text-slate-500">{artifact.artifact_id}</span>
                       </div>
                       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                     </div>
                     <p className="mt-2 text-sm text-slate-600">
-                      {historyRoleLabel(artifact.producer_role)} · {artifact.producer_skill}
+                      {roleLabel(artifact.producer_role)} · {artifact.producer_skill}
                     </p>
                   </button>
                 ))}
@@ -359,7 +324,7 @@ function RunDetailView({
           {events.length > 0 ? <BehaviorTimeline events={events} /> : null}
 
           {detail.report_text ? (
-            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">研究报告</p>
                 <div className="flex gap-2">

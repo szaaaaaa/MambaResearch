@@ -1,0 +1,26 @@
+# Experiment hyperparameters - AI agent rewrites this based on research topic
+# Field names are registry lookup keys
+
+# Registry component selection
+dataset: synthetic       # -> registered in datasets/__init__.py
+model: mlp               # -> registered in models/__init__.py
+eval_metrics:            # -> registered in metrics/__init__.py
+  - accuracy
+
+# Model parameters
+input_dim: 784
+hidden_dim: 256
+num_classes: 10
+
+# Training parameters
+batch_size: 64
+epochs: 10
+learning_rate: 0.001
+optimizer: adam           # adam | sgd | adamw
+scheduler: cosine         # cosine | step | none
+weight_decay: 0.0001
+
+# Environment
+device: auto
+seed: 42
+checkpoint_dir: checkpoints

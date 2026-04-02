@@ -1,4 +1,4 @@
-# src/ingest/indexer.py
+# src/ingest/indexer.py — Chroma 索引构建
 from __future__ import annotations
 
 from typing import List, Dict, Any
@@ -52,11 +52,11 @@ def build_chroma_index(
     cfg: Dict[str, Any] | None = None,
     allow_existing_doc_updates: bool = False,
 ) -> int:
-    """Index chunks into Chroma.
+    """将分块索引到 Chroma。
 
-    When ``run_id`` is provided (agent mode), performs a cross-run dedup check:
-    if this ``doc_id`` is already present in the collection it is skipped
-    entirely so documents are stored only once globally.
+    当提供 ``run_id``（代理模式）时，执行跨运行去重检查：
+    如果该 ``doc_id`` 已存在于集合中，则完全跳过，
+    确保文档全局只存储一次。
     """
     Path(persist_dir).mkdir(parents=True, exist_ok=True)
 
@@ -67,14 +67,14 @@ def build_chroma_index(
         metadata={"hnsw:space": "cosine"},
     )
 
-    # Cross-run dedup: if this doc is already in the collection, skip re-embedding.
+    # 跨运行去重：如果该文档已在集合中，跳过重新嵌入。
     if run_id and not allow_existing_doc_updates:
         try:
             existing = col.get(where={"doc_id": doc_id}, include=[], limit=1)
             if existing and existing.get("ids"):
-                return 0  # already indexed globally, reuse existing chunks
+                return 0  # 已全局索引，复用现有分块
         except Exception:
-            pass  # get() failed — fall through and index normally
+            pass  # get() 失败 — 继续正常索引
 
     normalized_chunks = [_coerce_chunk(chunk, idx) for idx, chunk in enumerate(chunks)]
 

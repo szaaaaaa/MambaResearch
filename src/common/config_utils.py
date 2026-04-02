@@ -80,7 +80,7 @@ def as_bool(v: Any, default: bool) -> bool:
 
 
 def read_env_file(env_path: Path) -> Dict[str, str]:
-    """Parse a dotenv-style file into a dict, skipping comments and blank lines."""
+    """将 dotenv 格式文件解析为字典，跳过注释行和空行。"""
     if not env_path.exists():
         return {}
     values: Dict[str, str] = {}

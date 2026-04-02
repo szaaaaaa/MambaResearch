@@ -8,42 +8,9 @@ import { RouteGraph } from '../RouteGraph';
 import { BehaviorTimeline } from '../BehaviorTimeline';
 import { RawTerminalPanel } from '../RawTerminalPanel';
 import { HitlModal } from '../HitlModal';
-
-const RUN_TAB_ROLE_LABELS: Record<string, string> = {
-  conductor: '统筹',
-  researcher: '研究',
-  experimenter: '实验',
-  analyst: '分析',
-  writer: '写作',
-  reviewer: '审阅',
-};
-
-const RUN_TAB_ARTIFACT_LABELS: Record<string, string> = {
-  TopicBrief: '主题简报',
-  SearchPlan: '检索计划',
-  SourceSet: '来源集合',
-  PaperNotes: '论文笔记',
-  EvidenceMap: '证据图谱',
-  GapMap: '缺口图谱',
-  ExperimentPlan: '实验方案',
-  ExperimentResults: '实验结果',
-  ExperimentAnalysis: '实验分析',
-  PerformanceMetrics: '性能指标',
-  ResearchReport: '研究报告',
-  ReviewVerdict: '审阅结论',
-  ExperimentIteration: '实验迭代',
-  TrendAnalysis: '趋势分析',
-  MethodComparison: '方法对比',
-  FigureSet: '图表集合',
-};
-
-function runTabRoleLabel(roleId: string): string {
-  return RUN_TAB_ROLE_LABELS[roleId] || roleId;
-}
-
-function runTabArtifactLabel(artifactType: string): string {
-  return RUN_TAB_ARTIFACT_LABELS[artifactType] || artifactType;
-}
+import { ExperimentProgress } from '../ExperimentProgress';
+import { ReviewStatus } from '../ReviewStatus';
+import { roleLabel, artifactLabel, runStatusLabel, formatTimestamp } from '../../labels';
 
 const PROMPT_TEMPLATES = [
   '为一个关于动态研究智能体系统的主题生成最小研究闭环。',
@@ -51,24 +18,6 @@ const PROMPT_TEMPLATES = [
   '分析一个检索增强系统在 reviewer 按需插入下的运行路径。',
 ];
 
-function formatStatusLabel(status: string): string {
-  if (status === 'Running') {
-    return '运行中';
-  }
-  if (status === 'Stopping') {
-    return '停止中';
-  }
-  if (status === 'Stopped') {
-    return '已停止';
-  }
-  if (status === 'Failed') {
-    return '失败';
-  }
-  if (status === 'Completed') {
-    return '已完成';
-  }
-  return '待命';
-}
 
 function getMessageWidthClass(chatWidth: UiPreferences['chatWidth']): string {
   return chatWidth === 'wide' ? 'max-w-6xl' : 'max-w-4xl';
@@ -81,14 +30,6 @@ function getDensityClasses(density: UiPreferences['density']): { gap: string; pa
   return { gap: 'space-y-6', padding: 'py-4' };
 }
 
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value));
-}
 
 function currentNode(routePlan: RoutePlan | null, nodeStatus: NodeStatusMap): { nodeId: string; status: string; goal: string; role: string } | null {
   if (!routePlan) {
@@ -157,7 +98,7 @@ function summarizeCurrentStage(conversation: {
           ? '等待重规划'
           : '下一个节点';
     return {
-      title: `${prefix}：${runTabRoleLabel(node.role)} / ${node.nodeId}`,
+      title: `${prefix}：${roleLabel(node.role)} / ${node.nodeId}`,
       detail: node.goal,
     };
   }
@@ -203,7 +144,7 @@ function latestFailureSummary(conversation: {
       ) || null;
 
   const titleParts = [
-    failureEvent?.role ? runTabRoleLabel(failureEvent.role) : '',
+    failureEvent?.role ? roleLabel(failureEvent.role) : '',
     failureEvent?.nodeId || '',
   ].filter(Boolean);
   const detail =
@@ -214,7 +155,7 @@ function latestFailureSummary(conversation: {
     title: titleParts.length > 0 ? `Last Failure: ${titleParts.join(' / ')}` : 'No Final ResearchReport',
     detail,
     artifacts: conversation.artifacts.map(
-      (artifact) => `${runTabArtifactLabel(artifact.artifact_type)} (${artifact.artifact_id})`,
+      (artifact) => `${artifactLabel(artifact.artifact_type)} (${artifact.artifact_id})`,
     ),
   };
 }
@@ -289,13 +230,13 @@ function ArtifactDetailModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_90px_-45px_rgba(15,23,42,0.45)]"
+        className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[var(--shadow-modal)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-3">
           <div>
             <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-              {runTabArtifactLabel(detail.artifactType)}
+              {artifactLabel(detail.artifactType)}
             </span>
             <p className="mt-2 font-mono text-xs text-slate-500">{detail.artifactId}</p>
           </div>
@@ -326,6 +267,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
   const { conversations, activeConversationId, runOverrides } = state;
   const [runStartError, setRunStartError] = React.useState('');
   const [artifactDetail, setArtifactDetail] = React.useState<ArtifactDetailState | null>(null);
+  const [runView, setRunView] = React.useState<'monitor' | 'chat'>('monitor');
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const isActiveConversationRunning =
@@ -386,7 +328,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
           onClick={() => setRunStartError('')}
         >
           <div
-            className="w-full max-w-md rounded-[28px] border border-rose-200 bg-white p-6 shadow-[0_30px_90px_-45px_rgba(15,23,42,0.45)]"
+            className="w-full max-w-md rounded-[28px] border border-rose-200 bg-white p-6 shadow-[var(--shadow-modal)]"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start gap-3">
@@ -411,33 +353,80 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
       ) : null}
 
       <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
-        <div className={`mx-auto flex w-full ${messageWidthClass} items-center justify-between gap-4`}>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">动态研究操作系统</p>
-            <h2 className="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-900">
-              {activeConversation.title}
-            </h2>
+        <div className={`mx-auto w-full ${messageWidthClass}`}>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">动态研究操作系统</p>
+              <h2 className="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-900">
+                {activeConversation.title}
+              </h2>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-medium text-slate-700">{runStatusLabel(activeConversation.status)}</p>
+              <p className="mt-1 text-xs text-slate-400">{formatTimestamp(activeConversation.updatedAt)}</p>
+            </div>
           </div>
-          <div className="shrink-0 text-right">
-            <p className="text-sm font-medium text-slate-700">{formatStatusLabel(activeConversation.status)}</p>
-            <p className="mt-1 text-xs text-slate-400">{formatTimestamp(activeConversation.updatedAt)}</p>
-          </div>
+          {shouldShowRunInsights ? (
+            <div className="mt-4 flex gap-1 rounded-[var(--radius-md)] bg-slate-100 p-1">
+              <button
+                type="button"
+                onClick={() => setRunView('monitor')}
+                className={`flex-1 rounded-[var(--radius-sm)] px-4 py-1.5 text-sm font-medium transition ${
+                  runView === 'monitor' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                执行监控
+              </button>
+              <button
+                type="button"
+                onClick={() => setRunView('chat')}
+                className={`flex-1 rounded-[var(--radius-sm)] px-4 py-1.5 text-sm font-medium transition ${
+                  runView === 'chat' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                对话
+                {visibleMessages.length > 0 ? (
+                  <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-200 px-1.5 text-[11px] font-medium text-slate-600">
+                    {visibleMessages.length}
+                  </span>
+                ) : null}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-40 pt-8 sm:px-6">
         <div className={`mx-auto w-full ${messageWidthClass}`}>
-          {shouldShowRunInsights ? (
-            <div className="mb-8 space-y-6">
-              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">运行概览</p>
-                <h3 className="mt-2 text-base font-semibold text-slate-900">{currentStage.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-500">{currentStage.detail}</p>
+          {/* ── 监控视图 ── */}
+          {shouldShowRunInsights && runView === 'monitor' ? (
+            <div className="space-y-[var(--space-section)]">
+              <section className={`rounded-[var(--radius-xl)] p-[var(--space-card)] shadow-[var(--shadow-card)] ${
+                isActiveConversationRunning
+                  ? 'border-2 border-sky-200 bg-sky-50/60'
+                  : activeConversation.status === 'Failed'
+                    ? 'border-2 border-rose-200 bg-rose-50/60'
+                    : activeConversation.status === 'Completed'
+                      ? 'border-2 border-emerald-200 bg-emerald-50/60'
+                      : 'border border-slate-200 bg-white'
+              }`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={`text-xs font-semibold uppercase tracking-[0.26em] ${
+                      isActiveConversationRunning ? 'text-sky-600' : activeConversation.status === 'Failed' ? 'text-rose-600' : activeConversation.status === 'Completed' ? 'text-emerald-600' : 'text-slate-400'
+                    }`}>运行概览</p>
+                    <h3 className="mt-2 text-base font-semibold text-slate-900">{currentStage.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">{currentStage.detail}</p>
+                  </div>
+                  {isActiveConversationRunning ? (
+                    <LoaderCircle className="mt-1 h-5 w-5 shrink-0 animate-spin text-sky-500" />
+                  ) : null}
+                </div>
               </section>
 
               {failureSummary ? (
-                <section className="rounded-[28px] border border-amber-200 bg-amber-50/80 p-5 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-amber-700">Failure Summary</p>
+                <section className="rounded-[var(--radius-xl)] border-2 border-amber-200 bg-amber-50/80 p-[var(--space-card)] shadow-[var(--shadow-card)]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-amber-700">失败摘要</p>
                   <h3 className="mt-2 text-base font-semibold text-slate-900">{failureSummary.title}</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">{failureSummary.detail}</p>
                   {failureSummary.artifacts.length > 0 ? (
@@ -459,8 +448,16 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                 <RouteGraph routePlan={activeConversation.routePlan} nodeStatus={activeConversation.nodeStatus} />
               ) : null}
 
+              {activeConversation.runId && activeConversation.artifacts.some((a) => a.artifact_type === 'ExperimentIteration') ? (
+                <ExperimentProgress runId={activeConversation.runId} artifacts={activeConversation.artifacts} />
+              ) : null}
+
+              {activeConversation.runId && activeConversation.artifacts.some((a) => a.artifact_type === 'ReviewVerdict') ? (
+                <ReviewStatus runId={activeConversation.runId} artifacts={activeConversation.artifacts} />
+              ) : null}
+
               {activeConversation.artifacts.length > 0 ? (
-                <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
                   <details className="group" open>
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
                       <div>
@@ -484,19 +481,19 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                             artifactType: artifact.artifact_type,
                           })
                         }
-                        className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+                        className="rounded-[var(--radius-lg)] border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-                              {runTabArtifactLabel(artifact.artifact_type)}
+                              {artifactLabel(artifact.artifact_type)}
                             </span>
                             <span className="font-mono text-xs text-slate-500">{artifact.artifact_id}</span>
                           </div>
                           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                         </div>
                         <p className="mt-2 text-sm text-slate-600">
-                          {runTabRoleLabel(artifact.producer_role)} · {artifact.producer_skill}
+                          {roleLabel(artifact.producer_role)} · {artifact.producer_skill}
                         </p>
                       </button>
                     ))}
@@ -513,98 +510,101 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
             </div>
           ) : null}
 
-          {hasConversation ? (
-            <div className={densityClasses.gap}>
-              {visibleMessages.map((message, messageIndex) => {
-                const isUser = message.role === 'user';
-                const isAssistant = message.role === 'assistant';
-                const isLastAssistant = isAssistant && !visibleMessages.slice(messageIndex + 1).some((m) => m.role === 'assistant');
-                return (
-                  <div key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'} ${densityClasses.padding}`}>
-                    <div className={`flex max-w-[92%] gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <div
-                        className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-                          isUser ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'
-                        }`}
-                      >
-                        {isUser ? <User2 className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-                      </div>
-                      <div className={isUser ? 'text-right' : ''}>
-                        <div className="mb-2 text-xs font-medium text-slate-400">{isUser ? '你' : '研究系统'}</div>
+          {/* ── 对话视图（或 run 无数据时的欢迎页） ── */}
+          {(!shouldShowRunInsights || runView === 'chat') ? (
+            hasConversation ? (
+              <div className={densityClasses.gap}>
+                {visibleMessages.map((message, messageIndex) => {
+                  const isUser = message.role === 'user';
+                  const isAssistant = message.role === 'assistant';
+                  const isLastAssistant = isAssistant && !visibleMessages.slice(messageIndex + 1).some((m) => m.role === 'assistant');
+                  return (
+                    <div key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'} ${densityClasses.padding}`}>
+                      <div className={`flex max-w-[92%] gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
                         <div
-                          className={`whitespace-pre-wrap rounded-[28px] px-5 py-4 leading-7 ${
-                            isUser ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-800 shadow-sm'
-                          } ${messageFontClass}`}
+                          className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                            isUser ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'
+                          }`}
                         >
-                          {message.content || (message.streaming ? '正在生成...' : '')}
-                          {isAssistant && message.streaming ? (
-                            <span className="ml-2 inline-flex align-middle text-slate-400">
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                            </span>
+                          {isUser ? <User2 className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                        </div>
+                        <div className={isUser ? 'text-right' : ''}>
+                          <div className="mb-2 text-xs font-medium text-slate-400">{isUser ? '你' : '研究系统'}</div>
+                          <div
+                            className={`whitespace-pre-wrap rounded-[var(--radius-2xl)] px-5 py-4 leading-7 ${
+                              isUser ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-800 shadow-sm'
+                            } ${messageFontClass}`}
+                          >
+                            {message.content || (message.streaming ? '正在生成...' : '')}
+                            {isAssistant && message.streaming ? (
+                              <span className="ml-2 inline-flex align-middle text-slate-400">
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+                              </span>
+                            ) : null}
+                          </div>
+                          {isLastAssistant && !message.streaming && message.content && activeConversation.runId && activeConversation.status !== 'Running' ? (
+                            <div className="mt-2 flex gap-2">
+                              <a
+                                href={`${API_BASE}/api/runs/${activeConversation.runId}/report.pdf`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                PDF
+                              </a>
+                              <a
+                                href={`${API_BASE}/api/runs/${activeConversation.runId}/latex.zip`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                LaTeX
+                              </a>
+                            </div>
                           ) : null}
                         </div>
-                        {isLastAssistant && !message.streaming && message.content && activeConversation.runId && activeConversation.status !== 'Running' ? (
-                          <div className="mt-2 flex gap-2">
-                            <a
-                              href={`${API_BASE}/api/runs/${activeConversation.runId}/report.pdf`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                              PDF
-                            </a>
-                            <a
-                              href={`${API_BASE}/api/runs/${activeConversation.runId}/latex.zip`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                              LaTeX
-                            </a>
-                          </div>
-                        ) : null}
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="flex min-h-[56vh] flex-col items-center justify-center text-center">
-              <div className="max-w-2xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">研究运行时</p>
-                <h2 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">
-                  使用动态 DAG 运行研究任务
-                </h2>
-                <p className="mt-4 text-base leading-7 text-slate-500">
-                  输入一个研究请求后，前端会展示局部执行图、节点状态、技能与工具调用、观察事件、重规划和产物。
-                </p>
+                  );
+                })}
               </div>
-
-              {uiPreferences.showWelcomeHints ? (
-                <div className="mt-10 flex w-full max-w-4xl flex-wrap justify-center gap-3">
-                  {PROMPT_TEMPLATES.map((template) => (
-                    <button
-                      key={template}
-                      type="button"
-                      onClick={() => updateRunOverrides({ prompt: template })}
-                      className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-                    >
-                      {template}
-                    </button>
-                  ))}
+            ) : (
+              <div className="flex min-h-[56vh] flex-col items-center justify-center text-center">
+                <div className="max-w-2xl">
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">研究运行时</p>
+                  <h2 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">
+                    使用动态 DAG 运行研究任务
+                  </h2>
+                  <p className="mt-4 text-base leading-7 text-slate-500">
+                    输入一个研究请求后，前端会展示局部执行图、节点状态、技能与工具调用、观察事件、重规划和产物。
+                  </p>
                 </div>
-              ) : null}
-            </div>
-          )}
+
+                {uiPreferences.showWelcomeHints ? (
+                  <div className="mt-10 flex w-full max-w-4xl flex-wrap justify-center gap-3">
+                    {PROMPT_TEMPLATES.map((template) => (
+                      <button
+                        key={template}
+                        type="button"
+                        onClick={() => updateRunOverrides({ prompt: template })}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+                      >
+                        {template}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )
+          ) : null}
         </div>
       </div>
 
       <div className="sticky bottom-0 z-10 bg-gradient-to-t from-[var(--app-bg)] via-[var(--app-bg)] to-transparent px-4 pb-6 pt-6 sm:px-6">
         <div className={`mx-auto w-full ${messageWidthClass}`}>
-          <div className="rounded-[32px] border border-slate-200 bg-white p-3 shadow-[0_20px_70px_-40px_rgba(15,23,42,0.35)]">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-3 shadow-[var(--shadow-elevated)]">
             <textarea
               value={runOverrides.prompt}
               onChange={(event) => updateRunOverrides({ prompt: event.target.value })}

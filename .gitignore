@@ -27,6 +27,7 @@ dist/
 data/
 outputs/
 logs/
+evolved_skills/
 *.log
 .pytest_cache/
 .tmp/

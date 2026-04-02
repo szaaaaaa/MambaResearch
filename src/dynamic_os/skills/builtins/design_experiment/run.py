@@ -6,7 +6,7 @@ from pathlib import Path
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
+from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput, find_artifact as _find_artifact
 from src.dynamic_os.experiment.workspace import (
     init_workspace,
     parse_workspace_config,
@@ -20,17 +20,15 @@ DESIGN_SCHEMA = {
     "properties": {
         "plan": {"type": "string"},
         "files": {"type": "object"},
+        "metric_directions": {
+            "type": "object",
+            "description": "Map metric name to optimization direction: 'maximize' or 'minimize'",
+        },
     },
     "required": ["plan", "files"],
     "additionalProperties": False,
 }
 
-
-def _find_artifact(ctx: SkillContext, artifact_type: str) -> ArtifactRecord | None:
-    for artifact in ctx.input_artifacts:
-        if artifact.artifact_type == artifact_type:
-            return artifact
-    return None
 
 
 def _build_first_iteration_prompt(
@@ -48,9 +46,11 @@ def _build_first_iteration_prompt(
             "content": (
                 "You are modifying experiment files. "
                 f"You may ONLY modify these files: {mutable_files}. "
-                "Return JSON with two keys: "
-                '"plan" (string describing what you did and why) and '
-                '"files" (object mapping filenames to their new content). '
+                "Return JSON with three keys: "
+                '"plan" (string describing what you did and why), '
+                '"files" (object mapping filenames to their new content), '
+                'and "metric_directions" (object mapping each METRIC name your code will output '
+                'to "maximize" or "minimize", e.g. {"accuracy": "maximize", "loss": "minimize"}). '
                 "Every file you modify must be executable as-is."
                 f"{gpu_instruction}"
             ),
@@ -97,9 +97,10 @@ def _build_subsequent_iteration_prompt(
             "content": (
                 "You are modifying experiment files based on prior results. "
                 f"You may ONLY modify these files: {mutable_files}. "
-                "Return JSON with two keys: "
-                '"plan" (string describing what you changed and why) and '
-                '"files" (object mapping filenames to their new content). '
+                "Return JSON with three keys: "
+                '"plan" (string describing what you changed and why), '
+                '"files" (object mapping filenames to their new content), '
+                'and "metric_directions" (object mapping each METRIC name to "maximize" or "minimize"). '
                 "Every file you modify must be executable as-is."
                 f"{gpu_instruction}{strategy_hint}"
             ),
@@ -121,6 +122,9 @@ async def run(ctx: SkillContext) -> SkillOutput:
     experiment_cfg = ctx.config.get("agent", {}).get("experiment_plan", {})
     gpu_setting = str(experiment_cfg.get("gpu", "cpu")).strip()
     objective = str(experiment_cfg.get("objective", "")).strip()
+    if not objective:
+        # 从用户请求或节点目标中推导实验目标
+        objective = ctx.user_request or ctx.goal or "optimize model performance"
 
     gpu_instruction = ""
     if gpu_setting in ("cuda", "auto"):
@@ -133,7 +137,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
     prior_iteration = _find_artifact(ctx, "ExperimentIteration")
 
     if prior_iteration is None:
-        # --- First iteration: initialize workspace from template ---
+        # --- 首次迭代：从模板初始化工作空间 ---
         ws_raw = experiment_cfg.get("workspace", {})
         ws_config = parse_workspace_config(ws_raw)
 
@@ -162,10 +166,13 @@ async def run(ctx: SkillContext) -> SkillOutput:
 
         plan_text = str(parsed.get("plan") or "").strip()
         file_changes = parsed.get("files", {})
+        metric_directions = parsed.get("metric_directions", {})
         if not isinstance(file_changes, dict):
             return SkillOutput(success=False, error="design_experiment 'files' must be a JSON object")
         if not plan_text:
             return SkillOutput(success=False, error="design_experiment did not provide a plan")
+        if not isinstance(metric_directions, dict):
+            metric_directions = {}
 
         safe_changes = {k: v for k, v in file_changes.items() if k in ws_config.mutable_files}
         write_mutable_files(workspace, safe_changes)
@@ -183,13 +190,14 @@ async def run(ctx: SkillContext) -> SkillOutput:
                 "mutable_files": ws_config.mutable_files,
                 "snapshot": snapshot,
                 "plan": plan_text,
+                "metric_directions": metric_directions,
                 "language": "python",
             },
             source_inputs=source_input_refs(ctx.input_artifacts),
         )
         return SkillOutput(success=True, output_artifacts=[artifact])
 
-    # --- Subsequent iteration: modify workspace based on feedback ---
+    # --- 后续迭代：基于反馈修改工作空间 ---
     prior_payload = dict(prior_iteration.payload)
 
     workspace_path = prior_payload.get("workspace_path", "")
@@ -241,10 +249,13 @@ async def run(ctx: SkillContext) -> SkillOutput:
 
     plan_text = str(parsed.get("plan") or "").strip()
     file_changes = parsed.get("files", {})
+    metric_directions = parsed.get("metric_directions", {})
     if not isinstance(file_changes, dict):
         return SkillOutput(success=False, error="design_experiment 'files' must be a JSON object")
     if not plan_text:
         return SkillOutput(success=False, error="design_experiment did not provide a plan")
+    if not isinstance(metric_directions, dict):
+        metric_directions = {}
 
     write_mutable_files(workspace, file_changes)
     snapshot = snapshot_mutable(workspace, mutable_files)
@@ -261,6 +272,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
             "mutable_files": mutable_files,
             "snapshot": snapshot,
             "plan": plan_text,
+            "metric_directions": metric_directions,
             "language": "python",
         },
         source_inputs=source_input_refs(ctx.input_artifacts),

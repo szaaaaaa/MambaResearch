@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.common.openai_codex import ensure_openai_codex_auth
 from src.dynamic_os.runtime import DynamicResearchRuntime
+from src.dynamic_os.tools.backends import _normalize_provider
 from src.server.settings import CONFIG_PATH, ROOT
 
 
@@ -20,15 +21,6 @@ _ACTIVE_RUNS: dict[str, asyncio.Task[None]] = {}
 _ACTIVE_RUNS_LOCK = asyncio.Lock()
 _ACTIVE_RUNTIMES: dict[str, DynamicResearchRuntime] = {}
 _ACTIVE_RUNTIMES_LOCK = asyncio.Lock()
-
-
-def _normalize_provider(value: Any) -> str:
-    provider = str(value or "").strip().lower()
-    if provider in {"codex", "codex_cli", "chatgpt_codex", "openai_codex"}:
-        return "openai_codex"
-    if provider in {"google", "gemini"}:
-        return "gemini"
-    return provider
 
 
 def _configured_llm_providers(config: dict[str, Any]) -> set[str]:

@@ -32,7 +32,7 @@ export const HitlModal: React.FC<HitlModalProps> = ({ runId, request, onSubmit }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 backdrop-blur-sm">
       <div
-        className="w-full max-w-lg rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_90px_-45px_rgba(15,23,42,0.45)]"
+        className="w-full max-w-lg rounded-[28px] border border-slate-200 bg-white p-6 shadow-[var(--shadow-modal)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-3">

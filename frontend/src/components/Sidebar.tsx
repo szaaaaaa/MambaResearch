@@ -1,7 +1,8 @@
 import React from 'react';
-import { Archive, Clock, Copy, MessageSquarePlus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
+import { Archive, Clock, Copy, Cpu, MessageSquarePlus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Button } from './ui';
+import { runStatusLabel } from '../labels';
 
 interface SessionGroup {
   label: string;
@@ -30,24 +31,6 @@ function formatSessionTime(timestamp: string): string {
   }).format(date);
 }
 
-function formatStatusLabel(status: string): string {
-  if (status === 'Running') {
-    return '运行中';
-  }
-  if (status === 'Stopping') {
-    return '停止中';
-  }
-  if (status === 'Stopped') {
-    return '已停止';
-  }
-  if (status === 'Failed') {
-    return '失败';
-  }
-  if (status === 'Completed') {
-    return '已完成';
-  }
-  return '空闲';
-}
 
 function groupSessions(conversations: ChatSession[]): SessionGroup[] {
   const now = new Date();
@@ -91,8 +74,8 @@ interface SidebarProps {
   onArchiveConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onOpenSettings: () => void;
-  activeTab: 'run' | 'history';
-  onTabChange: (tab: 'run' | 'history') => void;
+  activeTab: 'run' | 'history' | 'skills';
+  onTabChange: (tab: 'run' | 'history' | 'skills') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -176,19 +159,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="truncate text-sm font-medium text-slate-900">{session.title}</span>
           <span className="shrink-0 text-[11px] text-slate-400">{formatSessionTime(session.updatedAt)}</span>
         </div>
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2">
           <span
-            className={`h-2 w-2 rounded-full ${
+            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
               session.status === 'Running' || session.status === 'Stopping'
-                ? 'bg-amber-400'
-                : session.status === 'Stopped'
-                  ? 'bg-slate-400'
+                ? 'bg-amber-50 text-amber-700'
                 : session.status === 'Failed'
-                  ? 'bg-rose-500'
-                  : 'bg-emerald-500'
+                  ? 'bg-rose-50 text-rose-600'
+                  : session.status === 'Completed'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-slate-100 text-slate-500'
             }`}
-          />
-          <span className="text-xs text-slate-500">{formatStatusLabel(session.status)}</span>
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                session.status === 'Running' || session.status === 'Stopping'
+                  ? 'bg-amber-500'
+                  : session.status === 'Failed'
+                    ? 'bg-rose-500'
+                    : session.status === 'Completed'
+                      ? 'bg-emerald-500'
+                      : 'bg-slate-400'
+              }`}
+            />
+            {runStatusLabel(session.status)}
+          </span>
         </div>
       </button>
     );
@@ -238,6 +233,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Clock className="h-4 w-4" />
               历史
             </button>
+            <button
+              type="button"
+              onClick={() => onTabChange('skills')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === 'skills'
+                  ? 'bg-slate-900 text-white'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Cpu className="h-4 w-4" />
+              技能
+            </button>
           </div>
         </div>
 
@@ -260,7 +267,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {contextSession ? (
         <div
-          className="fixed z-50 min-w-44 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.35)]"
+          className="fixed z-50 min-w-44 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[var(--shadow-modal)]"
           style={{ left: contextMenu?.x, top: contextMenu?.y }}
         >
           <button

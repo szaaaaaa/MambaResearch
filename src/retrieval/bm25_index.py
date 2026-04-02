@@ -1,4 +1,4 @@
-"""Lightweight BM25 index stored alongside the Chroma collection."""
+"""与 Chroma 集合一起存储的轻量级 BM25 索引。"""
 from __future__ import annotations
 
 import json

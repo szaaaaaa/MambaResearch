@@ -62,7 +62,39 @@ export const ToolsSection: React.FC = () => {
         </div>
       </Card>
 
-      <Card title="检索与通用工具" description="检索模式、网页搜索和其他通用能力。">
+      <Card title="网页搜索" description="补充非学术来源，如博客、教程、代码仓库等。">
+        <div className="grid gap-5 md:grid-cols-2">
+          <Toggle
+            label="启用网页搜索"
+            description="总开关，关闭后下方所有网页源均不会被调用。"
+            checked={projectConfig.sources.web.enabled}
+            onChange={(checked) => updateProjectConfig('sources.web.enabled', checked)}
+          />
+          <Toggle
+            label="Google CSE"
+            description="需配置 API Key。"
+            checked={projectConfig.sources.google_cse.enabled}
+            onChange={(checked) => updateProjectConfig('sources.google_cse.enabled', checked)}
+          />
+          <Toggle
+            label="Bing"
+            description="需配置 API Key。"
+            checked={projectConfig.sources.bing.enabled}
+            onChange={(checked) => updateProjectConfig('sources.bing.enabled', checked)}
+          />
+          <Toggle
+            label="GitHub"
+            description="搜索代码仓库和项目。"
+            checked={projectConfig.sources.github.enabled}
+            onChange={(checked) => updateProjectConfig('sources.github.enabled', checked)}
+          />
+        </div>
+        <div className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+          <p>未启用任何网页源时，DuckDuckGo 将作为兜底自动调用。</p>
+        </div>
+      </Card>
+
+      <Card title="检索与通用工具" description="检索模式和其他通用能力。">
         <div className="grid gap-5 md:grid-cols-2">
           <Select
             label="检索模式"
@@ -79,11 +111,6 @@ export const ToolsSection: React.FC = () => {
             description="将向量检索和关键词检索组合使用。"
             checked={projectConfig.retrieval.hybrid}
             onChange={(checked) => updateProjectConfig('retrieval.hybrid', checked)}
-          />
-          <Toggle
-            label="启用网页搜索"
-            checked={projectConfig.sources.web.enabled}
-            onChange={(checked) => updateProjectConfig('sources.web.enabled', checked)}
           />
           <Toggle
             label="启用图表理解"

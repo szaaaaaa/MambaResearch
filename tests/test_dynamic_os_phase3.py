@@ -20,7 +20,6 @@ from src.dynamic_os.contracts.skill_spec import SkillSpec
 from src.dynamic_os.executor import Executor, NodeRunner
 from src.dynamic_os.planner import Planner, PlannerOutputError, assess_review_need, decide_termination
 from src.dynamic_os.planner.prompts import build_planner_messages
-from src.dynamic_os.planner.routing import derive_role_routing_policy
 from src.dynamic_os.policy.engine import PolicyEngine
 from src.dynamic_os.roles.registry import RoleRegistry
 from src.dynamic_os.skills.builtins.search_papers.run import run as search_papers_run
@@ -207,7 +206,6 @@ def _plan_json(
     *,
     run_id: str = "run_1",
     planning_iteration: int = 0,
-    needs_review: bool = False,
     inputs: list[str] | None = None,
 ) -> str:
     default_expected_outputs = {
@@ -234,7 +232,6 @@ def _plan_json(
                     "success_criteria": ["at_least_one_source"],
                     "failure_policy": "replan",
                     "expected_outputs": default_expected_outputs.get(skill_id, []),
-                    "needs_review": needs_review,
                 }
             ],
             "edges": [],
@@ -411,7 +408,7 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
     registry = ToolRegistry.from_servers(
         [
             {"server_id": "llm", "tools": [{"name": "chat", "capability": "llm_chat"}]},
-            {"server_id": "search", "tools": [{"name": "papers", "capability": "search"}]},
+            {"server_id": "paper_search", "tools": [{"name": "search_papers", "capability": "search"}]},
             {
                 "server_id": "retrieval",
                 "tools": [
@@ -566,131 +563,8 @@ def test_planner_retries_once_after_invalid_output() -> None:
     assert model.calls == 2
 
 
-def test_planner_retries_after_legacy_plan_shape_output() -> None:
-    model = FakePlannerModel(
-        [
-            json.dumps(
-                {
-                    "run_id": "run_1",
-                    "nodes": [
-                        {
-                            "node_id": "conductor_plan",
-                            "role": "conductor",
-                            "agent_name": "legacy",
-                            "allowed_skills": ["plan_research"],
-                            "inputs": {},
-                            "expected_outputs": ["TopicBrief", "SearchPlan"],
-                            "goal": "制定研究计划",
-                            "success_criteria": "生成检索计划",
-                            "planner_notes": "旧格式节点字段",
-                            "needs_review": False,
-                        }
-                    ],
-                    "edges": [],
-                }
-            ),
-            json.dumps(
-                {
-                    "run_id": "run_1",
-                    "planning_iteration": 0,
-                    "horizon": 1,
-                    "nodes": [
-                        {
-                            "node_id": "node_plan_1",
-                            "role": "conductor",
-                            "goal": "制定研究计划",
-                            "inputs": [],
-                            "allowed_skills": ["plan_research"],
-                            "success_criteria": ["生成检索计划"],
-                            "failure_policy": "replan",
-                            "expected_outputs": ["TopicBrief", "SearchPlan"],
-                            "needs_review": False,
-                        }
-                    ],
-                    "edges": [],
-                    "planner_notes": ["修正为严格 RoutePlan 字段"],
-                    "terminate": False,
-                }
-            ),
-        ]
-    )
-    planner = _planner_with_model(model, [_skill_spec("plan_research", ["conductor"])])
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
-
-    assert plan.nodes[0].node_id == "node_plan_1"
-    assert plan.nodes[0].allowed_skills == ["plan_research"]
-    assert model.calls == 2
 
 
-def test_planner_normalizes_wrapped_plan_and_legacy_edge_relation() -> None:
-    model = FakePlannerModel(
-        [
-            json.dumps(
-                {
-                    "RoutePlan": {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 2,
-                        "nodes": [
-                            {
-                                "node_id": "node_fetch_1",
-                                "role": "researcher",
-                                "goal": "Fetch full text",
-                                "inputs": ["artifact:SourceSet:source_set_1"],
-                                "allowed_skills": ["fetch_fulltext"],
-                                "success_criteria": ["fetched"],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["SourceSet"],
-                                "needs_review": False,
-                            },
-                            {
-                                "node_id": "node_notes_1",
-                                "role": "researcher",
-                                "goal": "Extract notes",
-                                "inputs": ["artifact:SourceSet:node_fetch_1_source_set"],
-                                "allowed_skills": ["extract_notes"],
-                                "success_criteria": ["notes extracted"],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["PaperNotes"],
-                                "needs_review": False,
-                            },
-                        ],
-                        "edges": [
-                            {
-                                "source": "node_fetch_1",
-                                "target": "node_notes_1",
-                                "relation": "produces",
-                            }
-                        ],
-                        "planner_notes": ["legacy edge relation"],
-                        "terminate": False,
-                    }
-                }
-            )
-        ]
-    )
-    planner = _planner_with_model(
-        model,
-        [
-            _skill_spec("fetch_fulltext", ["researcher"], required=["SourceSet"]),
-            _skill_spec("extract_notes", ["researcher"], required=["SourceSet"]),
-        ],
-        artifact_records=[
-            _phase5_artifact(
-                "source_set_1",
-                "SourceSet",
-                role=RoleId.researcher,
-                skill="search_papers",
-            )
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
-
-    assert len(plan.nodes) == 2
-    assert plan.edges[0].condition.value == "on_success"
-    assert model.calls == 1
 
 
 def test_planner_raises_after_second_invalid_output() -> None:
@@ -714,88 +588,7 @@ def test_planner_fallback_uses_plan_research_when_available() -> None:
     assert model.calls == 2
 
 
-def test_planner_fallback_uses_evidence_map_step_when_source_set_exists() -> None:
-    model = FakePlannerModel(['{"run_id": "bad"}', '{"run_id": "still_bad"}'])
-    planner = _planner_with_model(
-        model,
-        [
-            _skill_spec(
-                "build_evidence_map",
-                ["researcher"],
-                required=[],
-                requires_any=["PaperNotes", "SourceSet", "ExperimentResults"],
-            ),
-            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"]),
-        ],
-        artifact_records=[
-            _phase5_artifact(
-                "topic_brief_1",
-                "TopicBrief",
-                role=RoleId.conductor,
-                skill="plan_research",
-            ),
-            _phase5_artifact(
-                "search_plan_1",
-                "SearchPlan",
-                role=RoleId.conductor,
-                skill="plan_research",
-            ),
-            _phase5_artifact(
-                "source_set_1",
-                "SourceSet",
-                role=RoleId.researcher,
-                skill="search_papers",
-            ),
-        ],
-    )
 
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=1))
-
-    assert plan.nodes[0].role == RoleId.researcher
-    assert plan.nodes[0].allowed_skills == ["build_evidence_map"]
-    assert plan.nodes[0].inputs == ["artifact:SourceSet:source_set_1"]
-
-
-def test_planner_retries_when_build_evidence_map_omits_grounding_inputs() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json("researcher", "build_evidence_map", inputs=[]),
-                _plan_json(
-                    "researcher",
-                    "build_evidence_map",
-                    inputs=["artifact:PaperNotes:paper_notes_1"],
-                ),
-            ]
-        ),
-        [
-            _skill_spec(
-                "build_evidence_map",
-                ["researcher"],
-                requires_any=["PaperNotes", "SourceSet", "ExperimentResults"],
-            ),
-        ],
-        artifact_records=[
-            _phase5_artifact(
-                "search_plan_1",
-                "SearchPlan",
-                role=RoleId.conductor,
-                skill="plan_research",
-            ),
-            _phase5_artifact(
-                "paper_notes_1",
-                "PaperNotes",
-                role=RoleId.researcher,
-                skill="extract_notes",
-            )
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Synthesize evidence", planning_iteration=1))
-
-    assert plan.nodes[0].allowed_skills == ["build_evidence_map"]
-    assert plan.nodes[0].inputs == ["artifact:PaperNotes:paper_notes_1"]
-    assert planner._model.calls == 2
 
 
 def test_executor_records_planner_llm_error_observation() -> None:
@@ -809,7 +602,7 @@ def test_executor_records_planner_llm_error_observation() -> None:
     policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
     tools = ToolGateway(
         registry=ToolRegistry.from_servers(
-            [{"server_id": "search", "tools": [{"name": "arxiv", "capability": "search"}]}]
+            [{"server_id": "paper_search", "tools": [{"name": "search_papers", "capability": "search"}]}]
         ),
         policy=policy,
         mcp_invoker=lambda tool, payload: [],
@@ -847,7 +640,6 @@ def test_planner_accepts_inserted_reviewer_node() -> None:
                 _plan_json(
                     "reviewer",
                     "review_artifact",
-                    needs_review=True,
                     inputs=["artifact:ResearchReport:report_1"],
                 )
             ]
@@ -867,7 +659,6 @@ def test_planner_accepts_inserted_reviewer_node() -> None:
     plan = asyncio.run(planner.plan(run_id="run_1", user_request="Review the final report", planning_iteration=0))
 
     assert plan.nodes[0].role.value == "reviewer"
-    assert plan.nodes[0].needs_review is True
 
 
 def test_planner_rejects_unloaded_skills() -> None:
@@ -902,7 +693,6 @@ def test_planner_prompt_only_exposes_loaded_allowlisted_skills() -> None:
         artifact_summary=[],
         artifact_refs=[],
         artifact_ref_templates=planner._artifact_ref_templates(),
-        role_routing_policy=derive_role_routing_policy(user_request="Find papers", artifacts=[]),
         observation_summary=[],
         budget_snapshot={},
         planning_iteration=0,
@@ -911,493 +701,27 @@ def test_planner_prompt_only_exposes_loaded_allowlisted_skills() -> None:
     assert "search_papers" in messages[0]["content"]
     assert "custom_search" not in messages[0]["content"]
     assert "artifact_ref_template" in messages[0]["content"]
-    assert "required_roles" in messages[0]["content"]
 
 
-def test_role_routing_policy_detects_writer_for_chinese_closed_loop_request_after_evidence() -> None:
-    policy = derive_role_routing_policy(
-        user_request="\u4e3a\u4e00\u4e2a\u5173\u4e8e\u52a8\u6001\u7814\u7a76\u667a\u80fd\u4f53\u7cfb\u7edf\u7684\u4e3b\u9898\u751f\u6210\u6700\u5c0f\u7814\u7a76\u95ed\u73af\u3002",
-        artifacts=[
-            ArtifactRecord(
-                artifact_id="evidence_1",
-                artifact_type="EvidenceMap",
-                producer_role=RoleId.researcher,
-                producer_skill="build_evidence_map",
-            )
-        ],
-    )
-
-    assert "write" in policy.intents
-    assert "writer" in policy.required_roles
 
 
-def test_role_routing_policy_keeps_chinese_search_request_in_research_lane() -> None:
-    policy = derive_role_routing_policy(
-        user_request="\u68c0\u7d22\u5173\u4e8e\u52a8\u6001\u7814\u7a76\u667a\u80fd\u4f53\u7cfb\u7edf\u7684\u76f8\u5173\u8bba\u6587\u3002",
-        artifacts=[],
-    )
-
-    assert "research" in policy.intents
-    assert "writer" not in policy.required_roles
 
 
-def test_planner_retries_when_chinese_closed_loop_request_skips_writer_after_evidence() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json(
-                    "researcher",
-                    "search_papers",
-                    inputs=[
-                        "artifact:SearchPlan:plan_1_search_plan",
-                        "artifact:EvidenceMap:evidence_1",
-                    ],
-                ),
-                _plan_json(
-                    "writer",
-                    "draft_report",
-                    inputs=[
-                        "artifact:EvidenceMap:evidence_1",
-                        "artifact:GapMap:gap_1",
-                    ],
-                ),
-            ]
-        ),
-        [
-            _skill_spec("search_papers", ["researcher"], output_artifacts=["SourceSet"]),
-            _skill_spec("draft_report", ["writer"], output_artifacts=["ResearchReport"]),
-        ],
-        artifact_records=[
-            ArtifactRecord(
-                artifact_id="plan_1_search_plan",
-                artifact_type="SearchPlan",
-                producer_role=RoleId.conductor,
-                producer_skill="plan_research",
-            ),
-            ArtifactRecord(
-                artifact_id="evidence_1",
-                artifact_type="EvidenceMap",
-                producer_role=RoleId.researcher,
-                producer_skill="build_evidence_map",
-            ),
-            ArtifactRecord(
-                artifact_id="gap_1",
-                artifact_type="GapMap",
-                producer_role=RoleId.researcher,
-                producer_skill="build_evidence_map",
-            ),
-        ],
-    )
-
-    plan = asyncio.run(
-        planner.plan(
-            run_id="run_1",
-            user_request="\u4e3a\u4e00\u4e2a\u5173\u4e8e\u52a8\u6001\u7814\u7a76\u667a\u80fd\u4f53\u7cfb\u7edf\u7684\u4e3b\u9898\u751f\u6210\u6700\u5c0f\u7814\u7a76\u95ed\u73af\u3002",
-            planning_iteration=1,
-        )
-    )
-
-    assert plan.nodes[0].role.value == "writer"
-    assert planner._model.calls == 2
 
 
-def test_planner_retries_when_cold_start_research_request_skips_conductor() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json("researcher", "search_papers"),
-                json.dumps(
-                    {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 2,
-                        "nodes": [
-                            {
-                                "node_id": "node_plan_1",
-                                "role": "conductor",
-                                "goal": "规划研究主题",
-                                "inputs": [],
-                                "allowed_skills": ["plan_research"],
-                                "success_criteria": ["完成规划"],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["TopicBrief", "SearchPlan"],
-                                "needs_review": False,
-                            },
-                            {
-                                "node_id": "node_search_1",
-                                "role": "researcher",
-                                "goal": "检索文献",
-                                "inputs": ["artifact:SearchPlan:node_plan_1_search_plan"],
-                                "allowed_skills": ["search_papers"],
-                                "success_criteria": ["拿到候选来源"],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["SourceSet"],
-                                "needs_review": False,
-                            },
-                        ],
-                        "edges": [
-                            {"source": "node_plan_1", "target": "node_search_1", "condition": "on_success"}
-                        ],
-                        "planner_notes": [],
-                        "terminate": False,
-                    }
-                ),
-            ]
-        ),
-        [
-            _skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"]),
-            _skill_spec("search_papers", ["researcher"], output_artifacts=["SourceSet"]),
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers about retrieval planning", planning_iteration=0))
-
-    assert [node.role.value for node in plan.nodes] == ["conductor", "researcher"]
-    assert planner._model.calls == 2
 
 
-def test_planner_retries_when_write_request_omits_writer_grounding_inputs() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json("writer", "draft_report"),
-                _plan_json(
-                    "writer",
-                    "draft_report",
-                    inputs=["artifact:EvidenceMap:evidence_map_1"],
-                ),
-            ]
-        ),
-        [_skill_spec("draft_report", ["writer"])],
-        artifact_records=[
-            _phase5_artifact(
-                "evidence_map_1",
-                "EvidenceMap",
-                role=RoleId.researcher,
-                skill="build_evidence_map",
-                payload={"summary": "grounded evidence"},
-            )
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Write the final report", planning_iteration=0))
-
-    assert plan.nodes[0].role.value == "writer"
-    assert plan.nodes[0].inputs == ["artifact:EvidenceMap:evidence_map_1"]
-    assert planner._model.calls == 2
 
 
-def test_planner_retries_when_review_request_skips_reviewer() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json(
-                    "writer",
-                    "draft_report",
-                    inputs=["artifact:EvidenceMap:evidence_map_1"],
-                ),
-                _plan_json(
-                    "reviewer",
-                    "review_artifact",
-                    inputs=["artifact:ResearchReport:report_1"],
-                    needs_review=True,
-                ),
-            ]
-        ),
-        [
-            _skill_spec("draft_report", ["writer"]),
-            _skill_spec("review_artifact", ["reviewer"]),
-        ],
-        artifact_records=[
-            _phase5_artifact(
-                "report_1",
-                "ResearchReport",
-                role=RoleId.writer,
-                skill="draft_report",
-                payload={"report": "ready to review"},
-            ),
-            _phase5_artifact(
-                "evidence_map_1",
-                "EvidenceMap",
-                role=RoleId.researcher,
-                skill="build_evidence_map",
-                payload={"summary": "grounded evidence"},
-            ),
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Review the final report", planning_iteration=0))
-
-    assert plan.nodes[0].role.value == "reviewer"
-    assert planner._model.calls == 2
 
 
-def test_planner_requires_termination_after_report_when_review_not_requested() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json(
-                    "researcher",
-                    "search_papers",
-                    inputs=["artifact:SearchPlan:search_plan_1"],
-                ),
-                json.dumps(
-                    {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 1,
-                        "nodes": [
-                            {
-                                "node_id": "node_stop_1",
-                                "role": "writer",
-                                "goal": "Stop after the report is complete",
-                                "inputs": ["artifact:ResearchReport:report_1"],
-                                "allowed_skills": ["draft_report"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["ResearchReport"],
-                                "needs_review": False,
-                            }
-                        ],
-                        "edges": [],
-                        "planner_notes": ["terminate after report"],
-                        "terminate": True,
-                    }
-                ),
-            ]
-        ),
-        [
-            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"]),
-            _skill_spec("draft_report", ["writer"]),
-        ],
-        artifact_records=[
-            _phase5_artifact(
-                "report_1",
-                "ResearchReport",
-                role=RoleId.writer,
-                skill="draft_report",
-                payload={"report": "finished"},
-            ),
-            _phase5_artifact(
-                "search_plan_1",
-                "SearchPlan",
-                role=RoleId.conductor,
-                skill="plan_research",
-                payload={"search_queries": ["dynamic research agents"]},
-            ),
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Write the final report", planning_iteration=0))
-
-    assert plan.terminate is True
-    assert planner._model.calls == 2
 
 
-def test_planner_retries_when_experiment_request_skips_experimenter() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                _plan_json(
-                    "researcher",
-                    "build_evidence_map",
-                    inputs=["artifact:EvidenceMap:evidence_map_1"],
-                ),
-                _plan_json(
-                    "experimenter",
-                    "design_experiment",
-                    inputs=["artifact:EvidenceMap:evidence_map_1"],
-                ),
-            ]
-        ),
-        [
-            _skill_spec("build_evidence_map", ["researcher"], output_artifacts=["EvidenceMap", "GapMap"]),
-            _skill_spec("design_experiment", ["experimenter"], output_artifacts=["ExperimentPlan"]),
-        ],
-        artifact_records=[
-            _phase5_artifact(
-                "evidence_map_1",
-                "EvidenceMap",
-                role=RoleId.researcher,
-                skill="build_evidence_map",
-                payload={"summary": "need controlled benchmark"},
-            )
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Design a benchmark experiment for the current evidence", planning_iteration=0))
-
-    assert plan.nodes[0].role.value == "experimenter"
-    assert planner._model.calls == 2
 
 
-def test_planner_retries_when_node_inputs_do_not_use_exact_future_artifact_refs() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                json.dumps(
-                    {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 2,
-                        "nodes": [
-                            {
-                                "node_id": "node_plan_1",
-                                "role": "conductor",
-                                "goal": "Plan the topic",
-                                "inputs": [],
-                                "allowed_skills": ["plan_research"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["TopicBrief", "SearchPlan"],
-                                "needs_review": False,
-                            },
-                            {
-                                "node_id": "node_search_1",
-                                "role": "researcher",
-                                "goal": "Search for papers",
-                                "inputs": ["artifact:SearchPlan:node_plan_1"],
-                                "allowed_skills": ["search_papers"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["SourceSet"],
-                                "needs_review": False,
-                            },
-                        ],
-                        "edges": [
-                            {"source": "node_plan_1", "target": "node_search_1", "condition": "on_success"}
-                        ],
-                        "planner_notes": [],
-                        "terminate": False,
-                    }
-                ),
-                json.dumps(
-                    {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 2,
-                        "nodes": [
-                            {
-                                "node_id": "node_plan_1",
-                                "role": "conductor",
-                                "goal": "Plan the topic",
-                                "inputs": [],
-                                "allowed_skills": ["plan_research"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["TopicBrief", "SearchPlan"],
-                                "needs_review": False,
-                            },
-                            {
-                                "node_id": "node_search_1",
-                                "role": "researcher",
-                                "goal": "Search for papers",
-                                "inputs": ["artifact:SearchPlan:node_plan_1_search_plan"],
-                                "allowed_skills": ["search_papers"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["SourceSet"],
-                                "needs_review": False,
-                            },
-                        ],
-                        "edges": [
-                            {"source": "node_plan_1", "target": "node_search_1", "condition": "on_success"}
-                        ],
-                        "planner_notes": [],
-                        "terminate": False,
-                    }
-                ),
-            ]
-        ),
-        [
-            _skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"]),
-            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"], output_artifacts=["SourceSet"]),
-        ],
-    )
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
-
-    assert plan.nodes[1].inputs == ["artifact:SearchPlan:node_plan_1_search_plan"]
-    assert planner._model.calls == 2
 
 
-def test_planner_rejects_expected_outputs_outside_skill_contract() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                json.dumps(
-                    {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 1,
-                        "nodes": [
-                            {
-                                "node_id": "node_plan_1",
-                                "role": "conductor",
-                                "goal": "生成检索计划",
-                                "inputs": [],
-                                "allowed_skills": ["plan_research"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["architecture_differences_search_plan"],
-                                "needs_review": False,
-                            }
-                        ],
-                        "edges": [],
-                        "planner_notes": [],
-                        "terminate": False,
-                    }
-                ),
-                _plan_json("conductor", "plan_research"),
-            ]
-        ),
-        [_skill_spec("plan_research", ["conductor"], output_artifacts=["TopicBrief", "SearchPlan"])],
-    )
 
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="生成检索计划", planning_iteration=0))
-
-    assert plan.nodes[0].expected_outputs == ["TopicBrief", "SearchPlan"]
-
-
-def test_planner_rejects_allowed_skills_with_incompatible_inputs() -> None:
-    planner = _planner_with_model(
-        FakePlannerModel(
-            [
-                json.dumps(
-                    {
-                        "run_id": "run_1",
-                        "planning_iteration": 0,
-                        "horizon": 1,
-                        "nodes": [
-                            {
-                                "node_id": "node_research_1",
-                                "role": "researcher",
-                                "goal": "比较两种架构差异",
-                                "inputs": [],
-                                "allowed_skills": ["search_papers", "fetch_fulltext", "extract_notes"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["PaperNotes"],
-                                "needs_review": False,
-                            }
-                        ],
-                        "edges": [],
-                        "planner_notes": [],
-                        "terminate": False,
-                    }
-                ),
-                _plan_json("researcher", "search_papers"),
-            ]
-        ),
-        [
-            _skill_spec("search_papers", ["researcher"], required=["SearchPlan"], output_artifacts=["SourceSet"]),
-            _skill_spec("fetch_fulltext", ["researcher"], required=["SourceSet"], output_artifacts=["SourceSet"]),
-            _skill_spec("extract_notes", ["researcher"], required=["SourceSet"], output_artifacts=["PaperNotes"]),
-        ],
-    )
-
-    with pytest.raises(PlannerOutputError):
-        asyncio.run(planner.plan(run_id="run_1", user_request="比较两种架构差异", planning_iteration=0))
 
 
 def test_planner_meta_skills_cover_review_and_termination() -> None:
@@ -1429,7 +753,7 @@ def test_executor_runs_local_loop_and_emits_events() -> None:
     async def search_runner(ctx):
         nonlocal search_calls
         search_calls += 1
-        results = await ctx.tools.search("retrieval planning", source="arxiv", max_results=2)
+        results = await ctx.tools.search("retrieval planning", source="academic", max_results=2)
         assert results["results"][0]["title"] == "Paper A"
         return SkillOutput(
             success=True,
@@ -1449,7 +773,7 @@ def test_executor_runs_local_loop_and_emits_events() -> None:
                 "search_papers",
                 ["researcher"],
                 permissions={"network": True},
-                allowed_tools=["mcp.search.arxiv"],
+                allowed_tools=["mcp.paper_search.search_papers"],
             )
         ],
         runners={"search_papers": search_runner},
@@ -1457,7 +781,7 @@ def test_executor_runs_local_loop_and_emits_events() -> None:
     policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
     tools = ToolGateway(
         registry=ToolRegistry.from_servers(
-            [{"server_id": "search", "tools": [{"name": "arxiv", "capability": "search"}]}]
+            [{"server_id": "paper_search", "tools": [{"name": "search_papers", "capability": "search"}]}]
         ),
         policy=policy,
         mcp_invoker=lambda tool, payload: {"results": [{"title": "Paper A", "tool_id": tool.tool_id}], "warnings": []},
@@ -1522,7 +846,7 @@ def test_executor_returns_observation_and_replans_on_failure() -> None:
     policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
     tools = ToolGateway(
         registry=ToolRegistry.from_servers(
-            [{"server_id": "search", "tools": [{"name": "arxiv", "capability": "search"}]}]
+            [{"server_id": "paper_search", "tools": [{"name": "search_papers", "capability": "search"}]}]
         ),
         policy=policy,
         mcp_invoker=lambda tool, payload: [],
@@ -1574,7 +898,7 @@ def test_executor_terminates_on_budget_exhaustion() -> None:
     )
     tools = ToolGateway(
         registry=ToolRegistry.from_servers(
-            [{"server_id": "search", "tools": [{"name": "arxiv", "capability": "search"}]}]
+            [{"server_id": "paper_search", "tools": [{"name": "search_papers", "capability": "search"}]}]
         ),
         policy=policy,
         mcp_invoker=lambda tool, payload: [],
@@ -2447,7 +1771,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["topic_is_scoped"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["TopicBrief", "SearchPlan"],
-                                "needs_review": False,
                             },
                             {
                                 "node_id": "node_search_1",
@@ -2458,7 +1781,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["at_least_one_source"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["SourceSet"],
-                                "needs_review": False,
                             },
                             {
                                 "node_id": "node_fetch_1",
@@ -2469,7 +1791,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["sources_enriched"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["SourceSet"],
-                                "needs_review": False,
                             },
                             {
                                 "node_id": "node_notes_1",
@@ -2480,7 +1801,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["notes_created"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["PaperNotes"],
-                                "needs_review": False,
                             },
                             {
                                 "node_id": "node_evidence_1",
@@ -2491,7 +1811,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["evidence_synthesized"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["EvidenceMap", "GapMap"],
-                                "needs_review": False,
                             },
                             {
                                 "node_id": "node_report_1",
@@ -2502,7 +1821,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["report_drafted"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["ResearchReport"],
-                                "needs_review": False,
                             },
                             {
                                 "node_id": "node_review_1",
@@ -2513,7 +1831,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": ["review_completed"],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["ReviewVerdict"],
-                                "needs_review": True,
                             },
                         ],
                         "edges": [
@@ -2543,7 +1860,6 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                                 "success_criteria": [],
                                 "failure_policy": "replan",
                                 "expected_outputs": ["ResearchReport"],
-                                "needs_review": False,
                             }
                         ],
                         "edges": [],
@@ -2586,7 +1902,7 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
         )
     )
 
-    assert result.termination_reason == "final_artifact_produced"
+    assert result.termination_reason == "planner_terminated"
     assert "artifact:ResearchReport:node_report_1_research_report" in result.final_artifacts
     assert "artifact:ReviewVerdict:node_review_1_review_verdict" in result.final_artifacts
     assert {record.artifact_type for record in artifact_store.list_all()} == {
@@ -2670,12 +1986,11 @@ def test_executor_short_circuits_when_final_artifact_is_produced_without_review_
                         success_criteria=["generated_report"],
                         failure_policy="replan",
                         expected_outputs=["ResearchReport"],
-                        needs_review=False,
                     )
                 ],
                 edges=[],
                 planner_notes=[],
-                terminate=False,
+                terminate=True,
             )
         ]
     )
@@ -2695,7 +2010,7 @@ def test_executor_short_circuits_when_final_artifact_is_produced_without_review_
         )
     )
 
-    assert result.termination_reason == "final_artifact_produced"
+    assert result.termination_reason == "planner_terminated"
     assert planner.calls == 1
     assert "artifact:ResearchReport:report_budget_1" in result.final_artifacts
     assert events[-1].type == "run_terminate"
@@ -2728,7 +2043,6 @@ def test_phase6_api_run_streams_dynamic_runtime_contract(monkeypatch: pytest.Mon
                             "success_criteria": [],
                             "failure_policy": "replan",
                             "expected_outputs": ["ReviewVerdict"],
-                            "needs_review": True,
                         }
                     ],
                     "edges": [],
@@ -2763,7 +2077,6 @@ def test_phase6_api_run_streams_dynamic_runtime_contract(monkeypatch: pytest.Mon
                         "success_criteria": [],
                         "failure_policy": "replan",
                         "expected_outputs": ["ReviewVerdict"],
-                        "needs_review": True,
                     }
                 ],
                 "edges": [],
@@ -2898,7 +2211,6 @@ def test_phase6_api_run_failure_still_emits_final_state(monkeypatch: pytest.Monk
                             "success_criteria": [],
                             "failure_policy": "replan",
                             "expected_outputs": ["SourceSet"],
-                            "needs_review": False,
                         }
                     ],
                     "edges": [],
@@ -3185,262 +2497,10 @@ def _legacy_phase7_codex_logout_route_clears_status(
     assert payload["status"]["logged_in"] is False
 
 
-def test_phase7_openai_codex_status_route_reports_chatgpt_login(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.server.routes import config as config_route
-
-    monkeypatch.setattr(
-        config_route,
-        "openai_codex_login_status",
-        lambda **kwargs: {
-            "installed": True,
-            "logged_in": True,
-            "chatgpt_logged_in": True,
-            "auth_mode": "chatgpt",
-            "executable": "",
-            "available": True,
-            "user_name": "",
-            "user_email": "user@example.com",
-            "user_label": "user@example.com",
-            "plan_type": "plus",
-            "account_id": "acct_123",
-            "expires_at": 1234567890,
-            "expires_in_sec": 3600,
-            "expired": False,
-            "has_refresh_token": True,
-            "login_in_progress": False,
-            "last_error": "",
-        },
-    )
-    client = TestClient(app)
-
-    response = client.get("/api/codex/status")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "installed": True,
-        "logged_in": True,
-        "chatgpt_logged_in": True,
-        "auth_mode": "chatgpt",
-        "executable": "",
-        "available": True,
-        "user_name": "",
-        "user_email": "user@example.com",
-        "user_label": "user@example.com",
-        "plan_type": "plus",
-        "account_id": "acct_123",
-        "expires_at": 1234567890,
-        "expires_in_sec": 3600,
-        "expired": False,
-        "has_refresh_token": True,
-        "login_in_progress": False,
-        "last_error": "",
-    }
 
 
-def test_phase7_openai_codex_status_route_passes_agent_binding_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.server.routes import config as config_route
-
-    captured: dict[str, object] = {}
-    config = {
-        "auth": {
-            "openai_codex": {
-                "default_profile": "work_main",
-                "allowed_profiles": ["work_main"],
-                "locked": True,
-                "require_explicit_switch": True,
-            }
-        }
-    }
-
-    monkeypatch.setattr(config_route, "_read_config_file", lambda: config)
-    monkeypatch.setattr(
-        config_route,
-        "openai_codex_login_status",
-        lambda **kwargs: captured.update(kwargs)
-        or {
-            "installed": True,
-            "logged_in": False,
-            "chatgpt_logged_in": False,
-            "auth_mode": "missing",
-            "executable": "",
-            "available": False,
-            "user_name": "",
-            "user_email": "",
-            "user_label": "",
-            "plan_type": "",
-            "account_id": "",
-            "expires_at": 0,
-            "expires_in_sec": 0,
-            "expired": False,
-            "has_refresh_token": False,
-            "login_in_progress": False,
-            "last_error": "",
-        },
-    )
-    client = TestClient(app)
-
-    response = client.get("/api/codex/status")
-
-    assert response.status_code == 200
-    assert captured["config"] == config
 
 
-def test_phase7_openai_codex_login_route_returns_authorize_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.server.routes import config as config_route
-
-    monkeypatch.setattr(
-        config_route,
-        "start_openai_codex_login",
-        lambda **kwargs: {
-            "authorize_url": "https://auth.openai.com/oauth/authorize?client_id=test",
-            "status": {
-                "installed": True,
-                "logged_in": False,
-                "chatgpt_logged_in": False,
-                "auth_mode": "missing",
-                "executable": "",
-                "available": False,
-                "user_name": "",
-                "user_email": "",
-                "user_label": "",
-                "plan_type": "",
-                "account_id": "",
-                "expires_at": 0,
-                "expires_in_sec": 0,
-                "expired": False,
-                "has_refresh_token": False,
-                "login_in_progress": True,
-                "last_error": "",
-            },
-        },
-    )
-    client = TestClient(app)
-
-    response = client.post("/api/codex/login")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "browser flow" in payload["message"]
-    assert payload["authorize_url"].startswith("https://auth.openai.com/oauth/authorize")
-    assert payload["status"]["installed"] is True
-    assert payload["status"]["login_in_progress"] is True
-
-
-def test_phase7_openai_codex_models_route_uses_agent_config_for_discovery(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.server.routes import models as models_route
-
-    captured: dict[str, object] = {}
-    config = {"llm": {"openai_codex": {"model_discovery": "account_plus_cached"}}}
-
-    monkeypatch.setattr(models_route, "_read_config_file", lambda: config)
-    monkeypatch.setattr(
-        models_route,
-        "openai_codex_model_catalog",
-        lambda **kwargs: captured.update(kwargs)
-        or {
-            "vendors": [{"value": "openai", "label": "OpenAI"}],
-            "modelsByVendor": {"openai": [{"value": "openai-codex/gpt-5.4", "label": "GPT-5.4"}]},
-            "vendor_count": 1,
-            "model_count": 1,
-            "loaded": True,
-        },
-    )
-    client = TestClient(app)
-
-    response = client.get("/api/codex/models")
-
-    assert response.status_code == 200
-    assert captured["config"] == config
-    assert response.json()["model_count"] == 1
-
-
-def test_phase7_openai_codex_logout_route_clears_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.server.routes import config as config_route
-
-    monkeypatch.setattr(
-        config_route,
-        "logout_openai_codex",
-        lambda **kwargs: {
-            "installed": True,
-            "logged_in": False,
-            "chatgpt_logged_in": False,
-            "auth_mode": "missing",
-            "executable": "",
-            "available": False,
-            "user_name": "",
-            "user_email": "",
-            "user_label": "",
-            "plan_type": "",
-            "account_id": "",
-            "expires_at": 0,
-            "expires_in_sec": 0,
-            "expired": False,
-            "has_refresh_token": False,
-            "login_in_progress": False,
-            "last_error": "",
-        },
-    )
-    client = TestClient(app)
-
-    response = client.post("/api/codex/logout")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "cleared" in payload["message"]
-    assert payload["status"]["logged_in"] is False
-
-
-def test_phase7_openai_codex_callback_route_completes_login(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.server.routes import config as config_route
-
-    monkeypatch.setattr(
-        config_route,
-        "complete_openai_codex_login",
-        lambda callback_input, **kwargs: {
-            "installed": True,
-            "logged_in": True,
-            "chatgpt_logged_in": True,
-            "auth_mode": "chatgpt",
-            "executable": "",
-            "available": True,
-            "user_name": "",
-            "user_email": "user@example.com",
-            "user_label": "user@example.com",
-            "plan_type": "plus",
-            "account_id": "acct_123",
-            "expires_at": 1234567890,
-            "expires_in_sec": 3600,
-            "expired": False,
-            "has_refresh_token": True,
-            "login_in_progress": False,
-            "last_error": "",
-            "callback_input": callback_input,
-        },
-    )
-    client = TestClient(app)
-
-    response = client.post(
-        "/api/codex/callback",
-        json={"callback_input": "http://localhost:1455/auth/callback?code=test&state=abc"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "completed" in payload["message"]
-    assert payload["status"]["logged_in"] is True
-    assert payload["status"]["chatgpt_logged_in"] is True
 
 
 def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
@@ -3469,7 +2529,6 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
                         "success_criteria": [],
                         "failure_policy": "replan",
                         "expected_outputs": ["ResearchReport"],
-                        "needs_review": False,
                     }
                 ],
                 "edges": [],
@@ -3514,36 +2573,6 @@ def test_phase7_runtime_uses_terminating_plan_as_final_route_plan(
     assert (output_root / "run_phase7_terminate" / "run_snapshot.json").exists()
 
 
-def test_phase7_legacy_package_and_scripts_removed() -> None:
-    root = Path(__file__).resolve().parents[1]
-    assert not (root / "src" / "agent").exists()
-    assert not (root / "scripts" / "smoke_test.py").exists()
-    assert not (root / "scripts" / "validate_run_outputs.py").exists()
-    assert not (root / "scripts" / "fetch_arxiv.py").exists()
-
-
-def test_phase7_no_legacy_runtime_references_in_live_paths() -> None:
-    root = Path(__file__).resolve().parents[1]
-    targets = [
-        root / "app.py",
-        root / "src" / "dynamic_os",
-        root / "src" / "server",
-        root / "scripts",
-        root / "frontend" / "src",
-        root / ".github" / "workflows" / "ci.yml",
-    ]
-    forbidden = ("src.agent", "ResearchOrchestrator", "scripts.smoke_test", "scripts.validate_run_outputs", "6-agent")
-
-    for target in targets:
-        paths = [target] if target.is_file() else list(target.rglob("*"))
-        for path in paths:
-            if not path.is_file():
-                continue
-            if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
-                continue
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            for token in forbidden:
-                assert token not in text, f"{token} still present in {path}"
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,35 @@
 
 :root {
   --app-bg: #f7f7f8;
+
+  /* 圆角层级 */
+  --radius-sm: 0.5rem;    /* 8px  — 小元素: badge, tag */
+  --radius-md: 0.75rem;   /* 12px — 按钮, input */
+  --radius-lg: 1rem;      /* 16px — 卡片内嵌元素 */
+  --radius-xl: 1.25rem;   /* 20px — 卡片 */
+  --radius-2xl: 1.5rem;   /* 24px — 大面板 */
+  --radius-full: 9999px;  /* pill */
+
+  /* 阴影层级 */
+  --shadow-card: 0 1px 3px -1px rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
+  --shadow-elevated: 0 8px 30px -12px rgba(15, 23, 42, 0.18);
+  --shadow-modal: 0 30px 90px -45px rgba(15, 23, 42, 0.45);
+
+  /* 间距层级 */
+  --space-section: 1.5rem;  /* 24px — 卡片之间 */
+  --space-card: 1.25rem;    /* 20px — 卡片内 padding */
+  --space-element: 0.75rem; /* 12px — 元素之间 */
+
+  /* 主色 */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-ring: rgba(37, 99, 235, 0.2);
+
+  /* 状态语义色 */
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --color-danger-hover: #b91c1c;
 }
 
 html,

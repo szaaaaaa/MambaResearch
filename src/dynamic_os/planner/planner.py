@@ -1,3 +1,16 @@
+"""规划器核心实现 — 调用 LLM 生成并校验 RoutePlan 执行计划。
+
+本模块实现 Planner 类，它是研究操作系统的核心规划组件。
+每轮规划迭代中，Planner 会：
+1. 收集当前系统状态（artifact、observation、budget 等）
+2. 构建 prompt 发送给 LLM，请求生成 RoutePlan（DAG 执行计划）
+3. 对 LLM 输出进行结构化解析和多层校验（schema 校验、角色/技能匹配、输入引用有效性等）
+4. 校验失败时自动触发一次修复重试；两次均失败则使用确定性 fallback 计划
+5. 保存最终计划并返回给 runtime 执行
+
+Planner 不直接执行任何研究任务，它只负责「规划下一步做什么」。
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -19,29 +32,50 @@ from src.dynamic_os.contracts.route_plan import FailurePolicy, PlanEdge, PlanNod
 from src.dynamic_os.planner.prompts import (
     build_planner_messages,
     build_planner_repair_messages,
-    build_role_routing_messages,
     planner_output_contract,
 )
 from src.dynamic_os.planner.routing import (
-    RoleRoutingDecision,
-    RoleRoutingPolicy,
-    derive_role_routing_policy,
-    merge_routing_policy,
     role_can_activate_from_inputs,
 )
 from src.dynamic_os.roles.registry import RoleRegistry
 
 
 class PlannerModel(Protocol):
+    """规划器模型协议 — 定义 LLM 调用接口。
+
+    任何实现了 generate 方法的对象都可以作为规划器的后端模型，
+    支持同步和异步两种调用方式。
+    """
     async def generate(self, messages: list[dict[str, str]], response_schema: dict[str, Any]) -> str: ...
 
 
 class PlannerOutputError(RuntimeError):
+    """LLM 输出无法解析为有效 RoutePlan 时抛出的异常。
+
+    在两次尝试（首次生成 + 修复重试）和 fallback 均失败后抛出。
+    """
     def __init__(self, message: str) -> None:
         super().__init__(message)
 
 
 class Planner:
+    """规划器主类 — 将用户请求转化为 RoutePlan DAG 执行计划。
+
+    规划流程：
+    1. 从各 store 收集系统当前状态
+    2. 通过 prompts 模块构建 LLM 消息
+    3. 调用 LLM 生成 RoutePlan JSON
+    4. 对输出进行规范化处理（兼容遗留格式）和多层校验
+    5. 校验失败时进入修复流程或 fallback
+
+    依赖的外部组件：
+    - model: LLM 后端（实现 PlannerModel 协议）
+    - role_registry: 角色注册表，定义可用角色及其技能允许列表
+    - skill_registry: 技能注册表，提供技能规格和输入/输出契约
+    - artifact_store: artifact 存储，记录所有已产出的研究制品
+    - observation_store: 观测存储，记录节点执行结果
+    - plan_store: 计划存储，保存生成的 RoutePlan
+    """
     def __init__(
         self,
         *,
@@ -51,13 +85,15 @@ class Planner:
         artifact_store: Any,
         observation_store: Any,
         plan_store: Any,
+        prior_research_context: str = "",
     ) -> None:
-        self._model = model
-        self._role_registry = role_registry
-        self._skill_registry = skill_registry
-        self._artifact_store = artifact_store
-        self._observation_store = observation_store
-        self._plan_store = plan_store
+        self._model = model                    # LLM 后端实例
+        self._role_registry = role_registry    # 角色注册表
+        self._skill_registry = skill_registry  # 技能注册表
+        self._artifact_store = artifact_store  # artifact 存储
+        self._observation_store = observation_store  # 观测存储
+        self._plan_store = plan_store          # 计划存储
+        self._prior_research_context = prior_research_context  # 历史运行的先验上下文
 
     async def plan(
         self,
@@ -67,73 +103,95 @@ class Planner:
         planning_iteration: int,
         budget_snapshot: dict[str, Any] | None = None,
     ) -> RoutePlan:
-        base_routing_policy = derive_role_routing_policy(
-            user_request=user_request,
-            artifacts=self._artifact_store.list_all(),
-        )
-        routing_policy = await self._route_roles(
-            user_request=user_request,
-            planning_iteration=planning_iteration,
-            budget_snapshot=budget_snapshot or {},
-            base_policy=base_routing_policy,
-        )
+        """生成下一轮的 RoutePlan 执行计划。
+
+        核心流程：
+        1. 构建 prompt 并调用 LLM
+        2. 对 LLM 输出进行规范化和 Pydantic 校验
+        3. 执行业务规则校验（角色存在性、技能匹配、输入引用有效性、报告后续流程等）
+        4. 首次校验失败 → 构建修复 prompt 重试一次
+        5. 二次失败 → 使用确定性 fallback 计划（基于当前 artifact 状态推断下一步）
+
+        参数
+        ----------
+        run_id : str
+            当前运行的唯一标识符。
+        user_request : str
+            用户的原始研究请求。
+        planning_iteration : int
+            当前规划迭代序号。
+        budget_snapshot : dict, optional
+            当前预算使用快照。
+
+        返回
+        -------
+        RoutePlan
+            验证通过的执行计划。
+
+        异常
+        ------
+        PlannerOutputError
+            两次 LLM 尝试和 fallback 均失败时抛出。
+        """
         messages = build_planner_messages(
             user_request=user_request,
             role_registry=self._role_registry,
             available_skills_by_role=self._available_skills_by_role(),
             skill_contract_summary=self._skill_contract_summary(),
-            artifact_summary=self._artifact_store.summary(),
+            artifact_summary=self._enriched_artifact_summary(),
             artifact_refs=self._existing_artifact_refs(),
             artifact_ref_templates=self._artifact_ref_templates(),
-            role_routing_policy=routing_policy,
             observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
             budget_snapshot=budget_snapshot or {},
             planning_iteration=planning_iteration,
+            prior_research_context=self._prior_research_context,
         )
         response_schema = self._response_schema(run_id=run_id, planning_iteration=planning_iteration)
 
         last_error = ""
         current_messages = list(messages)
+        # 最多尝试两次：首次生成 + 修复重试
         for attempt in range(2):
             raw = self._normalize_plan_output(await self._generate(current_messages, response_schema))
             parsed_plan: RoutePlan | None = None
             try:
+                # 多层校验流水线：schema → 角色合法性 → 技能匹配 → 角色存在性 → 报告后续流程
                 parsed_plan = RoutePlan.model_validate_json(raw)
                 self._role_registry.validate_route_plan(parsed_plan)
                 self._validate_loaded_skills(parsed_plan)
-                self._validate_role_routing(parsed_plan, routing_policy)
-                self._validate_post_report_progression(parsed_plan, routing_policy)
+                self._validate_role_exists(parsed_plan)
+                self._validate_post_report_progression(parsed_plan)
                 self._plan_store.save(parsed_plan)
                 return parsed_plan
             except (ValidationError, ValueError) as exc:
                 last_error = str(exc)
                 if attempt == 0:
+                    # 首次失败：构建修复 prompt，让 LLM 自行修正
                     current_messages = build_planner_repair_messages(
                         user_request=user_request,
                         role_registry=self._role_registry,
                         available_skills_by_role=self._available_skills_by_role(),
                         skill_contract_summary=self._skill_contract_summary(),
-                        artifact_summary=self._artifact_store.summary(),
+                        artifact_summary=self._enriched_artifact_summary(),
                         artifact_refs=self._existing_artifact_refs(),
                         artifact_ref_templates=self._artifact_ref_templates(),
-                        role_routing_policy=routing_policy,
                         observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
                         budget_snapshot=budget_snapshot or {},
                         planning_iteration=planning_iteration,
+                        prior_research_context=self._prior_research_context,
                         validation_error=self._validation_feedback(
                             detail=last_error,
                             plan=parsed_plan,
-                            routing_policy=routing_policy,
                             raw_output=raw,
                         ),
                         raw_output=raw,
                     )
                     continue
+                # 二次失败：放弃 LLM 输出，使用确定性 fallback 计划
                 fallback_plan = self._fallback_plan(
                     run_id=run_id,
                     user_request=user_request,
                     planning_iteration=planning_iteration,
-                    routing_policy=routing_policy,
                     validation_error=last_error,
                 )
                 try:
@@ -146,66 +204,23 @@ class Planner:
 
         raise PlannerOutputError(last_error)
 
-    async def _route_roles(
-        self,
-        *,
-        user_request: str,
-        planning_iteration: int,
-        budget_snapshot: dict[str, Any],
-        base_policy: RoleRoutingPolicy,
-    ) -> RoleRoutingPolicy:
-        messages = build_role_routing_messages(
-            user_request=user_request,
-            role_registry=self._role_registry,
-            available_skills_by_role=self._available_skills_by_role(),
-            artifact_summary=self._artifact_store.summary(),
-            artifact_refs=self._existing_artifact_refs(),
-            observation_summary=[obs.model_dump(mode="json") for obs in self._observation_store.list_latest()],
-            budget_snapshot=budget_snapshot,
-            planning_iteration=planning_iteration,
-            role_routing_policy=base_policy,
-        )
-        response_schema = RoleRoutingDecision.model_json_schema()
-        current_messages = list(messages)
-
-        for attempt in range(2):
-            raw = self._normalize_role_routing_output(await self._generate(current_messages, response_schema))
-            try:
-                decision = RoleRoutingDecision.model_validate_json(raw)
-                self._validate_role_decision(decision, base_policy)
-                return merge_routing_policy(base_policy=base_policy, decision=decision)
-            except (ValidationError, ValueError) as exc:
-                if attempt == 0:
-                    current_messages = current_messages + [
-                        {
-                            "role": "system",
-                            "content": (
-                                f"Previous routing output failed validation: {exc}. "
-                                f"Hard routing policy: {json.dumps(base_policy.as_dict(), ensure_ascii=False)}. "
-                                "Return corrected JSON only."
-                            ),
-                        }
-                    ]
-                    continue
-
-        return base_policy
-
     async def _generate(self, messages: list[dict[str, str]], response_schema: dict[str, Any]) -> str:
+        """调用 LLM 生成文本，兼容同步和异步模型实现。"""
         result = self._model.generate(messages, response_schema)
         if inspect.isawaitable(result):
             return str(await result)
         return str(result)
 
-    def _normalize_role_routing_output(self, raw: str) -> str:
-        payload = self._try_load_json(raw)
-        if not isinstance(payload, dict):
-            return raw
-        wrapped = payload.get("RoutePlan")
-        if isinstance(wrapped, dict) and {"selected_roles", "required_roles"} & set(wrapped):
-            return json.dumps(wrapped, ensure_ascii=False)
-        return raw
-
     def _normalize_plan_output(self, raw: str) -> str:
+        """对 LLM 原始输出进行规范化处理，兼容遗留格式。
+
+        处理以下兼容性问题：
+        - 去除可能的 {"RoutePlan": {...}} 包装层
+        - 将遗留的 skill 字段转为 allowed_skills 列表
+        - 移除已废弃的 agent_id、agent_name、planner_notes（节点级）字段
+        - 将字符串类型的 inputs/success_criteria 转为列表
+        - 将遗留的 relation 字段转为 condition
+        """
         payload = self._try_load_json(raw)
         if not isinstance(payload, dict):
             return raw
@@ -252,6 +267,7 @@ class Planner:
         return json.dumps(payload, ensure_ascii=False)
 
     def _try_load_json(self, raw: str) -> Any:
+        """安全地尝试解析 JSON，解析失败返回 None 而非抛异常。"""
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -263,12 +279,25 @@ class Planner:
         run_id: str,
         user_request: str,
         planning_iteration: int,
-        routing_policy: RoleRoutingPolicy,
         validation_error: str,
     ) -> RoutePlan:
+        """当 LLM 两次输出均校验失败时，生成确定性 fallback 计划。
+
+        基于当前 artifact store 中已有的 artifact 类型，按研究流程的
+        自然推进顺序选择下一步动作。决策链路如下：
+
+        1. 无 SearchPlan → conductor 制定研究计划
+        2. 有实验相关 artifact → 按实验生命周期推进（设计→执行→分析）
+        3. 有 ExperimentIteration → 判断是继续迭代还是结束实验
+        4. 有 ReviewVerdict 且评分不达标 → HITL 确认后 writer 重写
+        5. 无 SourceSet → researcher 搜索论文
+        6. 无 EvidenceMap → researcher 构建证据图
+        7. 无 ResearchReport → writer 撰写报告（可选：先生成图表）
+        8. 无 ReviewVerdict → reviewer 审阅报告
+        9. 全部完成 → 终止计划
+        """
         latest_by_type = self._latest_artifact_refs_by_type()
         available_types = set(latest_by_type)
-        intents = set(routing_policy.intents)
         notes = [
             "planner structured output was invalid twice; using deterministic fallback plan",
             f"fallback reason: {validation_error}",
@@ -295,7 +324,8 @@ class Planner:
                 terminate=False,
             )
 
-        if "experiment" in intents:
+        # 实验相关 fallback：根据已有 artifact 状态判断下一步
+        if available_types & {"ExperimentPlan", "ExperimentResults"}:
             if "ExperimentPlan" not in available_types and available_types & {"SearchPlan", "EvidenceMap", "GapMap"}:
                 return RoutePlan(
                     run_id=run_id,
@@ -365,7 +395,7 @@ class Planner:
                 should_continue = latest_iter.payload.get("should_continue", False)
 
                 if strategy == "early_stop" or not should_continue:
-                    # Experiment loop done — analyze and report
+                    # 实验循环结束 - 分析并生成报告
                     analyze_node = self._fallback_node(
                         node_id="node_analyst_final",
                         role=RoleId.analyst,
@@ -396,7 +426,7 @@ class Planner:
                         terminate=False,
                     )
 
-                # Experiment continues — route back to design
+                # 实验继续 - 路由回设计阶段
                 if strategy == "pivot":
                     redesign_goal = "尝试完全不同的实验方法（PIVOT策略）"
                 elif strategy == "refine":
@@ -452,7 +482,6 @@ class Planner:
                         success_criteria=["获取用户指导"],
                         failure_policy=FailurePolicy.replan,
                         expected_outputs=["UserGuidance"],
-                        needs_review=False,
                         hitl_question=f"论文审查评分为 {weighted_score:.1f}/10（阈值 {threshold:.1f}）。是否自动重写？或提供修改指导。",
                     )
                     writer_node = self._fallback_node(
@@ -663,7 +692,7 @@ class Planner:
                 terminate=False,
             )
 
-        if "review" in intents and "ReviewVerdict" not in available_types:
+        if "ReviewVerdict" not in available_types:
             return RoutePlan(
                 run_id=run_id,
                 planning_iteration=planning_iteration,
@@ -718,6 +747,7 @@ class Planner:
         success_criteria: list[str],
         expected_outputs: list[str],
     ) -> PlanNode:
+        """创建 fallback 计划中的标准节点，统一使用 replan 失败策略。"""
         return PlanNode(
             node_id=node_id,
             role=role,
@@ -727,19 +757,25 @@ class Planner:
             success_criteria=success_criteria,
             failure_policy=FailurePolicy.replan,
             expected_outputs=expected_outputs,
-            needs_review=False,
         )
 
     def _latest_artifact_refs_by_type(self) -> dict[str, str]:
+        """获取每种 artifact 类型的最新引用。同类型后出现的会覆盖先前的。"""
         latest: dict[str, str] = {}
         for record in self._artifact_store.list_all():
             latest[record.artifact_type] = artifact_ref_for_record(record)
         return latest
 
     def _preferred_inputs(self, latest_by_type: dict[str, str], preferred_types: list[str]) -> list[str]:
+        """从指定的偏好类型列表中筛选出当前已存在的 artifact 引用，作为节点输入。"""
         return [latest_by_type[artifact_type] for artifact_type in preferred_types if artifact_type in latest_by_type]
 
     def _available_skills_by_role(self) -> dict[str, list[str]]:
+        """计算每个角色当前实际可用的技能列表。
+
+        对角色的 default_allowed_skills 进行过滤：
+        只保留已被技能注册表加载、且声明适用于该角色的技能。
+        """
         available: dict[str, list[str]] = {role.id.value: [] for role in self._role_registry.list()}
         loaded_by_id = {loaded_skill.spec.id: loaded_skill.spec for loaded_skill in self._skill_registry.list()}
         for role in self._role_registry.list():
@@ -754,6 +790,14 @@ class Planner:
         return available
 
     def _response_schema(self, *, run_id: str, planning_iteration: int) -> dict[str, Any]:
+        """构建 LLM 响应的 JSON Schema，用于引导结构化输出。
+
+        基于 RoutePlan 的 Pydantic 模型 schema，动态注入约束：
+        - 将 run_id 和 planning_iteration 限制为当前值（enum 约束）
+        - 为每个角色生成独立的 PlanNode 变体（限制该角色可用的技能和输出类型）
+        - 添加 HITL 节点变体
+        最终使用 anyOf 合并所有变体，让 LLM 根据角色自动选择正确的 schema 分支。
+        """
         schema = RoutePlan.model_json_schema()
         properties = schema.get("properties") or {}
         if isinstance(properties, dict):
@@ -770,6 +814,7 @@ class Planner:
 
         available_skills_by_role = self._available_skills_by_role()
         loaded_by_id = {loaded_skill.spec.id: loaded_skill.spec for loaded_skill in self._skill_registry.list()}
+        # 为每个角色创建独立的 PlanNode schema 变体，限制可用技能和输出类型
         node_variants: list[dict[str, Any]] = []
         for role in self._role_registry.list():
             role_skill_ids = list(available_skills_by_role.get(role.id.value, []))
@@ -799,6 +844,7 @@ class Planner:
                     items["enum"] = role_output_types
             node_variants.append(variant)
 
+        # 创建 HITL（人机协作）节点的 schema 变体
         hitl_variant = deepcopy(plan_node)
         hitl_properties = hitl_variant.get("properties") or {}
         if isinstance(hitl_properties, dict):
@@ -816,10 +862,20 @@ class Planner:
         node_variants.append(hitl_variant)
 
         if node_variants:
+            # 用 anyOf 合并所有角色变体，LLM 会根据 role 字段自动匹配正确分支
             defs["PlanNode"] = {"anyOf": node_variants}
         return schema
 
     def _validate_loaded_skills(self, plan: RoutePlan) -> None:
+        """校验计划中每个节点的技能分配和输入/输出一致性。
+
+        校验内容：
+        1. 节点的 allowed_skills 必须是该角色允许的技能
+        2. 每个技能的 required 输入类型必须在节点的 inputs 中存在
+        3. 每个技能的 requires_any 至少有一个在节点的 inputs 中存在
+        4. 节点的 expected_outputs 必须是其技能可产出的 artifact 类型
+        5. 节点的 inputs 引用必须是已存在的 artifact 或上游节点的预测输出
+        """
         loaded_by_id = {loaded_skill.spec.id: loaded_skill.spec for loaded_skill in self._skill_registry.list()}
         existing_artifacts = {artifact_ref_for_record(record): record for record in self._artifact_store.list_all()}
         future_refs_by_node = self._future_refs_by_node(plan)
@@ -884,94 +940,75 @@ class Planner:
                 upstream_nodes=upstream_by_node.get(node.node_id, set()),
             )
 
-    def _validate_role_decision(self, decision: RoleRoutingDecision, base_policy: RoleRoutingPolicy) -> None:
-        selected_roles = {role.value for role in decision.selected_roles}
-        missing_required = [role_id for role_id in base_policy.required_roles if role_id not in selected_roles]
-        if missing_required:
-            raise ValueError(
-                "routing decision is missing required roles from hard policy: "
-                f"{', '.join(missing_required)}"
-            )
-
-    def _validate_role_routing(self, plan: RoutePlan, routing_policy: RoleRoutingPolicy) -> None:
+    def _validate_role_exists(self, plan: RoutePlan) -> None:
+        """验证计划中使用的角色在注册表中存在。"""
         if plan.terminate:
             return
+        registered_roles = {role.id.value for role in self._role_registry.list()} | {"hitl"}
+        for node in plan.nodes:
+            if node.role.value not in registered_roles:
+                raise ValueError(f"role {node.role.value} is not registered")
 
-        non_hitl_nodes = [node for node in plan.nodes if node.role != RoleId.hitl]
-        plan_roles = {node.role.value for node in non_hitl_nodes}
-        selected_roles = set(routing_policy.selected_roles)
-        invalid_roles = [node.role.value for node in non_hitl_nodes if selected_roles and node.role.value not in selected_roles]
-        if invalid_roles:
-            raise ValueError(
-                "route plan used roles outside selected_roles: "
-                f"{', '.join(sorted(set(invalid_roles)))}; "
-                f"selected_roles={list(routing_policy.selected_roles)}"
-            )
-        missing_required_roles = [
-            role_id for role_id in routing_policy.required_roles if role_id not in plan_roles
-        ]
-        if missing_required_roles:
-            raise ValueError(
-                "route plan is missing required roles from routing policy: "
-                f"{', '.join(missing_required_roles)}"
-            )
-
-        for node in non_hitl_nodes:
-            input_types = [self._parse_input_type(reference) for reference in node.inputs]
-            if not role_can_activate_from_inputs(node.role.value, input_types):
-                required_input_types = routing_policy.activation_inputs.get(node.role.value, ())
-                if required_input_types:
-                    raise ValueError(
-                        f"role {node.role.value} requires node.inputs to include one of "
-                        f"{list(required_input_types)}; got {input_types or '[]'}"
-                    )
-
-    def _validate_post_report_progression(self, plan: RoutePlan, routing_policy: RoleRoutingPolicy) -> None:
+    def _validate_post_report_progression(self, plan: RoutePlan) -> None:
+        """ReviewVerdict 分数不够时，只允许 writer/reviewer 重写。"""
         all_records = self._artifact_store.list_all()
         artifact_types = {record.artifact_type for record in all_records}
-        has_report = "ResearchReport" in artifact_types
-        has_review = "ReviewVerdict" in artifact_types
-        review_requested = "review" in set(routing_policy.intents)
 
-        if has_review:
-            review_records = [r for r in all_records if r.artifact_type == "ReviewVerdict"]
-            if review_records:
-                latest_review = review_records[-1]
-                weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
-                threshold = float(latest_review.payload.get("threshold", 6.0))
-                max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
-                report_count = sum(1 for r in all_records if r.artifact_type == "ResearchReport")
-                if weighted_score < threshold and report_count <= max_cycles:
-                    plan_roles = {node.role.value for node in plan.nodes if node.role != RoleId.hitl}
-                    allowed_roles = {"writer", "reviewer"}
-                    invalid = plan_roles - allowed_roles
-                    if invalid:
-                        raise ValueError(
-                            f"review score below threshold; only writer/reviewer/hitl nodes allowed, got: {', '.join(sorted(invalid))}"
-                        )
-                    return
-            if not plan.terminate:
-                raise ValueError("ReviewVerdict already exists and score passed; next plan must terminate")
+        if "ReviewVerdict" not in artifact_types:
             return
 
-        if not has_report:
+        review_records = [r for r in all_records if r.artifact_type == "ReviewVerdict"]
+        if not review_records:
             return
 
-        if not review_requested:
-            if not plan.terminate:
-                raise ValueError("ResearchReport already exists and no review was requested; next plan must terminate")
+        latest_review = review_records[-1]
+        weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
+        threshold = float(latest_review.payload.get("threshold", 6.0))
+        max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
+        report_count = sum(1 for r in all_records if r.artifact_type == "ResearchReport")
+
+        if weighted_score < threshold and report_count <= max_cycles:
+            plan_roles = {node.role.value for node in plan.nodes if node.role != RoleId.hitl}
+            allowed_roles = {"writer", "reviewer"}
+            invalid = plan_roles - allowed_roles
+            if invalid:
+                raise ValueError(
+                    f"review score below threshold; only writer/reviewer/hitl nodes allowed, got: {', '.join(sorted(invalid))}"
+                )
             return
 
-        if plan.terminate:
-            raise ValueError("review was requested and ResearchReport exists; next plan must schedule reviewer before terminate")
+        if not plan.terminate:
+            raise ValueError("ReviewVerdict already exists and score passed; next plan must terminate")
 
-        plan_roles = {node.role.value for node in plan.nodes if node.role != RoleId.hitl}
-        if plan_roles != {"reviewer"}:
-            raise ValueError(
-                "review was requested and ResearchReport exists; only reviewer nodes are allowed before termination"
-            )
+    def _enriched_artifact_summary(self) -> list[dict[str, str]]:
+        """为 artifact 摘要附加决策关键字段（ExperimentIteration / ReviewVerdict）。
+
+        普通 summary 只含 artifact_id/type/ref/role，planner 无法据此判断
+        实验是否应继续迭代、审稿是否通过。此方法从 payload 中提取决策字段，
+        以 hint 字段形式附加到摘要中。
+        """
+        summary = self._artifact_store.summary()
+        records_by_id = {r.artifact_id: r for r in self._artifact_store.list_all()}
+        for entry in summary:
+            record = records_by_id.get(entry["artifact_id"])
+            if record is None:
+                continue
+            if record.artifact_type == "ExperimentIteration":
+                entry["hint"] = (
+                    f"iteration={record.payload.get('iteration')}, "
+                    f"should_continue={record.payload.get('should_continue')}, "
+                    f"strategy={record.payload.get('strategy')}"
+                )
+            elif record.artifact_type == "ReviewVerdict":
+                entry["hint"] = (
+                    f"verdict={record.payload.get('verdict')}, "
+                    f"weighted_score={record.payload.get('weighted_score')}, "
+                    f"threshold={record.payload.get('threshold')}"
+                )
+        return summary
 
     def _skill_contract_summary(self) -> dict[str, dict[str, dict[str, list[str]]]]:
+        """生成按角色分组的技能输入/输出契约摘要，用于嵌入 prompt。"""
         summary: dict[str, dict[str, dict[str, list[str]]]] = {}
         loaded_by_id = {loaded_skill.spec.id: loaded_skill.spec for loaded_skill in self._skill_registry.list()}
         for role in self._role_registry.list():
@@ -989,13 +1026,16 @@ class Planner:
         return summary
 
     def _parse_input_type(self, reference: str) -> str:
+        """从 artifact 引用字符串中提取 artifact 类型（如 artifact:SearchPlan:xxx → SearchPlan）。"""
         artifact_type, _ = parse_artifact_ref(reference)
         return artifact_type
 
     def _existing_artifact_refs(self) -> list[str]:
+        """获取 artifact store 中所有已存在 artifact 的精确引用列表。"""
         return [artifact_ref_for_record(record) for record in self._artifact_store.list_all()]
 
     def _artifact_ref_templates(self) -> list[dict[str, str]]:
+        """生成所有可能的 artifact 引用模板，帮助 LLM 构造正确的 future refs。"""
         output_types = sorted(
             {
                 artifact_type
@@ -1016,12 +1056,18 @@ class Planner:
         ]
 
     def _future_refs_by_node(self, plan: RoutePlan) -> dict[str, list[str]]:
+        """预测计划中每个节点将产出的 artifact 引用（基于 expected_outputs）。"""
         return {
             node.node_id: predicted_output_refs(node_id=node.node_id, artifact_types=node.expected_outputs)
             for node in plan.nodes
         }
 
     def _upstream_nodes_by_node(self, plan: RoutePlan) -> dict[str, set[str]]:
+        """计算 DAG 中每个节点的所有上游节点集合（传递闭包）。
+
+        通过 BFS/DFS 遍历边关系，找到每个节点可达的所有祖先节点。
+        用于校验节点 inputs 中的 future refs 是否确实来自上游。
+        """
         parents_by_node: dict[str, set[str]] = {node.node_id: set() for node in plan.nodes}
         for edge in plan.edges:
             parents_by_node.setdefault(edge.target, set()).add(edge.source)
@@ -1048,6 +1094,12 @@ class Planner:
         future_ref_to_node: dict[str, str],
         upstream_nodes: set[str],
     ) -> None:
+        """校验节点的每个 input ref 是否有效。
+
+        有效的 input ref 必须满足以下条件之一：
+        1. 已存在于 artifact store 中（existing_artifacts）
+        2. 是某个上游节点的预测输出（future ref），且该产出节点确实在 DAG 的上游路径上
+        """
         invalid_references: list[str] = []
         for reference in node.inputs:
             if reference in existing_artifacts:
@@ -1075,16 +1127,18 @@ class Planner:
         *,
         detail: str,
         plan: RoutePlan | None,
-        routing_policy: RoleRoutingPolicy,
         raw_output: str,
     ) -> str:
+        """构建校验失败时的反馈文本，包含错误详情、契约规范和当前状态信息。
+
+        该反馈会嵌入修复 prompt，帮助 LLM 理解哪里出错并给出正确的修正。
+        """
         parts = [
             f"Previous output failed validation: {detail}. Return corrected JSON only.",
             f"Exact RoutePlan contract: {planner_output_contract()}",
             f"Previous raw output: {json.dumps(str(raw_output or ''), ensure_ascii=False)}.",
             f"Current exact artifact refs: {json.dumps(self._existing_artifact_refs(), ensure_ascii=False)}.",
             f"Artifact ref templates: {json.dumps(self._artifact_ref_templates(), ensure_ascii=False)}.",
-            f"Role routing policy: {json.dumps(routing_policy.as_dict(), ensure_ascii=False)}.",
         ]
         if plan is not None:
             parts.append(

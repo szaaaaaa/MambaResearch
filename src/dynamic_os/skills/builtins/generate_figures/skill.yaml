@@ -1,9 +1,9 @@
 id: generate_figures
 name: Generate Figures
-version: 1.0.0
+version: 2.0.0
 applicable_roles:
   - analyst
-description: Generate publication-quality matplotlib figures from analysis artifacts.
+description: Generate publication-quality figures from analysis artifacts using template renderers (matplotlib, networkx, mermaid-cli).
 input_contract:
   required: []
   requires_any:
@@ -16,12 +16,12 @@ input_contract:
     - ExperimentAnalysis
     - MethodComparison
     - TrendAnalysis
+    - EvidenceMap
+    - SourceSet
 output_artifacts:
   - FigureSet
 allowed_tools:
   - mcp.llm.chat
-  - mcp.exec.execute_code
 permissions:
-  sandbox_exec: true
   filesystem_write: true
 timeout_sec: 180
