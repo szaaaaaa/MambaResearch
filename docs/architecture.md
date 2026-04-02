@@ -156,11 +156,11 @@ runtime.run()
 
 | RoleId | 职责 | 典型技能 | 输出 Artifact |
 |--------|------|---------|--------------|
-| `conductor` | 总指挥，分解研究问题 | plan_research, create_skill | TopicBrief, SearchPlan |
-| `researcher` | 检索论文 | search_papers, fetch_fulltext | SourceSet |
-| `experimenter` | 设计和运行实验 | design_experiment, run_experiment, optimize_experiment | ExperimentPlan, ExperimentResults |
-| `analyst` | 分析和综合 | extract_notes, build_evidence_map, analyze_trends, compare_methods | PaperNotes, EvidenceMap, TrendAnalysis |
-| `writer` | 撰写报告 | draft_report, generate_figures | ResearchReport (**终态**) |
+| `conductor` | 总指挥，分解研究问题 | plan_research | TopicBrief, SearchPlan |
+| `researcher` | 检索论文、构建证据 | search_papers, fetch_fulltext, extract_notes, build_evidence_map, analyze_trends | SourceSet, PaperNotes, EvidenceMap, TrendAnalysis |
+| `experimenter` | 设计和运行实验、技能进化 | design_experiment, run_experiment, create_skill, optimize_skill | ExperimentPlan, ExperimentResults, SkillCreation |
+| `analyst` | 分析和综合 | analyze_metrics, aggregate_results, optimize_experiment, compare_methods, generate_figures, reflect_on_failure | ExperimentAnalysis, PerformanceMetrics, FigureSet |
+| `writer` | 撰写报告 | draft_report | ResearchReport (**终态**) |
 | `reviewer` | 审稿 | review_artifact | ReviewVerdict (**终态**) |
 | `hitl` | 人类介入节点 | 无 | UserGuidance |
 
@@ -175,22 +175,23 @@ runtime.run()
 | 技能 | 所属角色 | 功能 |
 |------|---------|------|
 | `plan_research` | conductor | 将用户请求分解为 TopicBrief + SearchPlan |
-| `create_skill` | conductor | 动态创建新技能 |
+| `create_skill` | experimenter | 动态创建新技能 |
+| `optimize_skill` | experimenter | 基于反馈优化已有技能 |
 | `search_papers` | researcher | 从 arXiv/Semantic Scholar 等检索论文 |
 | `fetch_fulltext` | researcher | 下载并解析 PDF 全文 |
-| `extract_notes` | analyst | 从论文中提取结构化笔记 |
-| `build_evidence_map` | analyst | 构建证据图谱（主张↔来源） |
-| `compare_methods` | analyst | 对比不同方法 |
-| `analyze_trends` | analyst | 趋势分析 |
-| `analyze_metrics` | analyst | 实验指标分析 |
+| `extract_notes` | researcher | 从论文中提取结构化笔记 |
+| `build_evidence_map` | researcher | 构建证据图谱（主张↔来源） |
+| `analyze_trends` | researcher | 趋势分析 |
 | `design_experiment` | experimenter | 设计实验方案 |
 | `run_experiment` | experimenter | 在沙箱中运行实验代码 |
-| `optimize_experiment` | experimenter | 超参调优 |
-| `optimize_skill` | conductor | 基于反馈优化已有技能 |
-| `draft_report` | writer | 生成 LaTeX 研究报告 |
-| `generate_figures` | writer | 生成可视化图表 |
-| `review_artifact` | reviewer | 审查报告质量 |
+| `optimize_experiment` | analyst | 超参调优/实验迭代 |
+| `analyze_metrics` | analyst | 实验指标分析 |
+| `aggregate_results` | analyst | 聚合多轮实验结果 |
+| `compare_methods` | analyst | 对比不同方法 |
+| `generate_figures` | analyst | 生成可视化图表 |
 | `reflect_on_failure` | analyst | 分析失败原因并提出改进 |
+| `draft_report` | writer | 生成 LaTeX 研究报告 |
+| `review_artifact` | reviewer | 审查报告质量 |
 
 ---
 
@@ -238,22 +239,29 @@ ResearchAgent/
 │   └── agent.yaml                  # 主配置（LLM/搜索/预算/MCP 服务器）
 ├── frontend/src/
 │   ├── App.tsx                     # React 根组件
-│   ├── store.tsx                   # 全局状态管理 (Context API)
+│   ├── store.tsx                   # 全局状态管理 (Zustand)
 │   ├── types.ts                    # TypeScript 类型定义
+│   ├── labels.ts                   # UI 标签/字符串
+│   ├── modelOptions.ts            # 模型配置选项
 │   ├── components/
 │   │   ├── Sidebar.tsx             # 侧边栏（对话列表）
 │   │   ├── tabs/RunTab.tsx         # 研究执行主界面
 │   │   ├── tabs/HistoryTab.tsx     # 历史记录
+│   │   ├── tabs/SkillsTab.tsx      # 技能浏览与管理
 │   │   ├── RouteGraph.tsx          # DAG 可视化
 │   │   ├── BehaviorTimeline.tsx    # 执行时间线
+│   │   ├── ExperimentProgress.tsx  # 实验迭代进度面板
+│   │   ├── ReviewStatus.tsx        # 审稿评分面板
+│   │   ├── RawTerminalPanel.tsx    # 原始终端输出
 │   │   ├── HitlModal.tsx           # 人类介入弹窗
-│   │   └── settings/              # 设置面板（10 个分区）
+│   │   └── settings/              # 设置面板（11 个分区）
 │   └── ...
 ├── src/
 │   ├── server/
 │   │   ├── routes/runs.py          # /api/runs — 运行管理 + SSE 流
-│   │   ├── routes/config.py        # /config — 配置管理
-│   │   ├── routes/models.py        # /models — 模型列表
+│   │   ├── routes/skills.py        # /api/skills — 技能管理 + 指标查询
+│   │   ├── routes/config.py        # /config — 配置/凭证管理
+│   │   ├── routes/models.py        # /models — 各供应商模型列表
 │   │   └── settings.py             # 服务端常量
 │   ├── dynamic_os/
 │   │   ├── contracts/              # ★ 数据模型（Pydantic, frozen）
@@ -296,7 +304,7 @@ ResearchAgent/
 │   │   │   ├── registry.py         #   技能注册表
 │   │   │   ├── loader.py           #   技能动态加载
 │   │   │   ├── discovery.py        #   技能包发现
-│   │   │   └── builtins/           #   18 个内置技能
+│   │   │   └── builtins/           #   18 个内置技能（3 个目录自动发现）
 │   │   │       ├── search_papers/  #     每个技能一个目录
 │   │   │       │   ├── skill.yaml  #       元数据
 │   │   │       │   ├── skill.md    #       文档
@@ -310,7 +318,7 @@ ResearchAgent/
 │   │   │   └── skill_metrics.py    #   技能性能追踪
 │   │   └── experiment/
 │   │       ├── workspace.py        #   实验工作空间管理
-│   │       └── templates/          #   实验代码模板
+│   │       └── templates/          #   实验代码模板（default + generic 注册表）
 │   ├── ingest/                     # PDF/论文摄入管线
 │   │   ├── pdf_loader.py           #   PDF 解析
 │   │   ├── pdf_indexing.py         #   PDF 索引编排
@@ -342,7 +350,56 @@ ResearchAgent/
 
 ---
 
-## 九、关键设计模式
+## 九、API 端点总览
+
+### 研究运行
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/run` | 启动研究任务（SSE 流式返回） |
+| `POST` | `/api/run/stop` | 停止运行中的任务 |
+| `GET` | `/api/runs` | 历史运行列表 |
+| `GET` | `/api/runs/{id}/state` | 运行状态和产物 |
+| `GET` | `/api/runs/{id}/artifacts` | 产物列表 |
+| `GET` | `/api/runs/{id}/artifacts/{aid}` | 产物详情 |
+| `GET` | `/api/runs/{id}/events` | 事件流 |
+| `POST` | `/api/runs/{id}/hitl` | 提交人类指导 |
+
+### 输出下载
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/runs/{id}/report.pdf` | PDF 论文 |
+| `GET` | `/api/runs/{id}/report.tex` | LaTeX 源文件 |
+| `GET` | `/api/runs/{id}/references.bib` | BibTeX 引用 |
+| `GET` | `/api/runs/{id}/latex.zip` | LaTeX 压缩包 |
+
+### 技能管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/skills` | 全部已注册技能（含指标） |
+| `GET` | `/api/skills/{id}` | 技能详情（含文档） |
+| `GET` | `/api/skills/metrics` | 全部执行指标 |
+| `DELETE` | `/api/skills/{id}` | 删除进化生成的技能 |
+
+### 配置 & 模型
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET/POST` | `/api/config` | 获取/保存配置 |
+| `GET/POST` | `/api/credentials` | 凭证状态/保存 |
+| `GET` | `/api/openrouter/models` | OpenRouter 模型列表 |
+| `GET` | `/api/openai/models` | OpenAI 模型列表 |
+| `GET` | `/api/gemini/models` | Gemini 模型列表 |
+| `GET` | `/api/siliconflow/models` | SiliconFlow 模型列表 |
+| `GET` | `/api/codex/models` | Codex 模型列表 |
+| `GET` | `/api/knowledge-graph/status` | 知识图谱状态 |
+| `GET` | `/api/knowledge-graph/nodes` | 知识图谱节点 |
+
+---
+
+## 十、关键设计模式
 
 ### 1. 不可变数据合约
 所有 Pydantic 模型用 `frozen=True`，数据一旦创建不可修改，保证系统状态可追溯。
@@ -370,7 +427,7 @@ Planner 不是固定流程，而是用 LLM 根据当前状态动态生成 DAG，
 
 ---
 
-## 十、配置系统
+## 十一、配置系统
 
 主配置文件：`configs/agent.yaml`（约 314 行），核心部分：
 
@@ -388,7 +445,7 @@ Planner 不是固定流程，而是用 LLM 根据当前状态动态生成 DAG，
 
 ---
 
-## 十一、如何启动
+## 十二、如何启动
 
 ```bash
 # 后端
@@ -406,7 +463,7 @@ docker-compose up
 
 ---
 
-## 十二、技术栈
+## 十三、技术栈
 
 | 层 | 技术 |
 |----|------|
