@@ -1113,6 +1113,7 @@ def test_search_papers_merges_queries_and_uses_route_sources() -> None:
 
 
 def test_plan_research_uses_structured_keyword_queries() -> None:
+    """LLM 返回新 schema（含 domain_topic），字段被正确透传。"""
     registry = SkillRegistry.discover([BUILTINS_DIR])
     loaded = registry.get("plan_research")
 
@@ -1129,8 +1130,7 @@ def test_plan_research_uses_structured_keyword_queries() -> None:
             del messages, kwargs
             return json.dumps(
                 {
-                    "topic": "dynamic research agent systems",
-                    "brief": "Focus on architecture, coordination, and evaluation.",
+                    "domain_topic": "dynamic research agent systems",
                     "research_questions": [
                         "What architectures are used in dynamic research agent systems?",
                         "How are these systems evaluated?",
@@ -1145,6 +1145,9 @@ def test_plan_research_uses_structured_keyword_queries() -> None:
                         "dynamic research agent systems architecture": {"use_academic": True, "use_web": False},
                         "dynamic research agent systems evaluation": {"use_academic": True, "use_web": False},
                     },
+                    "format_requirements": [],
+                    "scope_constraints": [],
+                    "content_focus": [],
                 },
                 ensure_ascii=False,
             )
@@ -1171,7 +1174,63 @@ def test_plan_research_uses_structured_keyword_queries() -> None:
     ]
 
 
-def test_plan_research_fallback_does_not_reuse_instruction_sentence_as_query() -> None:
+def test_plan_research_separates_format_from_search_queries() -> None:
+    """LLM 将格式要求拆到 format_requirements，不混入 search_queries。"""
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("plan_research")
+
+    class FakeTools:
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return json.dumps(
+                {
+                    "domain_topic": "time series forecasting",
+                    "research_questions": [
+                        "What are the main methods for time series forecasting?",
+                    ],
+                    "search_queries": [
+                        "time series forecasting survey",
+                        "time series forecasting deep learning",
+                        "time series prediction methods",
+                    ],
+                    "query_routes": {},
+                    "format_requirements": ["带图表引用", "综述形式"],
+                    "scope_constraints": [],
+                    "content_focus": [],
+                },
+                ensure_ascii=False,
+            )
+
+    ctx = SkillContext(
+        skill_id="plan_research",
+        role_id="conductor",
+        run_id="run_plan_format_sep",
+        node_id="node_plan_format_sep_1",
+        goal="帮我写一篇带图表引用的时序预测综述",
+        input_artifacts=[],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    topic_brief = next(item for item in output.output_artifacts if item.artifact_type == "TopicBrief")
+    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
+    # 格式要求在 TopicBrief 中，不在搜索词中
+    assert topic_brief.payload["format_requirements"] == ["带图表引用", "综述形式"]
+    assert all("figure" not in q and "table" not in q for q in search_plan.payload["search_queries"])
+
+
+def test_plan_research_fallback_on_invalid_llm_output() -> None:
+    """LLM 返回非 JSON 时，fallback 仍能生成可用的 plan。"""
     registry = SkillRegistry.discover([BUILTINS_DIR])
     loaded = registry.get("plan_research")
 
@@ -1188,13 +1247,12 @@ def test_plan_research_fallback_does_not_reuse_instruction_sentence_as_query() -
             del messages, kwargs
             return "先定义研究目标，再生成最小研究闭环和搜索计划。"
 
-    goal = "为一个关于动态研究智能体系统的主题生成最小研究闭环。"
     ctx = SkillContext(
         skill_id="plan_research",
         role_id="conductor",
         run_id="run_plan_fallback",
         node_id="node_plan_fallback_1",
-        goal=goal,
+        goal="dynamic research agent systems",
         input_artifacts=[],
         tools=FakeTools(),
     )
@@ -1203,104 +1261,9 @@ def test_plan_research_fallback_does_not_reuse_instruction_sentence_as_query() -
 
     assert output.success is True
     search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
-    queries = list(search_plan.payload["search_queries"])
-    assert goal not in queries
-    assert all("最小研究闭环" not in query for query in queries)
-    assert any("动态研究智能体系统" in query for query in queries)
-
-
-def test_plan_research_reanchors_generic_queries_to_topic() -> None:
-    registry = SkillRegistry.discover([BUILTINS_DIR])
-    loaded = registry.get("plan_research")
-
-    class FakeTools:
-        def with_permissions(self, permissions):
-            del permissions
-            return self
-
-        def with_allowed_tools(self, allowed_tools):
-            del allowed_tools
-            return self
-
-        async def llm_chat(self, messages, **kwargs):
-            del messages, kwargs
-            return json.dumps(
-                {
-                    "topic": "动态研究智能体系统",
-                    "brief": "围绕主题生成检索查询。",
-                    "research_questions": ["动态研究智能体系统的方法与证据是什么？"],
-                    "search_queries": ["方法与证据是什么", "综述", "方法", "评测"],
-                    "query_routes": {},
-                },
-                ensure_ascii=False,
-            )
-
-    ctx = SkillContext(
-        skill_id="plan_research",
-        role_id="conductor",
-        run_id="run_plan_anchor_queries",
-        node_id="node_plan_anchor_queries_1",
-        goal="为一个关于动态研究智能体系统的主题生成最小研究闭环。",
-        input_artifacts=[],
-        tools=FakeTools(),
-    )
-
-    output = asyncio.run(loaded.runner(ctx))
-
-    assert output.success is True
-    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
-    assert search_plan.payload["search_queries"] == [
-        "动态研究智能体系统 方法与证据是什么",
-        "动态研究智能体系统 综述",
-        "动态研究智能体系统 方法",
-        "动态研究智能体系统 评测",
-    ]
-
-
-def test_plan_research_rejects_generic_topic_and_keeps_subject() -> None:
-    registry = SkillRegistry.discover([BUILTINS_DIR])
-    loaded = registry.get("plan_research")
-
-    class FakeTools:
-        def with_permissions(self, permissions):
-            del permissions
-            return self
-
-        def with_allowed_tools(self, allowed_tools):
-            del allowed_tools
-            return self
-
-        async def llm_chat(self, messages, **kwargs):
-            del messages, kwargs
-            return json.dumps(
-                {
-                    "topic": "方法与证据",
-                    "brief": "围绕主题生成检索查询。",
-                    "research_questions": ["动态研究智能体系统的方法与证据是什么？"],
-                    "search_queries": ["方法与证据是什么"],
-                    "query_routes": {},
-                },
-                ensure_ascii=False,
-            )
-
-    ctx = SkillContext(
-        skill_id="plan_research",
-        role_id="conductor",
-        run_id="run_plan_anchor_topic",
-        node_id="node_plan_anchor_topic_1",
-        goal="为一个关于动态研究智能体系统的主题生成最小研究闭环。",
-        input_artifacts=[],
-        tools=FakeTools(),
-    )
-
-    output = asyncio.run(loaded.runner(ctx))
-
-    assert output.success is True
-    topic_brief = next(item for item in output.output_artifacts if item.artifact_type == "TopicBrief")
-    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
-    assert topic_brief.payload["topic"] == "动态研究智能体系统"
-    assert search_plan.payload["topic"] == "动态研究智能体系统"
-    assert search_plan.payload["search_queries"][0] == "动态研究智能体系统 方法与证据是什么"
+    # fallback 应使用 goal 作为 topic 并生成基础搜索词
+    assert search_plan.payload["topic"] == "dynamic research agent systems"
+    assert len(search_plan.payload["search_queries"]) >= 2
 
 
 def test_build_evidence_map_derives_grounded_gaps() -> None:

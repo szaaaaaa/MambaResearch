@@ -8,22 +8,30 @@ from src.dynamic_os.contracts.route_plan import RoleId
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
 
 
+# ---------------------------------------------------------------------------
+# LLM 输出 schema
+# ---------------------------------------------------------------------------
+
 SEARCH_PLAN_SCHEMA = {
     "type": "object",
     "properties": {
-        "topic": {"type": "string"},
-        "brief": {"type": "string"},
+        "domain_topic": {
+            "type": "string",
+            "description": "The core research domain/subject extracted from user input. Must be a concise academic phrase, NOT a task instruction or format requirement.",
+        },
         "research_questions": {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
             "maxItems": 5,
+            "description": "Specific research questions to investigate about the domain topic.",
         },
         "search_queries": {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 2,
             "maxItems": 6,
+            "description": "English keyword-centric search strings for academic databases. Must contain ONLY domain terms, NO format/output requirements.",
         },
         "query_routes": {
             "type": "object",
@@ -37,174 +45,116 @@ SEARCH_PLAN_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "format_requirements": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Output format requests extracted from user input (e.g. 'include figures and tables', 'write in Chinese'). Empty array if none.",
+        },
+        "scope_constraints": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Scope/filtering constraints extracted from user input (e.g. 'last 3 years', 'focus on NLP'). Empty array if none.",
+        },
+        "content_focus": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Specific content emphasis requested by user (e.g. 'compare Transformer vs traditional methods'). Empty array if none.",
+        },
     },
-    "required": ["topic", "brief", "research_questions", "search_queries", "query_routes"],
+    "required": [
+        "domain_topic",
+        "research_questions",
+        "search_queries",
+        "query_routes",
+        "format_requirements",
+        "scope_constraints",
+        "content_focus",
+    ],
     "additionalProperties": False,
 }
 
-_EN_META_PHRASES = (
-    "please",
-    "help me",
-    "generate",
-    "create",
-    "write",
-    "draft",
-    "plan",
-    "report",
-    "research loop",
-    "research plan",
-    "minimum",
-    "topic",
-    "search for",
-    "find papers",
-    "analyze",
-    "analyse",
-    "summarize",
-    "summary",
-    "compare",
-    "review",
-)
-_ZH_META_PHRASES = (
-    "请",
-    "帮我",
-    "给我",
-    "生成",
-    "写",
-    "撰写",
-    "制定",
-    "规划",
-    "最小研究闭环",
-    "研究闭环",
-    "研究计划",
-    "主题",
-    "报告",
-    "分析",
-    "比较",
-    "评审",
-    "审稿",
-    "查找",
-    "检索",
-    "搜索",
-    "论文",
-)
-_ZH_FILLER_CHUNKS = {"为一个", "一个", "一份", "关于", "有关", "针对", "围绕", "主题"}
-_EN_STOPWORDS = {
-    "a",
-    "an",
-    "the",
-    "for",
-    "to",
-    "of",
-    "and",
-    "or",
-    "with",
-    "about",
-    "on",
-    "into",
-    "from",
-    "using",
-    "use",
-    "task",
-    "request",
-    "topic",
-    "report",
-    "plan",
-    "research",
-    "generate",
-    "write",
-    "draft",
-    "search",
-    "find",
-    "paper",
-    "papers",
-}
-_GENERIC_CJK_TOPICS = {
-    "方法",
-    "证据",
-    "方法与证据",
-    "综述",
-    "评测",
-    "评估",
-    "研究",
-    "主题",
-    "报告",
-}
-_GENERIC_EN_TOPICS = {
-    "methods",
-    "evidence",
-    "methods and evidence",
-    "survey",
-    "evaluation",
-    "research",
-    "topic",
-    "report",
-}
-_GENERIC_CJK_QUERY_MARKERS = (
-    "综述",
-    "方法",
-    "评测",
-    "评估",
-    "证据",
-    "问题",
-    "挑战",
-    "架构",
-    "方法与证据",
-    "是什么",
-    "有哪些",
-    "如何",
-)
-_GENERIC_EN_QUERY_MARKERS = (
-    "survey",
-    "methods",
-    "evaluation",
-    "evidence",
-    "challenges",
-    "architecture",
-    "what is",
-    "what are",
-    "how to",
+# ---------------------------------------------------------------------------
+# System prompt — 让 LLM 做语义拆分
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = (
+    "You are a research planning assistant. Your job is to decompose a user's research "
+    "request into structured components. Return JSON only.\n\n"
+    "The user input is a natural language request that may mix together:\n"
+    "1. **Domain topic** — the actual research subject (e.g. 'time series forecasting', 'graph neural networks')\n"
+    "2. **Format requirements** — how the output should look (e.g. '带图表引用' = include figure/table citations, '写一篇综述' = write a survey)\n"
+    "3. **Scope constraints** — filtering criteria (e.g. '最近三年' = last 3 years, 'focus on medical domain')\n"
+    "4. **Content focus** — specific angles or comparisons (e.g. '重点比较Transformer和传统方法' = compare Transformer vs traditional)\n"
+    "5. **Task instructions** — meta-commands like 'help me', 'please generate' — these should be DISCARDED\n\n"
+    "Rules:\n"
+    "- domain_topic: Extract ONLY the research subject. '一篇带图表引用的时序' → domain_topic is '时序分析与预测' (time series analysis and forecasting), NOT '带图表引用的时序'.\n"
+    "- search_queries: Must be in ENGLISH. Must contain ONLY domain-relevant academic keywords. "
+    "NEVER include format words like 'with figure', 'with table', 'citation', 'survey format', 'review paper' in search queries. "
+    "Generate 3-5 varied queries covering different aspects of the topic.\n"
+    "- format_requirements: Capture any output format requests. If the user says '带图表引用', record it here, not in search_queries.\n"
+    "- scope_constraints: Capture time ranges, domain restrictions, etc.\n"
+    "- content_focus: Capture specific angles, comparisons, or emphasis requested.\n"
+    "- query_routes: Use academic search by default. Enable web only for tools, code, products, or implementations.\n\n"
+    "Examples:\n"
+    "Input: '帮我写一篇带图表引用的时序预测综述'\n"
+    "→ domain_topic: '时序预测'\n"
+    "→ search_queries: ['time series forecasting survey', 'time series forecasting methods', 'deep learning time series prediction', 'time series forecasting benchmark evaluation']\n"
+    "→ format_requirements: ['带图表引用', '综述形式']\n\n"
+    "Input: 'survey on graph neural networks for drug discovery, last 3 years, compare GNN vs traditional ML'\n"
+    "→ domain_topic: 'graph neural networks for drug discovery'\n"
+    "→ search_queries: ['graph neural networks drug discovery', 'GNN molecular property prediction', 'deep learning drug design', 'graph-based virtual screening']\n"
+    "→ format_requirements: ['survey']\n"
+    "→ scope_constraints: ['last 3 years']\n"
+    "→ content_focus: ['compare GNN vs traditional ML']"
 )
 
+
+# ---------------------------------------------------------------------------
+# 技能入口
+# ---------------------------------------------------------------------------
 
 async def run(ctx: SkillContext) -> SkillOutput:
     goal = ctx.user_request or ctx.goal
     raw_plan = await ctx.tools.llm_chat(
         [
-            {
-                "role": "system",
-                "content": (
-                    "Return JSON only. Convert the goal into a research topic brief and a search plan. "
-                    "The topic must be a concise subject phrase, not a task instruction. "
-                    "search_queries must be keyword-centric search strings, not imperative requests. "
-                    "search_queries MUST be in English, even if the user's goal is in another language. "
-                    "Prefer 3 to 5 search queries. Use academic search by default and enable web only when the query is about tools, code, products, or implementations."
-                ),
-            },
+            {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": goal},
         ],
         temperature=0.2,
         response_format=SEARCH_PLAN_SCHEMA,
     )
     parsed = _parse_structured_plan(raw_plan)
-    topic = _derive_topic(goal=goal, parsed_topic=str(parsed.get("topic") or ""))
-    brief = _normalize_text(str(parsed.get("brief") or "")) or _fallback_brief(goal=goal, topic=topic)
-    research_questions = _normalize_questions(parsed.get("research_questions"), topic=topic, goal=goal)
-    search_queries = _normalize_search_queries(
-        parsed_queries=parsed.get("search_queries"),
-        topic=topic,
-        research_questions=research_questions,
-        goal=goal,
-    )
+
+    # 提取各槽位，做基本校验
+    topic = _normalize_text(str(parsed.get("domain_topic") or ""))
+    if not topic:
+        topic = _normalize_text(goal)
+    research_questions = _clean_string_list(parsed.get("research_questions"))
+    if not research_questions:
+        research_questions = [f"What are the core problems, methods, and evidence for {topic}?"]
+    search_queries = _clean_string_list(parsed.get("search_queries"))
+    if not search_queries:
+        search_queries = [topic, f"{topic} survey", f"{topic} methods"]
+
+    # 确保搜索词是英文
     if any(_contains_cjk(q) for q in search_queries):
         search_queries = await _translate_queries(ctx, search_queries)
+
     query_routes = _normalize_query_routes(parsed.get("query_routes"), search_queries)
+    format_requirements = _clean_string_list(parsed.get("format_requirements"))
+    scope_constraints = _clean_string_list(parsed.get("scope_constraints"))
+    content_focus = _clean_string_list(parsed.get("content_focus"))
 
     topic_brief = _artifact(
         ctx,
         "TopicBrief",
         {
             "topic": topic,
-            "brief": brief,
+            "brief": f"研究主题：{topic}",
+            "research_questions": research_questions,
+            "format_requirements": format_requirements,
+            "scope_constraints": scope_constraints,
+            "content_focus": content_focus,
         },
     )
     search_plan = _artifact(
@@ -215,7 +165,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
             "research_questions": research_questions,
             "search_queries": search_queries,
             "query_routes": query_routes,
-            "plan_text": brief,
+            "plan_text": f"研究主题：{topic}",
         },
     )
     return SkillOutput(
@@ -225,7 +175,12 @@ async def run(ctx: SkillContext) -> SkillOutput:
     )
 
 
+# ---------------------------------------------------------------------------
+# 工具函数（只保留必要的）
+# ---------------------------------------------------------------------------
+
 def _parse_structured_plan(raw_plan: str) -> dict:
+    """解析 LLM 返回的 JSON。"""
     text = str(raw_plan or "").strip()
     fenced_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
     if fenced_match:
@@ -237,89 +192,24 @@ def _parse_structured_plan(raw_plan: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _derive_topic(*, goal: str, parsed_topic: str) -> str:
-    goal_topic = _extract_topic_from_goal(goal)
-    for candidate in (parsed_topic, goal_topic, _keywordize_text(goal)):
-        normalized = _normalize_text(candidate)
-        if normalized and not _looks_like_instruction(normalized):
-            if _is_generic_topic(normalized) and goal_topic and normalized != goal_topic:
-                continue
-            return normalized
-    return _normalize_text(goal)
+def _clean_string_list(raw: object) -> list[str]:
+    """从 LLM 输出中提取非空字符串列表。"""
+    if not isinstance(raw, list):
+        return []
+    return [_normalize_text(str(item)) for item in raw if _normalize_text(str(item))]
 
 
-def _extract_topic_from_goal(goal: str) -> str:
-    text = _normalize_text(goal)
-    if not text:
-        return ""
-    for marker in ("关于", "有关", "针对", "围绕"):
-        if marker in text:
-            candidate = text.split(marker, 1)[1]
-            candidate = _trim_topic_tail(candidate)
-            candidate = _normalize_topic_candidate(candidate)
-            if candidate:
-                return candidate
-
-    english_patterns = (
-        r"(?:about|on|regarding)\s+(?P<topic>.+?)(?:\s+(?:for|with|to)\b|$)",
-    )
-    for pattern in english_patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            topic = _normalize_topic_candidate(match.group("topic"))
-            if topic:
-                return topic
-    return ""
+def _normalize_text(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    return normalized.strip(" \t\r\n\"'`.,;:!?()[]{}<>，。；：！？（）【】")
 
 
-def _normalize_questions(raw_questions: object, *, topic: str, goal: str) -> list[str]:
-    questions = [_normalize_text(str(item)) for item in list(raw_questions or []) if _normalize_text(str(item))]
-    deduped: list[str] = []
-    for question in questions:
-        if question not in deduped and not _looks_like_instruction(question):
-            deduped.append(question)
-    if deduped:
-        return deduped[:4]
-    return [_fallback_question(topic=topic, goal=goal)]
-
-
-def _normalize_search_queries(
-    *,
-    parsed_queries: object,
-    topic: str,
-    research_questions: list[str],
-    goal: str,
-) -> list[str]:
-    deduped: list[str] = []
-    for item in list(parsed_queries or []):
-        normalized = _normalize_query(str(item), topic=topic)
-        if normalized and normalized not in deduped:
-            deduped.append(normalized)
-    if not deduped:
-        fallback_queries = _fallback_queries(topic=topic, research_questions=research_questions, goal=goal)
-        for query in fallback_queries:
-            normalized = _normalize_query(query, topic=topic)
-            if normalized and normalized not in deduped:
-                deduped.append(normalized)
-    if not deduped:
-        deduped = [topic]
-    return _ensure_english_queries(deduped[:5], goal=goal)
-
-
-def _ensure_english_queries(queries: list[str], *, goal: str) -> list[str]:
-    if not any(_contains_cjk(q) for q in queries):
-        return queries
-    english_tokens = _extract_english_tokens(goal)
-    for q in queries:
-        english_tokens.extend(_extract_english_tokens(q))
-    english_tokens = list(dict.fromkeys(t for t in english_tokens if t not in _EN_STOPWORDS))
-    if not english_tokens:
-        return queries
-    base = " ".join(english_tokens[:6])
-    return [base, f"{base} survey", f"{base} methods", f"{base} recent advances", f"{base} evaluation"][:5]
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text))
 
 
 async def _translate_queries(ctx: SkillContext, queries: list[str]) -> list[str]:
+    """将含中文的搜索词翻译为英文学术关键词。"""
     joined = "\n".join(queries)
     translated = await ctx.tools.llm_chat(
         [
@@ -338,10 +228,6 @@ async def _translate_queries(ctx: SkillContext, queries: list[str]) -> list[str]
     return [line for line in lines if not _contains_cjk(line)][:5] or queries
 
 
-def _extract_english_tokens(text: str) -> list[str]:
-    return [t for t in re.findall(r"[A-Za-z][A-Za-z0-9\-]*(?:\s*[A-Za-z][A-Za-z0-9\-]*)*", text) if len(t) > 1]
-
-
 def _normalize_query_routes(raw_routes: object, queries: list[str]) -> dict[str, dict[str, bool]]:
     route_map = raw_routes if isinstance(raw_routes, dict) else {}
     normalized: dict[str, dict[str, bool]] = {}
@@ -351,164 +237,14 @@ def _normalize_query_routes(raw_routes: object, queries: list[str]) -> dict[str,
         use_web = bool(route.get("use_web", _query_prefers_web(query)))
         if not use_academic and not use_web:
             use_academic = True
-        normalized[query] = {
-            "use_academic": use_academic,
-            "use_web": use_web,
-        }
+        normalized[query] = {"use_academic": use_academic, "use_web": use_web}
     return normalized
-
-
-def _normalize_query(query: str, *, topic: str) -> str:
-    text = _normalize_text(query)
-    if not text:
-        return ""
-    if _looks_like_instruction(text):
-        text = _extract_topic_from_goal(text) or _keywordize_text(text)
-    text = _normalize_text(text)
-    if not text:
-        return ""
-    if topic and _query_needs_topic(text, topic):
-        text = f"{topic} {text}"
-    if not _contains_cjk(text) and len(text.split()) > 10:
-        text = topic
-    return text
-
-
-def _fallback_queries(*, topic: str, research_questions: list[str], goal: str) -> list[str]:
-    base = topic or _extract_topic_from_goal(goal) or _keywordize_text(goal) or _normalize_text(goal)
-    queries: list[str] = [base]
-    question_seed = _keywordize_text(research_questions[0]) if research_questions else ""
-    if question_seed and question_seed != base:
-        queries.append(question_seed)
-    if _contains_cjk(base):
-        queries.extend([f"{base} 综述", f"{base} 方法", f"{base} 评测"])
-    else:
-        queries.extend([f"{base} survey", f"{base} methods", f"{base} evaluation"])
-    deduped: list[str] = []
-    for query in queries:
-        normalized = _normalize_text(query)
-        if normalized and normalized not in deduped:
-            deduped.append(normalized)
-    return deduped
-
-
-def _fallback_question(*, topic: str, goal: str) -> str:
-    if _contains_cjk(topic or goal):
-        return f"{topic or _normalize_text(goal)}的核心问题、方法与证据是什么？"
-    return f"What are the core problems, methods, and evidence for {topic or _normalize_text(goal)}?"
-
-
-def _fallback_brief(*, goal: str, topic: str) -> str:
-    if _contains_cjk(topic or goal):
-        return f"研究主题：{topic}。目标是围绕该主题生成可执行的检索问题与关键词查询，而不是直接复述任务指令。"
-    return f"Research topic: {topic}. The goal is to derive executable search questions and keyword-oriented queries instead of reusing the task instruction verbatim."
-
-
-def _keywordize_text(text: str) -> str:
-    normalized = _normalize_text(text)
-    extracted_topic = _extract_topic_from_goal(normalized)
-    if extracted_topic:
-        return extracted_topic
-    lowered = normalized.lower()
-    for phrase in _EN_META_PHRASES:
-        lowered = lowered.replace(phrase, " ")
-    cleaned = lowered
-    for phrase in _ZH_META_PHRASES:
-        cleaned = cleaned.replace(phrase, " ")
-    cleaned = re.sub(r"[^\w\u4e00-\u9fff\-\+/ ]+", " ", cleaned)
-    english_tokens = [token for token in re.findall(r"[a-z0-9][a-z0-9_\-+/]*", cleaned) if token not in _EN_STOPWORDS]
-    cjk_chunks = [_normalize_topic_candidate(chunk) for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", cleaned)]
-    cjk_chunks = [chunk for chunk in cjk_chunks if chunk and chunk not in _ZH_FILLER_CHUNKS]
-    if cjk_chunks:
-        longest = max(cjk_chunks, key=len)
-        if longest:
-            return longest
-    return _normalize_text(" ".join(english_tokens[:8]))
-
-
-def _looks_like_instruction(text: str) -> bool:
-    lowered = text.lower()
-    if any(phrase in lowered for phrase in _EN_META_PHRASES):
-        return True
-    return any(phrase in text for phrase in _ZH_META_PHRASES)
-
-
-def _is_generic_topic(text: str) -> bool:
-    normalized = _normalize_text(text)
-    if not normalized:
-        return False
-    lowered = normalized.lower()
-    if lowered in _GENERIC_EN_TOPICS:
-        return True
-    return normalized in _GENERIC_CJK_TOPICS
-
-
-def _query_needs_topic(query: str, topic: str) -> bool:
-    normalized_query = _normalize_text(query)
-    normalized_topic = _normalize_text(topic)
-    if not normalized_query or not normalized_topic:
-        return False
-    lowered_query = normalized_query.lower()
-    lowered_topic = normalized_topic.lower()
-    if lowered_topic in lowered_query or normalized_topic in normalized_query:
-        return False
-    if _contains_cjk(normalized_query):
-        return len(normalized_query) <= 8 or any(marker in normalized_query for marker in _GENERIC_CJK_QUERY_MARKERS)
-    return len(normalized_query.split()) <= 4 or any(marker in lowered_query for marker in _GENERIC_EN_QUERY_MARKERS)
 
 
 def _query_prefers_web(query: str) -> bool:
     lowered = query.lower()
     web_markers = ("github", "repo", "repository", "implementation", "open source", "tool", "framework", "代码", "开源", "工具", "框架")
     return any(marker in lowered or marker in query for marker in web_markers)
-
-
-def _contains_cjk(text: str) -> bool:
-    return bool(re.search(r"[\u4e00-\u9fff]", text))
-
-
-def _normalize_text(text: str) -> str:
-    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
-    return normalized.strip(" \t\r\n\"'`.,;:!?()[]{}<>，。；：！？（）【】")
-
-
-def _trim_topic_tail(text: str) -> str:
-    candidate = str(text or "")
-    tail_markers = (
-        "的主题",
-        "主题",
-        "的研究",
-        "研究闭环",
-        "闭环",
-        "研究计划",
-        "报告",
-        "综述",
-        "生成",
-        "撰写",
-        "写",
-        "总结",
-        "分析",
-        "比较",
-        "评审",
-        "构建",
-        "设计",
-        "查找",
-        "检索",
-        "搜索",
-    )
-    cut_index = len(candidate)
-    for marker in tail_markers:
-        marker_index = candidate.find(marker)
-        if marker_index != -1:
-            cut_index = min(cut_index, marker_index)
-    return candidate[:cut_index]
-
-
-def _normalize_topic_candidate(text: str) -> str:
-    candidate = _normalize_text(text)
-    candidate = re.sub(r"^(?:为一个|为|一个|一份|关于|有关|针对|围绕)+", "", candidate)
-    candidate = re.sub(r"(?:的|相关|方面)+$", "", candidate)
-    return _normalize_text(candidate)
 
 
 def _artifact(ctx: SkillContext, artifact_type: str, payload: dict):
