@@ -433,6 +433,45 @@ sources.pdf_download:
 
 ---
 
+### 功能：多面板布局 Batch 2 — Sidebar toggle + compact 适配
+
+**时间**：2026-04-03
+
+**改动**：
+- Sidebar "运行/历史/技能"三按钮改为"历史/技能"两个 toggle 按钮，点已激活按钮关闭工具面板
+- HistoryTab/SkillsTab 加 `compact` prop：工具面板中隐藏大标题 header，去掉 `max-w-4xl` 宽度限制
+- SkillsTab compact 模式保留过滤器 tab，隐藏"技能管理"大标题
+
+---
+
+### 功能：多面板布局 Batch 3 — 折叠/展开按钮 + 持久化
+
+**时间**：2026-04-03
+
+**改动**：
+- 侧栏折叠后主面板左上角显示 `PanelLeft` 展开按钮
+- 工具面板关闭时主面板右上角显示 `PanelRight` 打开按钮
+- `useDefaultLayout` + localStorage 自动保存/恢复面板宽度
+
+---
+
+### 问题 19：布局持久化与面板状态不同步
+
+**发生时间**：2026-04-03
+
+**现象**：用户上次使用时打开了工具面板（30% 宽度），刷新页面后工具面板占 30% 宽度但内容为空白。
+
+**根因**：`useDefaultLayout` 从 localStorage 恢复了 tools=30% 的布局，但 `toolPanelTab` 的初始值是 `null`。面板有宽度但 `toolPanelOpen` 为 false，内容不渲染。布局持久化（localStorage）和 React 状态（useState 初始值）各自独立，没有同步机制。
+
+**解决**：
+- `App.tsx`：挂载时加 `useEffect`，如果 `toolPanelTab` 为 null 则强制 `toolsPanelRef.current?.collapse()`
+
+**教训**：
+- **持久化布局尺寸时，必须同时持久化关联的 UI 状态**——或者在挂载时把尺寸同步到状态
+- 这是问题 1（状态语义不一致）的 UI 版本：两个数据源（localStorage 的布局 vs useState 的 tab 状态）对同一个视觉状态有不同的理解
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律

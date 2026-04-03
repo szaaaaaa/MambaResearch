@@ -170,7 +170,7 @@ const SkillCard: React.FC<{
   );
 };
 
-export const SkillsTab: React.FC = () => {
+export const SkillsTab: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const [skills, setSkills] = React.useState<SkillInfo[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -234,14 +234,18 @@ export const SkillsTab: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
-        <div className="mx-auto w-full max-w-4xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">技能管理</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-            已注册技能
-            <span className="ml-3 text-base font-normal text-slate-400">{skills.length} 个</span>
-          </h2>
-          <div className="mt-4 flex gap-1 rounded-[var(--radius-md)] bg-slate-100 p-1">
+      <div className={`border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 ${compact ? 'py-3' : 'py-5'} backdrop-blur-xl sm:px-6`}>
+        <div className={`mx-auto w-full ${compact ? '' : 'max-w-4xl'}`}>
+          {!compact && (
+            <>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">技能管理</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                已注册技能
+                <span className="ml-3 text-base font-normal text-slate-400">{skills.length} 个</span>
+              </h2>
+            </>
+          )}
+          <div className={`${compact ? '' : 'mt-4'} flex gap-1 rounded-[var(--radius-md)] bg-slate-100 p-1`}>
             {(['all', 'builtin', 'user', 'evolved'] as const).map((f) => (
               <button
                 key={f}
@@ -263,8 +267,8 @@ export const SkillsTab: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-        <div className="mx-auto w-full max-w-4xl space-y-3">
+      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <div className={`mx-auto w-full ${compact ? '' : 'max-w-4xl'} space-y-3`}>
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <Cpu className="h-5 w-5 animate-spin text-slate-400" />

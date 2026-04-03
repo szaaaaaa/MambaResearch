@@ -1,5 +1,5 @@
 import React from 'react';
-import { Archive, Clock, Copy, Cpu, MessageSquarePlus, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
+import { Archive, Clock, Copy, Cpu, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Button } from './ui';
 import { runStatusLabel } from '../labels';
@@ -211,19 +211,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="mt-4 flex gap-2">
             <button
               type="button"
-              onClick={() => onTabChange('run')}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
-                activeTab === 'run'
-                  ? 'bg-slate-900 text-white'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              <MessageSquarePlus className="h-4 w-4" />
-              运行
-            </button>
-            <button
-              type="button"
-              onClick={() => onTabChange('history')}
+              onClick={() => onTabChange(activeTab === 'history' ? 'run' : 'history')}
               className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
                 activeTab === 'history'
                   ? 'bg-slate-900 text-white'
@@ -235,7 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => onTabChange('skills')}
+              onClick={() => onTabChange(activeTab === 'skills' ? 'run' : 'skills')}
               className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
                 activeTab === 'skills'
                   ? 'bg-slate-900 text-white'

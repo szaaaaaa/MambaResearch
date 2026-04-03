@@ -357,7 +357,7 @@ function RunDetailView({
   );
 }
 
-export const HistoryTab: React.FC = () => {
+export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const [runs, setRuns] = React.useState<HistoryRunSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -445,15 +445,17 @@ export const HistoryTab: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
-        <div className="mx-auto w-full max-w-4xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">动态研究操作系统</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">历史记录</h2>
+      {!compact && (
+        <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
+          <div className="mx-auto w-full max-w-4xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">动态研究操作系统</p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">历史记录</h2>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto px-4 pb-16 pt-8 sm:px-6">
-        <div className="mx-auto w-full max-w-4xl">
+      <div className="flex-1 overflow-y-auto px-4 pb-16 pt-4 sm:px-6">
+        <div className={`mx-auto w-full ${compact ? '' : 'max-w-4xl'}`}>
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <LoaderCircle className="h-6 w-6 animate-spin text-slate-400" />
