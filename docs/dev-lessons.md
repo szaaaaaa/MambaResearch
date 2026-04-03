@@ -405,6 +405,34 @@ sources.pdf_download:
 
 ---
 
+### 功能：多面板可拖拽布局（Batch 1）
+
+**时间**：2026-04-03
+
+**需求**：将单窗口 tab 切换布局改为多面板并行布局，支持同时查看对话和历史/技能。
+
+**方案**：使用 `react-resizable-panels` v4 实现三列可拖拽布局：
+- 侧栏面板（可折叠，12%-30%）
+- 主面板（对话/监控，始终可见，≥35%）
+- 工具面板（历史/技能，可折叠，20%-50%）
+
+**改动文件**：
+- `frontend/package.json`：新增 `react-resizable-panels@4.9.0`
+- `frontend/src/App.tsx`：用 `Group`/`Panel`/`Separator` 替换 flex 布局
+- `frontend/src/components/Sidebar.tsx`：移除固定宽度 `lg:w-[320px]`
+- `frontend/src/components/tabs/RunTab.tsx`、`HistoryTab.tsx`、`SkillsTab.tsx`：`min-h-screen` → `h-full overflow-hidden`
+
+**开发中发现的问题**：
+- `react-resizable-panels` v4 API 与 v2 不同：`PanelGroup` → `Group`，`PanelResizeHandle` → `Separator`，`direction` → `orientation`，`autoSaveId` 不存在，`PanelRef` → `PanelImperativeHandle`
+- 动态挂载/卸载 Panel 会导致 Group 布局跳动 → 改为始终挂载，用 `collapse()/expand()` 控制可见性
+- `onResize` 参数是 `PanelSize` 对象（`{asPercentage, inPixels}`），不是 number
+
+**教训**：
+- **第三方库 major 版本升级后，先读类型声明文件确认 API 变更，再写代码**
+- **可拖拽面板组件中不要动态增删 children**——始终挂载所有面板，用 collapse/expand 控制显隐
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -429,6 +457,7 @@ sources.pdf_download:
 | 2026-04-01 | 端到端实验闭环 | 通用注册表模板 + 技能管理 UI |
 | 2026-04-03 | 搜索词被格式要求污染 | 删除规则过滤，改用 LLM 语义拆分 |
 | 2026-04-03 | 付费期刊无法下载 | 机构访问代理（EZproxy + HTTP proxy） |
+| 2026-04-03 | 多工具并行查看需求 | 可拖拽多面板布局（react-resizable-panels） |
 
 ---
 

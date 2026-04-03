@@ -233,7 +233,7 @@ export const SkillsTab: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
         <div className="mx-auto w-full max-w-4xl">
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">技能管理</p>

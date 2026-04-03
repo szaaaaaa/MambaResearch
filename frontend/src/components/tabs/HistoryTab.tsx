@@ -251,7 +251,7 @@ function RunDetailView({
   const routePlan = normalizeRoutePlan(detail.route_plan);
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       {artifactDetail ? (
         <ArtifactDetailModal detail={artifactDetail} onClose={() => setArtifactDetail(null)} />
       ) : null}
@@ -422,14 +422,14 @@ export const HistoryTab: React.FC = () => {
   if (selectedRunId) {
     if (detailLoading) {
       return (
-        <div className="flex min-h-screen items-center justify-center">
+        <div className="flex h-full items-center justify-center">
           <LoaderCircle className="h-6 w-6 animate-spin text-slate-400" />
         </div>
       );
     }
     if (detailError) {
       return (
-        <div className="flex min-h-screen flex-col items-center justify-center px-4">
+        <div className="flex h-full flex-col overflow-hidden items-center justify-center px-4">
           <p className="rounded-2xl bg-rose-50 px-6 py-4 text-sm text-rose-600">{detailError}</p>
           <Button variant="secondary" className="mt-4" onClick={handleBack}>
             <ArrowLeft className="h-4 w-4" />
@@ -444,7 +444,7 @@ export const HistoryTab: React.FC = () => {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
         <div className="mx-auto w-full max-w-4xl">
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">动态研究操作系统</p>

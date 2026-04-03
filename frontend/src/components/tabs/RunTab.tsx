@@ -309,7 +309,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       {artifactDetail ? (
         <ArtifactDetailModal detail={artifactDetail} onClose={() => setArtifactDetail(null)} />
       ) : null}

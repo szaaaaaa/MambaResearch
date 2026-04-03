@@ -191,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-[#f3f4f6] lg:h-screen lg:w-[320px] lg:border-b-0 lg:border-r">
+      <aside className="flex h-full w-full shrink-0 flex-col bg-[#f3f4f6]">
         <div className="border-b border-slate-200 px-4 py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
