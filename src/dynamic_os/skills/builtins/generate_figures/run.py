@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 
+from src.common.config_utils import resolve_path
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.route_plan import RoleId
 from src.dynamic_os.contracts.skill_io import (
@@ -122,9 +124,11 @@ async def run(ctx: SkillContext) -> SkillOutput:
         for artifact in ctx.input_artifacts
     )
 
-    # 输出目录
-    output_dir = ctx.config.get("paths", {}).get("outputs_dir", "./data/outputs")
-    figure_dir = f"{output_dir}/{ctx.run_id}/figures"
+    # 输出目录（解析 ${project.data_dir} 等模板变量）
+    raw_output = ctx.config.get("paths", {}).get("outputs_dir", "outputs")
+    workspace = Path(ctx.config.get("workspace_root", "."))
+    output_dir = resolve_path(workspace, raw_output, ctx.config)
+    figure_dir = str(output_dir / ctx.run_id / "figures")
 
     # 调用 LLM 决定生成哪些图表
     raw_response = await ctx.tools.llm_chat(

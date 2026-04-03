@@ -279,6 +279,60 @@ sources.pdf_download:
 
 ---
 
+### 问题 14：PDF 报告图片不显示——config 路径模板变量未解析
+
+**发生时间**：2026-04-03
+
+**现象**：生成的 `research_report.pdf` 中，所有 Figure 只显示文件路径文字（如 `figures/fig_00_bar_chart.png`），图片没有嵌入。
+
+**根因**：`generate_figures/run.py` 从 `ctx.config["paths"]["outputs_dir"]` 读到的是未解析的模板字符串 `${project.data_dir}/outputs`。用这个字面量拼接出的目录路径在文件系统中不存在，导致图片实际上没有写入 `run_dir/figures/`。`_compile_latex_report` 编译时静默跳过缺失图片（`except Exception: pass`）。
+
+**解决**：
+- `generate_figures/run.py`：引入 `resolve_path()` 解析模板变量后再拼接 figure 输出路径
+- 从 `ctx.config["workspace_root"]`（runtime 已设置的已解析路径）作为基准路径
+
+**教训**：
+- **config 中带 `${}` 模板变量的值不能直接当路径用，必须经过 `resolve_path()` 解析**
+- runtime 层解析了路径但没有回写到 config dict，导致下游技能拿到的是原始模板字符串
+- 遇到「文件应该存在但不存在」的问题时，先检查路径是否被正确解析
+
+---
+
+### 问题 15：PDF 报告表格溢出页面
+
+**发生时间**：2026-04-03
+
+**现象**：PDF 中 Table 1 右侧内容被截断，长文本列超出页面边界。
+
+**根因**：`draft_report/run.py` 的 prompt 没有约束表格格式，LLM 生成的 LaTeX 使用 `\begin{tabular}{lllll}`，`l` 列不自动换行。
+
+**解决**：
+- `draft_report/run.py`：preamble 新增 `\usepackage{tabularx}`
+- prompt 中新增表格格式规则：长文本列必须用 `tabularx` + `X` 列类型
+
+**教训**：
+- **LLM 生成的 LaTeX 表格默认不会考虑页面宽度，必须在 prompt 中明确约束**
+- 对 LLM 输出格式有硬性要求时，要在 system prompt 中用具体示例说明，不能靠隐含假设
+
+---
+
+### 问题 16：无文献时 PDF 仍输出空 bibliography 段
+
+**发生时间**：2026-04-03
+
+**现象**：检索结果为零的报告中，文末仍有 `\bibliography{references}` 但无对应 `.bib` 文件，导致引用区域为空。
+
+**根因**：`draft_report/run.py` 的 prompt 无条件要求输出 `\bibliography{references}`，而 `runtime.py` 只在 bib 内容非空时才写 `.bib` 文件。两者对「无引用」场景的处理不一致。
+
+**解决**：
+- `draft_report/run.py`：prompt 中新增规则——无 cite key 时不输出 `\bibliographystyle{}` 和 `\bibliography{}`
+
+**教训**：
+- **生成端和编译端对边界条件的处理必须一致**——这是问题 2「生成端和验证端概念定义统一」的又一个实例
+- LLM prompt 中要覆盖「无数据」的降级路径，不能只写正常流程
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -304,5 +358,5 @@ sources.pdf_download:
 
 ---
 
-*最后更新：2026-04-02*
+*最后更新：2026-04-03*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*

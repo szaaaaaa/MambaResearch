@@ -35,7 +35,8 @@ _SURVEY_PREAMBLE = (
     "\\usepackage{hyperref}\n"
     "\\usepackage{booktabs}\n"
     "\\usepackage{amsmath}\n"
-    "\\usepackage{graphicx}\n\n"
+    "\\usepackage{graphicx}\n"
+    "\\usepackage{tabularx}\n\n"
 )
 
 _SURVEY_STRUCTURE = (
@@ -99,8 +100,15 @@ _SURVEY_REQUIREMENTS = (
     "Citations will render as numbered references like [1], [2, 3], etc.\n"
     "- EVERY paper listed in the available cite keys MUST be cited at least once using \\cite{}. Do not skip any.\n"
     "- Do NOT include \\begin{thebibliography}. Use \\bibliography{references} instead.\n"
+    "- If NO cite keys are available (empty or absent cite key list), do NOT include "
+    "\\bibliographystyle{} or \\bibliography{} at all — just end with \\end{document}.\n"
     "- Be thorough and detailed. Each section should have substantive content.\n"
     "- Ensure the LaTeX compiles without errors.\n\n"
+    "Table formatting (CRITICAL):\n"
+    "- For tables with text columns, use tabularx with {\\textwidth} width and X column type "
+    "for long-text columns so they auto-wrap. Example: \\begin{tabularx}{\\textwidth}{lllX}\n"
+    "- NEVER use plain {lllll} for tables where any column may contain long text — it will overflow the page.\n"
+    "- Always use booktabs rules (\\toprule, \\midrule, \\bottomrule).\n\n"
     "Writing style (CRITICAL):\n"
     "- Write in continuous, flowing academic prose. NEVER use bullet points (\\begin{itemize}), numbered lists (\\begin{enumerate}), or dash-prefixed lists.\n"
     "- Each paragraph should be a coherent block of text with topic sentences, supporting evidence, and transitions.\n"
