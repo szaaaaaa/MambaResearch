@@ -376,6 +376,35 @@ sources.pdf_download:
 
 ---
 
+## 阶段五：论文质量与访问扩展 (2026-04-03 ~)
+
+### 功能：机构访问代理（EZproxy / HTTP 代理）
+
+**时间**：2026-04-03
+
+**需求**：用户希望下载 IEEE、ACM、Elsevier 等付费期刊论文，这些平台需要学校机构认证。
+
+**方案**：在设置页增加"机构访问"配置区，支持两种代理方式：
+- **EZproxy URL 改写**：用户填学校 EZproxy 地址，系统自动将 `ieeexplore.ieee.org/doc/123` 改写为 `ieeexplore-ieee-org.ezproxy.xxx.edu/doc/123`
+- **HTTP/SOCKS 代理**：用户填代理地址，`requests.get` 通过 `proxies` 参数转发
+
+**改动文件**：
+- `configs/agent.yaml`：新增 `institutional_access` 配置段
+- `frontend/src/types.ts` + `store.tsx`：类型定义和默认值
+- `frontend/src/components/settings/sections/ToolsSection.tsx`：机构访问 UI 区块
+- `src/ingest/fetchers.py`：`download_pdf` 支持 proxy/EZproxy 参数 + URL 改写函数
+- `src/dynamic_os/tools/backends.py`：从 config 读取 `institutional_access` 传入
+
+**开发中发现的问题**：
+- EZproxy URL 改写不应对免费站点（arXiv 等）生效，否则可能被拒绝 → 加了 `_FREE_ACCESS_HOSTS` 白名单跳过
+- `urlparse` 对无 scheme URL 返回 `hostname=None` 会导致崩溃 → 加了 None 检查
+
+**教训**：
+- **代理/改写功能必须区分"需要代理的站点"和"不需要的站点"**——全量改写会破坏本来能用的免费访问
+- 处理 URL 时永远要防御 `urlparse` 返回 None 的情况
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -399,6 +428,7 @@ sources.pdf_download:
 | 2026-03-28 | 技能进化系统 | 技能自动创建/优化 + 跨 run 记忆 |
 | 2026-04-01 | 端到端实验闭环 | 通用注册表模板 + 技能管理 UI |
 | 2026-04-03 | 搜索词被格式要求污染 | 删除规则过滤，改用 LLM 语义拆分 |
+| 2026-04-03 | 付费期刊无法下载 | 机构访问代理（EZproxy + HTTP proxy） |
 
 ---
 

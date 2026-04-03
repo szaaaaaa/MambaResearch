@@ -202,6 +202,18 @@ const defaultProjectConfig: ProjectConfig = {
     download_pdf: true,
     polite_delay_sec: 1,
   },
+  institutional_access: {
+    enabled: false,
+    proxy_url: '',
+    ezproxy_base: '',
+    extra_hosts: [
+      'ieeexplore.ieee.org',
+      'dl.acm.org',
+      'sciencedirect.com',
+      'link.springer.com',
+      'onlinelibrary.wiley.com',
+    ],
+  },
   project: { data_dir: './data' },
   paths: {
     papers_dir: '${project.data_dir}/papers',

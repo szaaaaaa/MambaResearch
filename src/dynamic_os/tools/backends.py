@@ -1379,12 +1379,15 @@ class ConfiguredToolBackend:
         from src.ingest.fetchers import download_pdf
         from src.ingest.pdf_loader import load_pdf_text
 
+        ia = self._config.get("institutional_access") or {}
         loaded = load_pdf_text(
             download_pdf(
                 pdf_url,
                 str(papers_dir(self._root, self._config)),
                 paper_id or "paper",
                 polite_delay_sec=fetch_delay(self._config),
+                proxy_url=str(ia.get("proxy_url") or "") if ia.get("enabled") else "",
+                ezproxy_base=str(ia.get("ezproxy_base") or "") if ia.get("enabled") else "",
             ),
             max_pages=8,
             backend="pymupdf",

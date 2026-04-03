@@ -98,11 +98,80 @@ def uid_to_filename(uid:str) -> str:
     safe = uid.replace(":","_").replace("/","_")
     return f"{safe}.pdf"
 
-def download_pdf(pdf_url: str, papers_dir: str, uid: str, polite_delay_sec: float = 1.0) -> str:
+_FREE_ACCESS_HOSTS = {
+    "arxiv.org", "export.arxiv.org",
+    "openreview.net",
+    "openaccess.thecvf.com",
+    "aclanthology.org",
+    "proceedings.mlr.press",
+    "jmlr.org",
+    "ceur-ws.org",
+    "papers.nips.cc", "neurips.cc",
+    "biorxiv.org", "medrxiv.org",
+}
+
+
+def _rewrite_ezproxy_url(url: str, ezproxy_base: str) -> str:
+    """将付费站点的 URL 改写为 EZproxy 格式。
+
+    标准 EZproxy 改写规则：
+    https://ieeexplore.ieee.org/doc/123
+    → https://ieeexplore-ieee-org.ezproxy.myuni.edu/doc/123
+
+    免费站点（arXiv 等）不改写，直接返回原 URL。
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return url
+    if any(parsed.hostname.endswith(h) for h in _FREE_ACCESS_HOSTS):
+        return url
+    rewritten_host = parsed.hostname.replace(".", "-")
+    ezproxy_parsed = urlparse(ezproxy_base)
+    ezproxy_host = ezproxy_parsed.hostname or ezproxy_parsed.path.strip("/")
+    if not ezproxy_host:
+        return url
+    new_host = f"{rewritten_host}.{ezproxy_host}"
+    return url.replace(parsed.hostname, new_host, 1)
+
+
+def download_pdf(
+    pdf_url: str,
+    papers_dir: str,
+    uid: str,
+    polite_delay_sec: float = 1.0,
+    proxy_url: str = "",
+    ezproxy_base: str = "",
+) -> str:
+    """下载 PDF 文件到本地。
+
+    参数
+    ----------
+    pdf_url : str
+        PDF 下载链接。
+    papers_dir : str
+        本地保存目录。
+    uid : str
+        论文唯一标识，用于生成文件名。
+    polite_delay_sec : float
+        下载后礼貌延迟（秒）。
+    proxy_url : str
+        HTTP/SOCKS 代理地址，如 http://proxy.myuni.edu:8080。
+    ezproxy_base : str
+        EZproxy 基础 URL，如 https://ezproxy.myuni.edu。
+    """
     Path(papers_dir).mkdir(parents=True, exist_ok=True)
     out_path = Path(papers_dir) / uid_to_filename(uid)
 
-    r = requests.get(pdf_url, timeout=60, headers={"User-Agent": "auto-research-agent/0.1"})
+    url = pdf_url
+    if ezproxy_base:
+        url = _rewrite_ezproxy_url(pdf_url, ezproxy_base)
+
+    proxies = None
+    if proxy_url:
+        proxies = {"http": proxy_url, "https": proxy_url}
+
+    r = requests.get(url, timeout=60, headers={"User-Agent": "auto-research-agent/0.1"}, proxies=proxies)
     r.raise_for_status()
     out_path.write_bytes(r.content)
 

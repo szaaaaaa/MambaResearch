@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppContext } from '../../../store';
-import { Button, Card, Select, Toggle } from '../../ui';
+import { Button, Card, Input, Select, Toggle } from '../../ui';
 
 export const ToolsSection: React.FC = () => {
   const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
@@ -150,6 +150,52 @@ export const ToolsSection: React.FC = () => {
         <div className="mt-5 flex justify-end">
           <Button onClick={() => void saveProjectConfig()}>保存工具设置</Button>
         </div>
+      </Card>
+
+      <Card title="机构访问" description="配置学校代理以下载付费期刊论文（IEEE、ACM、Elsevier 等）。">
+        <div className="grid gap-5 md:grid-cols-2">
+          <Toggle
+            label="启用机构访问"
+            description="开启后，下载付费论文时将通过学校代理获取全文。"
+            checked={projectConfig.institutional_access?.enabled ?? false}
+            onChange={(checked) => updateProjectConfig('institutional_access.enabled', checked)}
+          />
+        </div>
+        {projectConfig.institutional_access?.enabled && (
+          <div className="mt-4 grid gap-5 md:grid-cols-2">
+            <Input
+              label="EZproxy 地址"
+              description="学校 EZproxy 基础 URL，如 https://ezproxy.myuniversity.edu"
+              placeholder="https://ezproxy.myuniversity.edu"
+              value={projectConfig.institutional_access?.ezproxy_base ?? ''}
+              onChange={(event) => updateProjectConfig('institutional_access.ezproxy_base', event.target.value)}
+            />
+            <Input
+              label="HTTP/SOCKS 代理"
+              description="学校提供的代理服务器地址，如 http://proxy.myuni.edu:8080"
+              placeholder="http://proxy.myuni.edu:8080"
+              value={projectConfig.institutional_access?.proxy_url ?? ''}
+              onChange={(event) => updateProjectConfig('institutional_access.proxy_url', event.target.value)}
+            />
+          </div>
+        )}
+        <div className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
+          <p className="font-medium">使用说明</p>
+          <p className="mt-1">
+            <strong>EZproxy</strong>（推荐）：大多数高校图书馆提供，填入地址后系统自动改写下载链接通过学校认证。
+          </p>
+          <p className="mt-1">
+            <strong>HTTP 代理</strong>：部分学校提供代理服务器，填入后所有 PDF 下载请求将通过该代理转发。
+          </p>
+          <p className="mt-1">
+            <strong>VPN 用户</strong>：如果已通过学校 VPN 联网，无需配置此项，直接关闭即可。
+          </p>
+        </div>
+        {projectConfig.institutional_access?.enabled && (
+          <div className="mt-4 flex justify-end">
+            <Button onClick={() => void saveProjectConfig()}>保存机构访问设置</Button>
+          </div>
+        )}
       </Card>
     </div>
   );

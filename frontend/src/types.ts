@@ -186,6 +186,12 @@ export interface ProjectConfig {
     download_pdf: boolean;
     polite_delay_sec: number;
   };
+  institutional_access: {
+    enabled: boolean;
+    proxy_url: string;
+    ezproxy_base: string;
+    extra_hosts: string[];
+  };
   project: { data_dir: string };
   paths: { papers_dir: string; metadata_dir: string; indexes_dir: string; outputs_dir: string };
   metadata_store: { backend: string; sqlite_path: string };
