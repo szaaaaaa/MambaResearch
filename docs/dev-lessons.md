@@ -356,6 +356,26 @@ sources.pdf_download:
 
 ---
 
+### 问题 18：检索层和路由层残留的硬编码语义词表
+
+**发生时间**：2026-04-03
+
+**现象**：问题 17 修复后全局排查发现，`retrieval/common.py` 的 `detect_query_intent()` 和 `plan_research/run.py` 的 `_query_prefers_web()` 仍使用硬编码词表做语义判断。
+
+**根因**：
+- `detect_query_intent()`：用 `_VISUAL_INTENT_TERMS`（figure/diagram/图表等 28 个词）和 `_FORMULA_INTENT_TERMS`（equation/proof/公式等 14 个词）判断查询意图，决定检索后处理是否 boost 图表/公式类 chunk。问题 17 修复后搜索词不再包含格式词，这个函数实际上变成了死代码。
+- `_query_prefers_web()`：用 12 个硬编码词（github/repo/framework/开源等）判断查询是否应走 web 路由。LLM 的 `query_routes` 输出已覆盖此功能。
+
+**解决**：
+- `retrieval/common.py`：删除 `_VISUAL_INTENT_TERMS`、`_FORMULA_INTENT_TERMS` 词表，`detect_query_intent()` 保留签名但始终返回 `"general"`（兼容外部导入）
+- `plan_research/run.py`：删除 `_query_prefers_web()` 函数，路由 fallback 默认 academic
+
+**教训**：
+- **清除一个反模式时要全局排查同类代码**——问题 17 只改了 `plan_research`，同类问题在检索层和路由层还有残留
+- 当上游已经通过 LLM 做了语义拆分，下游不应该再用规则重新猜测同一个语义
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律

@@ -229,22 +229,17 @@ async def _translate_queries(ctx: SkillContext, queries: list[str]) -> list[str]
 
 
 def _normalize_query_routes(raw_routes: object, queries: list[str]) -> dict[str, dict[str, bool]]:
+    """从 LLM 输出中提取路由决策，缺失时默认 academic。"""
     route_map = raw_routes if isinstance(raw_routes, dict) else {}
     normalized: dict[str, dict[str, bool]] = {}
     for query in queries:
         route = route_map.get(query) if isinstance(route_map.get(query), dict) else {}
         use_academic = bool(route.get("use_academic", True))
-        use_web = bool(route.get("use_web", _query_prefers_web(query)))
+        use_web = bool(route.get("use_web", False))
         if not use_academic and not use_web:
             use_academic = True
         normalized[query] = {"use_academic": use_academic, "use_web": use_web}
     return normalized
-
-
-def _query_prefers_web(query: str) -> bool:
-    lowered = query.lower()
-    web_markers = ("github", "repo", "repository", "implementation", "open source", "tool", "framework", "代码", "开源", "工具", "框架")
-    return any(marker in lowered or marker in query for marker in web_markers)
 
 
 def _artifact(ctx: SkillContext, artifact_type: str, payload: dict):

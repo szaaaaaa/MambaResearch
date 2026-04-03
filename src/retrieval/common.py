@@ -5,28 +5,16 @@ from typing import Any, Dict, List
 
 from src.retrieval.reranker_backends import rerank_hits as rerank_hits_with_backend
 
-_VISUAL_INTENT_TERMS = {
-    "figure", "fig", "diagram", "architecture", "plot", "chart",
-    "table", "visualization", "illustration", "schematic", "overview",
-    "flowchart", "pipeline", "framework",
-    "图", "图表", "架构", "流程图", "示意图", "可视化",
-}
-_FORMULA_INTENT_TERMS = {
-    "equation", "formula", "derive", "derivation", "proof",
-    "theorem", "lemma", "corollary", "mathematical",
-    "公式", "推导", "证明", "定理", "引理",
-}
 _VISUAL_FIGURE_BONUS = 0.003
 _FORMULA_MATH_BONUS = 0.002
 
 
 def detect_query_intent(query: str) -> str:
-    q_lower = str(query or "").lower()
-    tokens = set(re.findall(r"[a-zA-Z\u4e00-\u9fff]+", q_lower))
-    if (tokens & _VISUAL_INTENT_TERMS) or any(term in q_lower for term in _VISUAL_INTENT_TERMS if any("\u4e00" <= ch <= "\u9fff" for ch in term)):
-        return "visual"
-    if (tokens & _FORMULA_INTENT_TERMS) or any(term in q_lower for term in _FORMULA_INTENT_TERMS if any("\u4e00" <= ch <= "\u9fff" for ch in term)):
-        return "formula"
+    """已弃用 —— 意图判断由上游 plan_research 的 LLM 语义拆分完成。
+
+    保留函数签名以兼容外部导入，始终返回 "general"。
+    """
+    del query
     return "general"
 
 
