@@ -1056,7 +1056,8 @@ def test_search_papers_produces_empty_sourceset_with_warnings() -> None:
 
     output = asyncio.run(search_papers_run(ctx))
 
-    assert output.success is True
+    assert output.success is False
+    assert output.error == "search returned 0 results for 1 queries"
     assert output.output_artifacts[0].artifact_id == "node_search_1_source_set"
     assert output.output_artifacts[0].payload["result_count"] == 0
     assert output.output_artifacts[0].payload["warnings"] == [

@@ -472,6 +472,27 @@ sources.pdf_download:
 
 ---
 
+### 问题 20：搜索零结果时系统不回退，写出无引用废报告
+
+**发生时间**：2026-04-04
+
+**现象**：`search_papers` 返回 0 篇论文后，系统继续执行整个下游链路（evidence map → trends → figures → report），最终输出一篇"关于检索失败的元分析"。消耗了所有下游节点的 LLM token，产出没有价值。
+
+**根因**：`search_papers/run.py` 即使零结果也返回 `success=True`（只要 SourceSet 类型存在）。`node_runner._build_output_observation` 只检查 artifact 类型是否齐全，不检查内容是否有效。planner 收不到 replan 信号，继续往下走。
+
+**解决**：
+- `search_papers/run.py`：零结果时返回 `success=False` + 错误信息 `"search returned 0 results for N queries"`
+- 仍然输出空 SourceSet artifact（下游可查看搜索词和 warning）
+- planner 收到 `needs_replan` 信号后用不同查询重新搜索
+- 更新对应测试用例
+
+**教训**：
+- **技能的 success 应反映"是否完成了下游需要的职责"，而非"是否执行了代码"**
+- 返回空结果 + success=True 会让整个系统在无效数据上空转
+- 这是问题 10（评审不影响流程）的变种：关键信号（零结果）没有接入控制流
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -500,5 +521,5 @@ sources.pdf_download:
 
 ---
 
-*最后更新：2026-04-03*
+*最后更新：2026-04-04*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*

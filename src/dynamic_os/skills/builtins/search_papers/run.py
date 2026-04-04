@@ -46,6 +46,13 @@ async def run(ctx: SkillContext) -> SkillOutput:
             "warnings": warnings,
         },
     )
+    if not results:
+        return SkillOutput(
+            success=False,
+            output_artifacts=[artifact],
+            error=f"search returned 0 results for {len(resolved_queries)} queries",
+            metadata={"result_count": 0, "warning_count": len(warnings)},
+        )
     return SkillOutput(
         success=True,
         output_artifacts=[artifact],
