@@ -493,6 +493,104 @@ sources.pdf_download:
 
 ---
 
+### 问题 21：paper_search MCP 服务器启动失败（静默跳过导致搜索全空）
+
+**发生时间**：2026-04-05
+
+**现象**：生成的 PDF 报告搜索返回 0 结果，没有引用和 reference，文章内容是一篇"关于没有数据的元分析"。
+
+**根因**：三层故障叠加：
+1. `configs/agent.yaml` 中 `paper_search` 服务器用 `uvx paper-search-mcp` 启动，但该包 0.1.3 版本没有注册可执行入口点，`uvx` 报 "Package does not provide any executables"
+2. `paper_search` 被 runtime 标记为 optional 服务器（`discovery.py` 第 695 行），启动失败时静默跳过，不报错
+3. 内部搜索服务器的 `search_sources` 方法遇到 `source="academic"` 时直接返回空（第 1152 行），不会调用已有的 `search_semantic_scholar` 函数
+
+**解决**：
+- `configs/agent.yaml`：改用 `${python} -m paper_search_mcp.server` 启动
+- 后续升级到 0.1.4（从 GitHub 安装），支持 22 个搜索源
+
+**教训**：
+- **optional 服务器的静默失败必须有日志或 warning 上报机制，否则整个功能链路无声断裂**
+- 可选组件的"优雅降级"不等于"静默忽略"——至少要在 events.log 里留一条 warning
+
+---
+
+### 问题 22：MCP 消息帧协议不兼容（Content-Length vs 换行分隔）
+
+**发生时间**：2026-04-05
+
+**现象**：`paper_search` MCP 服务器能手动启动，但 runtime 中握手失败。
+
+**根因**：项目内部 MCP 服务器（`dynamic_os_mcp_server.py`）使用 Content-Length 头协议（类 LSP），但 `paper_search_mcp`（基于 MCP SDK 1.27 的 `FastMCP`）使用换行分隔 JSON 协议。`_StdioMcpSession._request_sync` 发送 `Content-Length: N\r\n\r\n{json}`，服务器尝试将 "Content-Length: ..." 解析为 JSON 失败。
+
+**解决**：
+- `discovery.py` 的 `_StdioMcpSession` 添加协议自动探测：首次握手时发送 Content-Length 格式，读取首字节判断协议
+- 如果首字节是 `{`（JSON 开头）→ 换行协议，杀掉进程后用换行协议重新启动握手
+- 如果首字节是 `C`（Content-Length 头）→ 继续正常读取
+- 后续通信根据 `_use_newline_protocol` 标志自动选择格式
+
+**教训**：
+- **对接外部 MCP 服务器时不能假设它用同一种 stdio 传输协议——MCP 规范允许多种 framing**
+- 协议探测应在握手阶段一次完成，不需要运行时反复判断
+
+---
+
+### 问题 23：matplotlib 图表中文字符显示为方块（□□□□）
+
+**发生时间**：2026-04-05
+
+**现象**：PDF 报告中的图表标题、坐标轴标签、图例中的中文全部显示为 □□□□（tofu）。
+
+**根因**：`generate_figures/renderers.py` 的 `_ensure_mpl()` 只设置了 `mpl.use("Agg")` 后端，没有配置 CJK 字体。matplotlib 默认使用 DejaVu Sans，不包含中文字形。
+
+**解决**：
+- `renderers.py` 的 `_ensure_mpl()` 中通过 `matplotlib.font_manager` 检测系统可用的 CJK 字体
+- 按优先级尝试：Microsoft YaHei → SimHei → PingFang SC → Noto Sans CJK SC → WenQuanYi Micro Hei
+- 设置 `mpl.rcParams["axes.unicode_minus"] = False` 修复负号显示
+
+**教训**：
+- **生成可视化内容时，必须显式配置字体——不能依赖系统默认字体支持目标语言**
+
+---
+
+### 问题 24：SearchGateway 逐个调用 22 个搜索工具导致 43 秒延迟
+
+**发生时间**：2026-04-05
+
+**现象**：升级到 `paper_search_mcp` 0.1.4 后，搜索从 0 结果变为有结果，但耗时 43 秒。
+
+**根因**：`SearchGateway.search()` 遍历所有注册的 search capability 工具并逐个调用。0.1.4 版本有 22 个 `search_*` 工具，全部顺序执行。同时 `search_papers`（统一聚合工具）也在列表中，它内部会再次调用所有源，导致重复搜索。
+
+**解决**：
+- `search.py`：改为只调用 `search_papers` 统一工具（它内部用 `asyncio.gather` 并行调用所有源）
+- 不再逐个调用单独的 `search_arxiv`、`search_pubmed` 等工具
+- 耗时从 43s 降到 ~15s
+
+**教训**：
+- **外部 MCP 如果提供了统一聚合入口，优先用它而非自己逐个调用——它通常有内部并行和去重逻辑**
+- 注册 22 个工具不代表需要调用 22 次
+
+---
+
+### 问题 25：CS 主题搜索返回不相关的生物/医学论文
+
+**发生时间**：2026-04-05
+
+**现象**：搜索 "time series forecasting" 返回的 10 个结果中包含 bioRxiv 的 "Sonic Hedgehog response dynamics" 和 medRxiv 的 "carbapenem-resistant Klebsiella pneumoniae" 等完全不相关的生物/医学论文。
+
+**根因**：`search_papers` 统一工具默认调用所有 22 个源（`sources="all"`），不区分主题领域。bioRxiv/medRxiv 是生物/医学预印本服务器，对 CS 查询只会返回噪声。
+
+**解决**：
+- `plan_research/run.py`：在 LLM schema 中新增 `recommended_sources` 字段，让 LLM 根据主题选择 3-6 个匹配的搜索源
+- `search_papers/run.py`：从 SearchPlan 中读取 `recommended_sources` 并传给 gateway
+- `gateway/search.py` 和 `gateway/__init__.py`：新增 `academic_sources` 参数，传给 `search_papers` 工具的 `sources` 参数
+- CS/AI/ML 主题 → `arxiv, semantic, dblp, openalex, crossref`；生物医学 → `pubmed, biorxiv, medrxiv, pmc, europepmc`
+
+**教训**：
+- **多源搜索系统必须有源选择机制——LLM 判断主题适合哪些源，而非盲目调用全部**
+- 这是问题 17（格式要求污染搜索词）的同类问题：搜索参数缺乏语义判断
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -518,8 +616,9 @@ sources.pdf_download:
 | 2026-04-03 | 搜索词被格式要求污染 | 删除规则过滤，改用 LLM 语义拆分 |
 | 2026-04-03 | 付费期刊无法下载 | 机构访问代理（EZproxy + HTTP proxy） |
 | 2026-04-03 | 多工具并行查看需求 | 可拖拽多面板布局（react-resizable-panels） |
+| 2026-04-05 | paper_search MCP 全链路故障 | 协议自动探测 + 统一工具调用 + LLM 源选择 |
 
 ---
 
-*最后更新：2026-04-04*
+*最后更新：2026-04-06*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*

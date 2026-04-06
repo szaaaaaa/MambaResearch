@@ -60,6 +60,22 @@ SEARCH_PLAN_SCHEMA = {
             "items": {"type": "string"},
             "description": "Specific content emphasis requested by user (e.g. 'compare Transformer vs traditional methods'). Empty array if none.",
         },
+        "recommended_sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Which academic search sources are relevant for this topic. "
+                "Pick from: arxiv, semantic, openalex, crossref, dblp, pubmed, "
+                "biorxiv, medrxiv, pmc, europepmc, google_scholar, core, "
+                "openaire, doaj, base, zenodo, hal, ssrn, iacr, citeseerx. "
+                "Select 3-6 sources that best match the research domain. "
+                "CS/AI/ML → arxiv, semantic, dblp, openalex, crossref. "
+                "Biomedical → pubmed, biorxiv, medrxiv, pmc, europepmc. "
+                "General science → openalex, crossref, core, semantic. "
+                "Cryptography → iacr, arxiv. "
+                "Social science → ssrn, openalex, crossref."
+            ),
+        },
     },
     "required": [
         "domain_topic",
@@ -69,6 +85,7 @@ SEARCH_PLAN_SCHEMA = {
         "format_requirements",
         "scope_constraints",
         "content_focus",
+        "recommended_sources",
     ],
     "additionalProperties": False,
 }
@@ -94,18 +111,22 @@ _SYSTEM_PROMPT = (
     "- format_requirements: Capture any output format requests. If the user says '带图表引用', record it here, not in search_queries.\n"
     "- scope_constraints: Capture time ranges, domain restrictions, etc.\n"
     "- content_focus: Capture specific angles, comparisons, or emphasis requested.\n"
-    "- query_routes: Use academic search by default. Enable web only for tools, code, products, or implementations.\n\n"
+    "- query_routes: Use academic search by default. Enable web only for tools, code, products, or implementations.\n"
+    "- recommended_sources: Select 3-6 sources that match the research domain. "
+    "Do NOT include all sources — only those relevant to the topic.\n\n"
     "Examples:\n"
     "Input: '帮我写一篇带图表引用的时序预测综述'\n"
     "→ domain_topic: '时序预测'\n"
     "→ search_queries: ['time series forecasting survey', 'time series forecasting methods', 'deep learning time series prediction', 'time series forecasting benchmark evaluation']\n"
-    "→ format_requirements: ['带图表引用', '综述形式']\n\n"
+    "→ format_requirements: ['带图表引用', '综述形式']\n"
+    "→ recommended_sources: ['arxiv', 'semantic', 'dblp', 'openalex', 'crossref']\n\n"
     "Input: 'survey on graph neural networks for drug discovery, last 3 years, compare GNN vs traditional ML'\n"
     "→ domain_topic: 'graph neural networks for drug discovery'\n"
     "→ search_queries: ['graph neural networks drug discovery', 'GNN molecular property prediction', 'deep learning drug design', 'graph-based virtual screening']\n"
     "→ format_requirements: ['survey']\n"
     "→ scope_constraints: ['last 3 years']\n"
-    "→ content_focus: ['compare GNN vs traditional ML']"
+    "→ content_focus: ['compare GNN vs traditional ML']\n"
+    "→ recommended_sources: ['arxiv', 'semantic', 'pubmed', 'openalex', 'crossref']"
 )
 
 
@@ -144,6 +165,9 @@ async def run(ctx: SkillContext) -> SkillOutput:
     format_requirements = _clean_string_list(parsed.get("format_requirements"))
     scope_constraints = _clean_string_list(parsed.get("scope_constraints"))
     content_focus = _clean_string_list(parsed.get("content_focus"))
+    recommended_sources = _clean_string_list(parsed.get("recommended_sources"))
+    if not recommended_sources:
+        recommended_sources = ["arxiv", "semantic", "openalex", "crossref"]
 
     topic_brief = _artifact(
         ctx,
@@ -165,6 +189,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
             "research_questions": research_questions,
             "search_queries": search_queries,
             "query_routes": query_routes,
+            "recommended_sources": recommended_sources,
             "plan_text": f"研究主题：{topic}",
         },
     )

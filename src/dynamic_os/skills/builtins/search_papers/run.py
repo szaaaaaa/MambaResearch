@@ -13,6 +13,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
     payload = dict(search_plan.payload)
     queries = [str(item).strip() for item in payload.get("search_queries", []) if str(item).strip()]
     routes = dict(payload.get("query_routes", {})) if isinstance(payload.get("query_routes"), dict) else {}
+    recommended_sources = [str(s).strip() for s in payload.get("recommended_sources", []) if str(s).strip()]
     resolved_queries = queries or [ctx.user_request or ctx.goal]
     results: list[dict] = []
     warnings: list[str] = []
@@ -21,7 +22,12 @@ async def run(ctx: SkillContext) -> SkillOutput:
     for query in resolved_queries:
         route = dict(routes.get(query, {})) if isinstance(routes.get(query), dict) else {}
         per_query_max = int(ctx.config.get("agent", {}).get("papers_per_query", 10))
-        search_result = await ctx.tools.search(query, source=_route_source(route), max_results=per_query_max)
+        search_result = await ctx.tools.search(
+            query,
+            source=_route_source(route),
+            max_results=per_query_max,
+            academic_sources=recommended_sources or None,
+        )
         for item in search_result.get("results", []):
             if not isinstance(item, dict):
                 continue

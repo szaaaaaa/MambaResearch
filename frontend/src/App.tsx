@@ -1,5 +1,5 @@
 import React from 'react';
-import { Group, Panel, Separator, usePanelRef, useDefaultLayout } from 'react-resizable-panels';
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
 import { PanelLeft, PanelRight } from 'lucide-react';
 import { AppProvider, useAppContext } from './store';
 import { Sidebar } from './components/Sidebar';
@@ -37,6 +37,15 @@ function loadUiPreferences(): UiPreferences {
 
 type ToolPanelTab = 'history' | 'skills';
 
+// 清除旧版 react-resizable-panels 持久化的布局数据，避免与当前默认值冲突
+if (typeof window !== 'undefined') {
+  for (const key of Object.keys(window.localStorage)) {
+    if (key.startsWith('react-resizable-panels:')) {
+      window.localStorage.removeItem(key);
+    }
+  }
+}
+
 const AppContent: React.FC = () => {
   const {
     state,
@@ -56,23 +65,9 @@ const AppContent: React.FC = () => {
   const sidebarPanelRef = usePanelRef();
   const toolsPanelRef = usePanelRef();
 
-  const defaultLayout = useDefaultLayout({
-    id: 'research-agent-layout',
-    panelIds: ['sidebar', 'main', 'tools'],
-    storage: localStorage,
-  });
-
   React.useEffect(() => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
   }, [uiPreferences]);
-
-  // 挂载时同步：如果工具面板没有激活 tab 但布局恢复了非零宽度，强制折叠
-  React.useEffect(() => {
-    if (toolPanelTab === null) {
-      toolsPanelRef.current?.collapse();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleTabChange = (tab: 'run' | 'history' | 'skills') => {
     setActiveTab(tab);
@@ -103,13 +98,14 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="h-screen bg-[var(--app-bg)] text-slate-900">
-      <Group orientation="horizontal" {...defaultLayout}>
+      <Group orientation="horizontal" id="research-agent-layout">
         {/* 侧栏面板 */}
         <Panel
-          defaultSize={18}
-          minSize={12}
-          maxSize={30}
+          defaultSize="18%"
+          minSize="12%"
+          maxSize="30%"
           collapsible
+          className="overflow-hidden"
           panelRef={sidebarPanelRef}
           onResize={(panelSize) => {
             setSidebarCollapsed(panelSize.asPercentage === 0);
@@ -136,7 +132,7 @@ const AppContent: React.FC = () => {
         </Separator>
 
         {/* 主面板 — 始终显示对话/运行监控 */}
-        <Panel minSize={35} id="main">
+        <Panel minSize="35%" id="main">
           <main className="relative h-full overflow-hidden">
             {/* 侧栏折叠时显示展开按钮 */}
             {sidebarCollapsed && (
@@ -170,10 +166,11 @@ const AppContent: React.FC = () => {
 
         {/* 工具面板 — 始终挂载，通过 collapse/expand 控制可见性 */}
         <Panel
-          defaultSize={0}
-          minSize={20}
-          maxSize={50}
+          defaultSize="0%"
+          minSize="20%"
+          maxSize="50%"
           collapsible
+          className="overflow-hidden"
           panelRef={toolsPanelRef}
           onResize={(panelSize) => {
             if (panelSize.asPercentage === 0 && toolPanelTab !== null) {

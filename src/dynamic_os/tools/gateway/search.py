@@ -37,6 +37,7 @@ class SearchGateway:
         *,
         source: str = "auto",
         max_results: int = 10,
+        academic_sources: list[str] | None = None,
     ) -> dict[str, list[dict[str, Any]] | list[str]]:
         """执行搜索并返回去重后的结果。
 
@@ -69,30 +70,54 @@ class SearchGateway:
         all_results: list[dict[str, Any]] = []
         all_warnings: list[str] = []
 
-        # 遍历所有搜索工具，按来源过滤后逐个调用
-        for tool in search_tools:
-            if tool.server_id == self._ACADEMIC_SERVER_ID and not want_academic:
-                continue
-            if tool.server_id == self._WEB_SERVER_ID and not want_web:
-                continue
-            try:
-                result = await self._mcp.invoke_tool(
-                    tool.tool_id,
-                    {"query": query, "source": source, "max_results": max_results},
-                )
-            except Exception as exc:
-                # 单个搜索源失败不中断整体搜索，记录警告
-                all_warnings.append(f"{tool.tool_id}: {exc}")
-                continue
-            if isinstance(result, dict):
-                all_results.extend(
-                    dict(item) for item in result.get("results", []) if isinstance(item, dict)
-                )
-                all_warnings.extend(
-                    str(w).strip() for w in result.get("warnings", []) if str(w).strip()
-                )
-            elif isinstance(result, list):
-                all_results.extend(dict(item) for item in result if isinstance(item, dict))
+        # 学术搜索：优先使用 search_papers 统一工具（内部并行调用所有源）
+        if want_academic:
+            unified = next(
+                (t for t in search_tools
+                 if t.server_id == self._ACADEMIC_SERVER_ID and t.name == "search_papers"),
+                None,
+            )
+            if unified is not None:
+                try:
+                    call_params: dict[str, Any] = {
+                        "query": query,
+                        "max_results_per_source": max(2, max_results // 5),
+                    }
+                    if academic_sources:
+                        call_params["sources"] = ",".join(academic_sources)
+                    result = await self._mcp.invoke_tool(unified.tool_id, call_params)
+                except Exception as exc:
+                    all_warnings.append(f"{unified.tool_id}: {exc}")
+                    result = None
+                if isinstance(result, dict):
+                    # search_papers 返回 {"result": {"papers": [...], "errors": {...}}}
+                    inner = result.get("result", result) if isinstance(result.get("result"), dict) else result
+                    papers = inner.get("papers") or inner.get("results") or []
+                    all_results.extend(dict(p) for p in papers if isinstance(p, dict))
+                    for src_name, err in (inner.get("errors") or {}).items():
+                        if err and str(err).strip():
+                            all_warnings.append(f"{src_name}: {err}")
+
+        # 网页搜索：调用内部搜索服务器
+        if want_web:
+            web_tools = [t for t in search_tools if t.server_id == self._WEB_SERVER_ID]
+            for tool in web_tools:
+                try:
+                    result = await self._mcp.invoke_tool(
+                        tool.tool_id,
+                        {"query": query, "source": source, "max_results": max_results},
+                    )
+                except Exception as exc:
+                    all_warnings.append(f"{tool.tool_id}: {exc}")
+                    continue
+                if isinstance(result, dict):
+                    items = result.get("results") or result.get("result") or []
+                    all_results.extend(dict(item) for item in items if isinstance(item, dict))
+                    all_warnings.extend(
+                        str(w).strip() for w in result.get("warnings", []) if str(w).strip()
+                    )
+                elif isinstance(result, list):
+                    all_results.extend(dict(item) for item in result if isinstance(item, dict))
 
         # 去重并截断到 max_results
         deduped = _dedupe_results(all_results)[:max_results]

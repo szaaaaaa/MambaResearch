@@ -466,14 +466,17 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
             return f"LLM summary: {user_message[:120]}"
         if tool.capability == ToolCapability.search:
             query = str(payload.get("query") or "")
-            return [
-                {
-                    "paper_id": "paper_a",
-                    "title": f"Paper A on {query}",
-                    "abstract": "High-signal retrieval planning paper.",
-                    "url": "https://example.com/paper-a",
-                }
-            ]
+            return {
+                "papers": [
+                    {
+                        "paper_id": "paper_a",
+                        "title": f"Paper A on {query}",
+                        "abstract": "High-signal retrieval planning paper.",
+                        "url": "https://example.com/paper-a",
+                    }
+                ],
+                "errors": {},
+            }
         if tool.capability == ToolCapability.retrieve:
             query = str(payload.get("query") or "")
             return [
@@ -1030,7 +1033,7 @@ def test_executor_rejects_planner_run_id_mismatch() -> None:
 
 def test_search_papers_produces_empty_sourceset_with_warnings() -> None:
     class FakeTools:
-        async def search(self, query: str, *, source: str = "auto", max_results: int = 10):
+        async def search(self, query: str, *, source: str = "auto", max_results: int = 10, academic_sources=None):
             assert query == "retrieval planning"
             assert source == "auto"
             assert max_results == 10
@@ -1069,7 +1072,7 @@ def test_search_papers_merges_queries_and_uses_route_sources() -> None:
     calls: list[tuple[str, str, int]] = []
 
     class FakeTools:
-        async def search(self, query: str, *, source: str = "auto", max_results: int = 10):
+        async def search(self, query: str, *, source: str = "auto", max_results: int = 10, academic_sources=None):
             calls.append((query, source, max_results))
             return {
                 "results": [

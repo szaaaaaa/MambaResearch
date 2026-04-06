@@ -21,12 +21,26 @@ np: Any = None
 
 
 def _ensure_mpl() -> None:
-    """首次使用时导入 matplotlib 和 numpy。"""
+    """首次使用时导入 matplotlib 和 numpy，并配置中文字体。"""
     global plt, np
     if plt is not None:
         return
     import matplotlib as mpl
     mpl.use("Agg")
+    # 配置中文字体：按优先级尝试常见 CJK 字体
+    import matplotlib.font_manager as fm
+    _CJK_CANDIDATES = [
+        "Microsoft YaHei",      # Windows 常见
+        "SimHei",               # Windows 黑体
+        "PingFang SC",          # macOS
+        "Noto Sans CJK SC",    # Linux
+        "WenQuanYi Micro Hei", # Linux
+    ]
+    _available = {f.name for f in fm.fontManager.ttflist}
+    _chosen = [f for f in _CJK_CANDIDATES if f in _available]
+    if _chosen:
+        mpl.rcParams["font.sans-serif"] = _chosen + mpl.rcParams["font.sans-serif"]
+    mpl.rcParams["axes.unicode_minus"] = False  # 负号显示修复
     import matplotlib.pyplot as _plt
     import numpy as _np
     plt = _plt

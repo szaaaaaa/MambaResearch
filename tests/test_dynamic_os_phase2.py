@@ -139,7 +139,7 @@ def test_tool_gateway_search_uses_registry_and_policy() -> None:
 
     async def invoker(tool, payload):
         calls.append((tool.tool_id, payload))
-        return {"results": [{"paper_id": "arxiv:2401.00001", "title": "Test Paper", "query": payload["query"]}], "warnings": []}
+        return {"papers": [{"paper_id": "arxiv:2401.00001", "title": "Test Paper", "query": payload["query"]}], "errors": {}}
 
     gateway = ToolGateway(registry=registry, policy=engine, mcp_invoker=invoker)
 
@@ -150,7 +150,7 @@ def test_tool_gateway_search_uses_registry_and_policy() -> None:
         "warnings": [],
     }
     assert calls == [
-        ("mcp.paper_search.search_papers", {"query": "retrieval planning", "source": "academic", "max_results": 5}),
+        ("mcp.paper_search.search_papers", {"query": "retrieval planning", "max_results_per_source": 2}),
     ]
     assert engine.snapshot()["tool_invocations"] == 1
 

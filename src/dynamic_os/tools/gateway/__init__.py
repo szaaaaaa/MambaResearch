@@ -87,9 +87,12 @@ class ToolGateway:
         *,
         source: str = "auto",
         max_results: int = 10,
+        academic_sources: list[str] | None = None,
     ) -> dict:
         """执行搜索（学术/网页）。"""
-        return await self._search.search(query, source=source, max_results=max_results)
+        return await self._search.search(
+            query, source=source, max_results=max_results, academic_sources=academic_sources,
+        )
 
     async def retrieve(
         self,
@@ -242,6 +245,7 @@ class ContextualToolGateway:
         *,
         source: str = "auto",
         max_results: int = 10,
+        academic_sources: list[str] | None = None,
     ) -> dict:
         """执行搜索（带网络权限校验）。"""
         if not self._permissions.network:
@@ -252,7 +256,9 @@ class ContextualToolGateway:
         self._ensure_tool_allowed(tool_id)
         return await self._wrap_tool_call(
             tool_id,
-            self._base.search(query, source=source, max_results=max_results),
+            self._base.search(
+                query, source=source, max_results=max_results, academic_sources=academic_sources,
+            ),
         )
 
     async def retrieve(

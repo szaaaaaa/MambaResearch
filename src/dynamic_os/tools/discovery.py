@@ -168,8 +168,9 @@ class StartedMcpRuntime:
 class _StdioMcpSession:
     """与单个 MCP 服务器的 stdio JSON-RPC 会话。
 
-    通过子进程的 stdin/stdout 与 MCP 服务器通信，使用 Content-Length 头
-    分隔 JSON-RPC 消息帧。支持初始化、工具列表查询和工具调用操作。
+    通过子进程的 stdin/stdout 与 MCP 服务器通信。自动探测服务器使用的消息帧格式：
+    - Content-Length 头协议（内部 MCP 服务器）
+    - 换行分隔 JSON 协议（MCP SDK 1.x stdio transport）
     """
 
     def __init__(self, *, server: McpServerConfig, root: Path) -> None:
@@ -179,6 +180,7 @@ class _StdioMcpSession:
         self._request_id = 0                               # JSON-RPC 请求 ID 计数器
         self._io_lock = asyncio.Lock()                     # IO 锁，保证请求-响应的原子性
         self._resolved_command: list[str] = []             # 解析后的启动命令
+        self._use_newline_protocol = False                 # 是否使用换行分隔协议（握手时探测）
 
     @property
     def server_id(self) -> str:
@@ -214,8 +216,8 @@ class _StdioMcpSession:
             stderr=subprocess.DEVNULL,
         )
         self._resolved_command = list(command)
-        # 发送 initialize 请求完成握手
-        await self._request("initialize", {"clientInfo": {"name": "dynamic-research-os", "version": "1.0.0"}})
+        # 发送 initialize 请求完成握手（同时探测服务器使用的消息帧协议）
+        await self._initialize_with_protocol_detection()
 
     async def discover_tools(self) -> list[ToolDescriptor]:
         """通过 JSON-RPC 查询服务器声明的工具列表。
@@ -329,15 +331,128 @@ class _StdioMcpSession:
             raise RuntimeError(f"mcp {self._server.server_id} returned invalid result for {method}")
         return result
 
-    def _request_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """同步发送 JSON-RPC 请求（在线程中执行以避免阻塞事件循环）。
+    async def _initialize_with_protocol_detection(self) -> None:
+        """发送 initialize 握手并自动探测服务器的消息帧协议。
 
-        使用 Content-Length 头协议进行消息帧分隔：
-        - 发送：Content-Length: <n>\r\n\r\n<json-body>
-        - 接收：先读取头部行直到空行，再按 Content-Length 读取响应体
+        先以 Content-Length 协议发送请求并读取首字节：
+        - 如果首字节是 'C' → Content-Length 协议，继续正常读取
+        - 如果首字节是 '{' → 服务器用换行协议（把 Content-Length 头当作无效输入触发了通知）
+          此时重启子进程，用换行协议重新握手
+        """
+        async with self._io_lock:
+            if self._process is None or self._process.stdin is None or self._process.stdout is None:
+                raise RuntimeError(f"mcp server IO unavailable: {self._server.server_id}")
+            self._request_id += 1
+            init_params = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "dynamic-research-os", "version": "1.0.0"},
+            }
+            payload = {
+                "jsonrpc": "2.0",
+                "id": self._request_id,
+                "method": "initialize",
+                "params": init_params,
+            }
+            response = await asyncio.to_thread(self._initialize_sync, payload)
+        if "error" in response:
+            error = dict(response.get("error") or {})
+            raise RuntimeError(str(error.get("message") or f"mcp {self._server.server_id} initialize failed"))
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError(f"mcp {self._server.server_id} returned invalid result for initialize")
+        # 换行协议的 MCP SDK 需要 initialized 通知
+        if self._use_newline_protocol:
+            notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+            await asyncio.to_thread(self._write_newline, notif)
+
+    def _initialize_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """发送 Content-Length 格式的 initialize，通过首字节探测服务器协议。
+
+        如果服务器返回 Content-Length 头（首字节 'C'），直接解析。
+        如果服务器返回 JSON（首字节 '{'），说明它用换行协议——
+        杀掉当前进程，用换行协议重新启动和握手。
         """
         if self._process is None or self._process.stdin is None or self._process.stdout is None:
             raise RuntimeError(f"mcp server IO unavailable: {self._server.server_id}")
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        # 先尝试 Content-Length 协议
+        self._process.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+        self._process.stdin.flush()
+        # 读首字节判断协议
+        first_byte = self._process.stdout.read(1)
+        if not first_byte:
+            raise RuntimeError(f"mcp server exited during init: {self._server.server_id}")
+        if first_byte != b"{":
+            # Content-Length 协议：继续正常读取
+            self._use_newline_protocol = False
+            rest_of_header = self._process.stdout.readline()
+            first_header = (first_byte + rest_of_header).decode("utf-8")
+            headers: dict[str, str] = {}
+            key, _, value = first_header.partition(":")
+            headers[key.strip().lower()] = value.strip()
+            while True:
+                line = self._process.stdout.readline()
+                if not line:
+                    raise RuntimeError(f"mcp server exited during read: {self._server.server_id}")
+                if line in {b"\n", b"\r\n"}:
+                    break
+                key, _, value = line.decode("utf-8").partition(":")
+                headers[key.strip().lower()] = value.strip()
+            content_length = int(headers.get("content-length") or 0)
+            body = self._process.stdout.read(content_length)
+            if len(body) != content_length:
+                raise RuntimeError(f"mcp server returned incomplete body: {self._server.server_id}")
+            return json.loads(body.decode("utf-8"))
+        # 换行协议：杀掉当前进程，用换行协议重新启动
+        self._use_newline_protocol = True
+        self._close_sync(self._process)
+        self._process = subprocess.Popen(
+            self._resolved_command,
+            cwd=str(self._root),
+            env={**os.environ, **{k: self._resolve_token(v) for k, v in self._server.env.items()}},
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        # 用换行协议重新发送 initialize
+        self._write_newline(payload)
+        return self._read_newline_response()
+
+    def _write_newline(self, payload: dict[str, Any]) -> None:
+        """换行分隔协议：写入 JSON + 换行。"""
+        if self._process is None or self._process.stdin is None:
+            return
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self._process.stdin.write(body + b"\n")
+        self._process.stdin.flush()
+
+    def _read_newline_response(self) -> dict[str, Any]:
+        """换行分隔协议：读取一行 JSON 响应，跳过通知消息。"""
+        if self._process is None or self._process.stdout is None:
+            raise RuntimeError(f"mcp server IO unavailable: {self._server.server_id}")
+        while True:
+            line = self._process.stdout.readline()
+            if not line:
+                raise RuntimeError(f"mcp server exited during read: {self._server.server_id}")
+            msg = json.loads(line.decode("utf-8"))
+            # 跳过通知（没有 id 的消息，如 notifications/message）
+            if "id" not in msg:
+                continue
+            return msg
+
+    def _request_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """同步发送 JSON-RPC 请求（在线程中执行以避免阻塞事件循环）。
+
+        根据握手探测结果选择对应的消息帧协议：
+        - Content-Length 头协议（内部 MCP 服务器）
+        - 换行分隔 JSON 协议（MCP SDK 1.x stdio transport）
+        """
+        if self._process is None or self._process.stdin is None or self._process.stdout is None:
+            raise RuntimeError(f"mcp server IO unavailable: {self._server.server_id}")
+        if self._use_newline_protocol:
+            self._write_newline(payload)
+            return self._read_newline_response()
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         # 发送请求：Content-Length 头 + 空行 + JSON 体
         self._process.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
