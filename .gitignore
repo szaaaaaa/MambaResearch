@@ -45,3 +45,6 @@ frontend/dist/
 
 # Claude Code — exclude entire .claude/ dir (worktrees, hooks, local state)
 .claude/
+
+# Self-improvement — project-local Claude learnings, personal dev memory
+.learnings/
