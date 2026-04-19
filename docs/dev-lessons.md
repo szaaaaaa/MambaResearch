@@ -591,6 +591,27 @@ sources.pdf_download:
 
 ---
 
+## 阶段六：实验执行集成 (2026-04-18 ~)
+
+### 问题 26：错误处理分支引用未定义变量（NameError 掩盖 RuntimeError）
+
+**发生时间**：2026-04-19
+
+**现象**：`cc_adapter.py`（Claude Code 子进程适配器）初版 /review 时发现：`except FileNotFoundError` 分支里 `raise RuntimeError(f"Claude Code binary not found: {resolved_bin}")` 引用了一个在当前作用域里根本不存在的局部变量。本意是 claude CLI 找不到时抛清晰的 RuntimeError，实际会抛 `NameError: name 'resolved_bin' is not defined`，把真正的错误原因完全掩盖。
+
+**根因**：重构时把 bin 解析从 `run()` 内联提取到了 `_build_cli_args` 方法，返回的 `args` 列表里 `args[0]` 已经是解析后的路径，但 except 分支里残留了对旧 `resolved_bin` 局部变量的引用——这个变量在新结构里从未被定义。happy path 测试（claude 在 PATH）永远走不到这个分支，测试套件 107/107 全绿也不会暴露。
+
+**解决**：
+- `src/dynamic_os/executor/cc_adapter.py:186`：`f"...: {resolved_bin}"` → `f"...: {args[0]}"`
+- 写了 probe 脚本用不存在的 bin 路径（`claude_bin='/nonexistent/path/claude_bin_xyz'`）实际触发 FileNotFoundError 分支，确认现在抛的是 `RuntimeError: Claude Code binary not found: /nonexistent/path/claude_bin_xyz`
+
+**教训**：
+- **错误处理分支是"只跑一次"的代码——happy path 测试全绿不代表它能用**，refactor 后务必专门跑一次 error path 验证
+- **重构时跨函数搬迁代码后，旧作用域的局部变量引用是高危点**，pyflakes/ruff 的 F821（undefined name）能静态抓到这类问题，应纳入 CI
+- 人眼 /review 抓到了测试套件抓不到的问题，说明 error branch 覆盖率需要主动构造而非被动依赖现有测试
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -676,5 +697,5 @@ sources.pdf_download:
 
 ---
 
-*最后更新：2026-04-06*
+*最后更新：2026-04-19*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*
