@@ -1,0 +1,20 @@
+id: clarify_intent
+name: Clarify Intent
+version: 1.0.0
+applicable_roles:
+  - conductor
+description: >-
+  Decompose a user request into a clarified experiment intent, default-filled
+  intent, or a structured clarification request with option-style questions.
+input_contract:
+  required: []
+  requires_any: []
+  optional:
+    - ClarificationResponse
+output_artifacts:
+  - ClarifiedIntent
+  - ClarificationRequest
+allowed_tools:
+  - mcp.llm.chat
+permissions: {}
+timeout_sec: 120
