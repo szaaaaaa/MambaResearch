@@ -4,6 +4,10 @@ import {
   AgentRoleId,
   AppState,
   ChatSession,
+  ClarificationAnswer,
+  ClarificationHistoryRound,
+  ClarificationQuestion,
+  ClarificationState,
   Credentials,
   CredentialStatusMap,
   HitlRequest,
@@ -433,6 +437,77 @@ function parseSseFrames(chunk: string): Array<{ event: string; data: string }> {
     .filter((frame) => frame.data);
 }
 
+function parseClarificationQuestions(raw: unknown): ClarificationQuestion[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const questions: ClarificationQuestion[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const header = typeof entry.header === 'string' ? entry.header.trim() : '';
+    const question = typeof entry.question === 'string' ? entry.question.trim() : '';
+    if (!header || !question) continue;
+    const optionsRaw = Array.isArray(entry.options) ? entry.options : [];
+    const options = optionsRaw
+      .map((opt) => {
+        if (!isRecord(opt)) return null;
+        const label = typeof opt.label === 'string' ? opt.label.trim() : '';
+        if (!label) return null;
+        const description = typeof opt.description === 'string' ? opt.description.trim() : '';
+        return { label, description };
+      })
+      .filter((opt): opt is { label: string; description: string } => Boolean(opt));
+    if (options.length === 0) continue;
+    questions.push({ header, question, options });
+  }
+  return questions;
+}
+
+function parseClarificationAnswers(raw: unknown): ClarificationAnswer[] {
+  if (!Array.isArray(raw)) return [];
+  const answers: ClarificationAnswer[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const questionHeader = typeof entry.question_header === 'string' ? entry.question_header.trim() : '';
+    const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+    if (!questionHeader || !label) continue;
+    const customText = typeof entry.custom_text === 'string' ? entry.custom_text : undefined;
+    answers.push({ question_header: questionHeader, label, custom_text: customText });
+  }
+  return answers;
+}
+
+function buildClarificationHistory(
+  allRecords: unknown,
+  currentRequestId: string,
+): ClarificationHistoryRound[] {
+  if (!Array.isArray(allRecords)) return [];
+  const requests = new Map<number, ClarificationQuestion[]>();
+  const responses = new Map<number, ClarificationAnswer[]>();
+  for (const record of allRecords) {
+    if (!isRecord(record)) continue;
+    const artifactType = typeof record.artifact_type === 'string' ? record.artifact_type : '';
+    const payload = isRecord(record.payload) ? record.payload : {};
+    const roundNum = Number(payload.round_num);
+    if (!Number.isFinite(roundNum) || roundNum <= 0) continue;
+    if (artifactType === 'ClarificationRequest') {
+      const artifactId = typeof record.artifact_id === 'string' ? record.artifact_id : '';
+      if (artifactId === currentRequestId) continue;
+      requests.set(roundNum, parseClarificationQuestions(payload.questions));
+    } else if (artifactType === 'ClarificationResponse') {
+      responses.set(roundNum, parseClarificationAnswers(payload.answers));
+    }
+  }
+  const rounds: ClarificationHistoryRound[] = [];
+  for (const [roundNum, questions] of requests) {
+    const answers = responses.get(roundNum) || [];
+    if (answers.length === 0) continue;
+    rounds.push({ round_num: roundNum, questions, answers });
+  }
+  rounds.sort((a, b) => a.round_num - b.round_num);
+  return rounds;
+}
+
 function nodeStatusAfterStop(nodeStatus: NodeStatusMap): NodeStatusMap {
   return Object.fromEntries(
     Object.entries(nodeStatus).map(([nodeId, status]) => {
@@ -458,6 +533,7 @@ function createEmptySession(): ChatSession {
     runEvents: [],
     rawTerminalLog: '',
     hitlRequest: null,
+    clarificationState: null,
     messages: [
       {
         id: `assistant-${Date.now()}`,
@@ -550,6 +626,7 @@ function normalizeSession(value: unknown): ChatSession | null {
       : [],
     rawTerminalLog: String(value.rawTerminalLog || ''),
     hitlRequest: null,
+    clarificationState: null,
     messages: messages.length > 0 ? messages : createEmptySession().messages,
   };
 }
@@ -870,6 +947,7 @@ interface AppContextType {
   startRun: () => Promise<void>;
   stopRun: () => Promise<void>;
   submitHitlResponse: (runId: string, response: string) => Promise<void>;
+  submitClarificationResponse: (runId: string, answers: ClarificationAnswer[]) => Promise<void>;
   createConversation: () => void;
   selectConversation: (conversationId: string) => void;
   renameConversation: (conversationId: string, title: string) => void;
@@ -1453,6 +1531,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    let pendingClarification: { runId: string; nodeId: string; artifactId: string } | null = null;
+    let hitlTextRequest: HitlRequest | null = null;
+    if (event.type === 'hitl_request' && isRecord(payload)) {
+      const rawContext = String(payload.context || '');
+      const clarificationMatch = rawContext.match(/^artifact:ClarificationRequest:(.+)$/);
+      if (clarificationMatch) {
+        pendingClarification = {
+          runId: String(payload.run_id || ''),
+          nodeId: String(payload.node_id || ''),
+          artifactId: clarificationMatch[1],
+        };
+      } else {
+        hitlTextRequest = {
+          node_id: String(payload.node_id || ''),
+          question: String(payload.question || ''),
+          context: rawContext,
+        };
+      }
+    }
+
     updateSession(conversationId, (session) => {
       if (session.runEvents.some((existing) => existing.id === event.id)) {
         return session;
@@ -1477,16 +1575,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ].filter((item) => item.artifact_id && item.artifact_type)
           : session.artifacts;
 
-      const nextHitlRequest: HitlRequest | null =
-        event.type === 'hitl_request' && isRecord(payload)
-          ? {
-              node_id: String(payload.node_id || ''),
-              question: String(payload.question || ''),
-              context: String(payload.context || ''),
-            }
-          : event.type === 'hitl_response'
-            ? null
-            : session.hitlRequest;
+      let nextHitlRequest: HitlRequest | null = session.hitlRequest;
+      let nextClarification: ClarificationState | null = session.clarificationState;
+
+      if (event.type === 'hitl_request') {
+        if (pendingClarification) {
+          nextHitlRequest = null;
+          nextClarification = null;
+        } else if (hitlTextRequest) {
+          nextHitlRequest = hitlTextRequest;
+        }
+      } else if (event.type === 'hitl_response') {
+        nextHitlRequest = null;
+        nextClarification = null;
+      }
 
       return {
         ...session,
@@ -1497,8 +1599,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         artifacts: nextArtifacts,
         runEvents: nextEvents,
         hitlRequest: nextHitlRequest,
+        clarificationState: nextClarification,
       };
     });
+
+    if (pendingClarification) {
+      void resolveClarificationState(conversationId, pendingClarification);
+    }
+  };
+
+  const resolveClarificationState = async (
+    conversationId: string,
+    info: { runId: string; nodeId: string; artifactId: string },
+  ) => {
+    try {
+      const [requestRecord, allRecords] = await Promise.all([
+        fetch(`${API_BASE}/api/runs/${encodeURIComponent(info.runId)}/artifacts/${encodeURIComponent(info.artifactId)}`)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json() as Promise<Record<string, unknown>>;
+          }),
+        fetch(`${API_BASE}/api/runs/${encodeURIComponent(info.runId)}/artifacts`)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json() as Promise<unknown[]>;
+          }),
+      ]);
+
+      const currentPayload = isRecord(requestRecord.payload) ? requestRecord.payload : {};
+      const roundNum = Number(currentPayload.round_num) || 1;
+      const questions = parseClarificationQuestions(currentPayload.questions);
+
+      const history = buildClarificationHistory(allRecords, info.artifactId);
+
+      const clarificationState: ClarificationState = {
+        runId: info.runId,
+        nodeId: info.nodeId,
+        requestArtifactId: info.artifactId,
+        roundNum,
+        questions,
+        history,
+      };
+
+      updateSession(conversationId, (session) => ({
+        ...session,
+        updatedAt: nowIso(),
+        clarificationState,
+      }));
+    } catch (err) {
+      console.warn('[clarification] failed to resolve artifact', info.artifactId, err);
+    }
   };
 
   const appendRawTerminalLog = (conversationId: string, text: string) => {
@@ -1591,6 +1741,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           runEvents: [],
           rawTerminalLog: '',
           hitlRequest: null,
+          clarificationState: null,
           messages: [
             ...session.messages,
             {
@@ -1841,6 +1992,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  const submitClarificationResponse = async (runId: string, answers: ClarificationAnswer[]) => {
+    const activeConversationId = activeConversationIdRef.current;
+    const res = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}/hitl`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ artifact_type: 'ClarificationResponse', answers }),
+    });
+    if (!res.ok) {
+      throw new Error(await readErrorDetail(res));
+    }
+    updateSession(activeConversationId, (session) => ({
+      ...session,
+      clarificationState: null,
+    }));
+  };
+
   const toggleAdvancedMode = () => {
     setState((prev) => ({ ...prev, isAdvancedMode: !prev.isAdvancedMode }));
   };
@@ -1865,6 +2032,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         startRun,
         stopRun,
         submitHitlResponse,
+        submitClarificationResponse,
         createConversation,
         selectConversation,
         renameConversation,

@@ -280,6 +280,38 @@ export interface HitlRequest {
   context: string;
 }
 
+export interface ClarificationOption {
+  label: string;
+  description: string;
+}
+
+export interface ClarificationQuestion {
+  header: string;
+  question: string;
+  options: ClarificationOption[];
+}
+
+export interface ClarificationAnswer {
+  question_header: string;
+  label: string;
+  custom_text?: string;
+}
+
+export interface ClarificationHistoryRound {
+  round_num: number;
+  questions: ClarificationQuestion[];
+  answers: ClarificationAnswer[];
+}
+
+export interface ClarificationState {
+  runId: string;
+  nodeId: string;
+  requestArtifactId: string;
+  roundNum: number;
+  questions: ClarificationQuestion[];
+  history: ClarificationHistoryRound[];
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -295,6 +327,7 @@ export interface ChatSession {
   runEvents: RunEvent[];
   rawTerminalLog: string;
   hitlRequest: HitlRequest | null;
+  clarificationState: ClarificationState | null;
 }
 
 export interface ProviderModelCatalog {
