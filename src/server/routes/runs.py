@@ -355,16 +355,23 @@ async def submit_hitl_response(run_id: str, request: Request):
         raise HTTPException(status_code=400, detail="invalid JSON body") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="hitl payload must be an object")
-    response_text = str(payload.get("response", "") or "").strip()
-    if not response_text:
-        raise HTTPException(status_code=400, detail="response is required")
 
     runtime = _ACTIVE_RUNTIMES.get(run_id)
     if runtime is None:
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found or not active")
 
+    artifact_type = str(payload.get("artifact_type", "") or "").strip()
     try:
-        runtime.submit_hitl_response(response_text)
+        if artifact_type == "ClarificationResponse":
+            answers = payload.get("answers")
+            if not isinstance(answers, list):
+                raise HTTPException(status_code=400, detail="answers must be a list")
+            runtime.submit_clarification_response({"answers": answers})
+        else:
+            response_text = str(payload.get("response", "") or "").strip()
+            if not response_text:
+                raise HTTPException(status_code=400, detail="response is required")
+            runtime.submit_hitl_response(response_text)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

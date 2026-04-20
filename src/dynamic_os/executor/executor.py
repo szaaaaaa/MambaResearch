@@ -14,6 +14,7 @@ Executor 是 Dynamic OS 的核心调度引擎，负责：
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -107,12 +108,23 @@ class Executor:
         self._events: list[object] = []     # 运行期间收集的所有事件
         self._hitl_event: asyncio.Event | None = None  # HITL 异步等待信号
         self._hitl_response: str = ""       # 用户的 HITL 回复内容
+        # clarify_intent 的结构化追问走独立事件 / payload 通道，避免与纯文本 HITL 混淆
+        self._clarification_event: asyncio.Event | None = None
+        self._clarification_response: dict | None = None
 
     def submit_hitl_response(self, response: str) -> None:
         """接收用户的人机交互回复，唤醒等待中的 HITL 节点。"""
         self._hitl_response = response
         if self._hitl_event is not None:
             self._hitl_event.set()
+
+    def submit_clarification_response(self, payload: dict) -> None:
+        """接收用户对 ClarificationRequest 的结构化回答，唤醒等待中的澄清暂停。"""
+        if not isinstance(payload, dict):
+            raise TypeError("clarification response payload must be a dict")
+        self._clarification_response = dict(payload)
+        if self._clarification_event is not None:
+            self._clarification_event.set()
 
     async def run(self, *, user_request: str, run_id: str) -> ExecutorRunResult:
         """执行主循环：反复调用 Planner 和 execute_plan，直到终止。"""
@@ -223,6 +235,31 @@ class Executor:
                     observations.append(result.observation)
                     statuses[node.node_id] = result.observation.status
                     pending.remove(node.node_id)
+
+                    # clarify_intent 产出 ClarificationRequest → 触发结构化暂停 + 回填 ClarificationResponse
+                    # 不变量：产 ClarificationRequest 的节点必然独占其批次（AC4 保证 clarify_intent 在首节点，
+                    # 且目前仅此 skill 产该类型）。此处 return 不会吞掉本批其他 ready 节点。
+                    clarification_request = next(
+                        (a for a in result.artifacts if a.artifact_type == "ClarificationRequest"),
+                        None,
+                    )
+                    if clarification_request is not None:
+                        remaining_in_batch = [n for n in ready_nodes if n.node_id != node.node_id]
+                        if remaining_in_batch:
+                            raise RuntimeError(
+                                "ClarificationRequest produced in a batch with sibling ready nodes: "
+                                f"{[n.node_id for n in remaining_in_batch]}"
+                            )
+                        await self._handle_clarification_pause(
+                            run_id=plan.run_id,
+                            request_artifact=clarification_request,
+                        )
+                        return PlanExecutionResult(
+                            observations=observations,
+                            should_replan=True,
+                            replan_reason="clarification_response_received",
+                        )
+
                     if result.should_replan:
                         return PlanExecutionResult(
                             observations=observations,
@@ -353,6 +390,73 @@ class Executor:
             observation=observation,
             artifacts=[artifact],
             should_replan=False,
+        )
+
+    async def _handle_clarification_pause(
+        self,
+        *,
+        run_id: str,
+        request_artifact: ArtifactRecord,
+    ) -> None:
+        """处理 ClarificationRequest 引发的暂停。
+
+        向外发 HitlRequestEvent（前端凭此识别暂停），异步等待
+        ``submit_clarification_response`` 传入结构化 answers，然后把 answers
+        封装为 ``ClarificationResponse`` 产物写回 artifact_store。
+        """
+        round_num = int(request_artifact.payload.get("round_num") or 1)
+        question_headers = [
+            str(q.get("header") or "")
+            for q in (request_artifact.payload.get("questions") or [])
+            if isinstance(q, dict)
+        ]
+        question_summary = ", ".join(h for h in question_headers if h)
+        synthetic_node_id = f"node_clarification_response_round_{round_num}"
+        self._emit(
+            HitlRequestEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                node_id=synthetic_node_id,
+                question=f"ClarificationRequest round {round_num}: {question_summary}",
+                context=_artifact_ref(request_artifact),
+            )
+        )
+        self._clarification_event = asyncio.Event()
+        self._clarification_response = None
+        await self._clarification_event.wait()
+        self._clarification_event = None
+        response_payload = self._clarification_response or {}
+        self._clarification_response = None
+        answers = response_payload.get("answers")
+        if not isinstance(answers, list):
+            answers = []
+
+        artifact = make_artifact(
+            node_id=synthetic_node_id,
+            artifact_type="ClarificationResponse",
+            producer_role=RoleId.hitl,
+            producer_skill="hitl",
+            payload={"round_num": round_num, "answers": answers},
+            source_inputs=[_artifact_ref(request_artifact)],
+        )
+        self._artifact_store.save(artifact)
+        self._emit(
+            ArtifactEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                artifact_id=artifact.artifact_id,
+                artifact_type=artifact.artifact_type,
+                producer_role=artifact.producer_role.value,
+                producer_skill=artifact.producer_skill,
+            )
+        )
+        self._emit(
+            HitlResponseEvent(
+                ts=_now_iso(),
+                run_id=run_id,
+                node_id=synthetic_node_id,
+                response=json.dumps(answers, ensure_ascii=False),
+            )
         )
 
     def _is_ready(self, node: PlanNode, edges: list[PlanEdge], statuses: dict[str, NodeStatus]) -> bool:

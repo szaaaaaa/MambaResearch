@@ -332,14 +332,21 @@ class ConfiguredPlannerModel:
         config: dict[str, Any],
         llm_client: ConfiguredLLMClient,
         policy: PolicyEngine,
+        artifact_store: Any,
     ) -> None:
         self._run_id = run_id
         self._config = config
         self._llm_client = llm_client
         self._policy = policy
+        self._artifact_store = artifact_store
 
     async def generate(self, messages: list[dict[str, str]], response_schema: dict[str, Any]) -> str:
-        """调用 LLM 生成 RoutePlan JSON。"""
+        """调用 LLM 生成 RoutePlan JSON。
+
+        若当前 artifact_store 尚无 ``ClarifiedIntent`` 产物，注入 system-reminder
+        约束 planner 把 ``clarify_intent`` 作为首节点；已有则不注入，让 planner
+        正常规划后续研究流程（避免死循环）。
+        """
         provider = str(get_by_dotted(self._config, "agent.routing.planner_llm.provider") or "").strip()
         if not provider:
             raise RuntimeError("agent.routing.planner_llm.provider must be explicitly configured")
@@ -351,11 +358,18 @@ class ConfiguredPlannerModel:
             or get_by_dotted(self._config, "llm.temperature")
             or 0.2
         )
+        reminder_lines = [
+            f"Return JSON only. RoutePlan.run_id must be {self._run_id}. Do not use markdown fences.",
+        ]
+        has_clarified_intent = bool(self._artifact_store.list_by_type("ClarifiedIntent"))
+        if not has_clarified_intent:
+            reminder_lines.append(
+                "The user's intent has not yet been captured as a ClarifiedIntent artifact. "
+                "The first node of this RoutePlan MUST have role='conductor' and "
+                "allowed_skills=['clarify_intent']. Subsequent nodes may follow normally."
+            )
         prompt_messages = [
-            {
-                "role": "system",
-                "content": f"Return JSON only. RoutePlan.run_id must be {self._run_id}. Do not use markdown fences.",
-            },
+            {"role": "system", "content": " ".join(reminder_lines)},
             *messages,
         ]
         completion = await asyncio.to_thread(
@@ -415,6 +429,16 @@ class DynamicResearchRuntime:
         if self._active_executor is None:
             raise RuntimeError("no active executor for this run")
         self._active_executor.submit_hitl_response(response)
+
+    def submit_clarification_response(self, payload: dict[str, Any]) -> None:
+        """将用户对 ClarificationRequest 的结构化回答传给执行器。
+
+        与 ``submit_hitl_response`` 并存、互不干扰：纯文本 HITL 暂停走前者，
+        意图澄清的多选回答走本方法（payload 需含 ``answers`` 列表）。
+        """
+        if self._active_executor is None:
+            raise RuntimeError("no active executor for this run")
+        self._active_executor.submit_clarification_response(payload)
 
     @property
     def output_root(self) -> Path:
@@ -550,6 +574,7 @@ class DynamicResearchRuntime:
                 config=config,
                 llm_client=llm_client,
                 policy=policy,
+                artifact_store=artifact_store,
             ),
             role_registry=role_registry,
             skill_registry=skill_registry,
