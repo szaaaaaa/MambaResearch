@@ -2,9 +2,13 @@
   description: Decompose work, organize context, define handoff goals
   system_prompt: Plan and organize the next research step without drafting the final report.
   default_allowed_skills:
+    - clarify_intent
     - plan_research
-  input_artifact_types: []
+  input_artifact_types:
+    - ClarificationResponse
   output_artifact_types:
+    - ClarifiedIntent
+    - ClarificationRequest
     - TopicBrief
     - SearchPlan
   forbidden:
