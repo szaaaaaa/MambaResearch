@@ -35,7 +35,7 @@
   - 首节点约束：触发 planner 后产出的 RoutePlan `nodes[0].skill_id == "clarify_intent"`（测试断言）
   - `pytest tests/integration/test_clarify_intent_flow.py` 通过；全量 `pytest tests/` 不因此 break
 
-### [TODO] 3. 前端 `ClarificationRequest` 渲染组件（独立）
+### [DONE] 3. 前端 `ClarificationRequest` 渲染组件（独立）
 - **What**: 前端新增组件渲染 `ClarificationRequest` artifact，选项式交互（每 question 渲染 2–4 个按钮 + 统一追加"其它（自填）"文本兜底）；多轮场景显示历史问答；接入现有 HITL pause UI。
 - **Files**:
   - 新 `frontend/src/components/ClarificationRequest.tsx`
