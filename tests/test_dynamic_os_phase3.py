@@ -358,13 +358,7 @@ def _phase5_inputs(skill_id: str) -> list[ArtifactRecord]:
                 role=RoleId.experimenter,
                 skill="design_experiment",
                 payload={
-                    "plan": "Compare retrieval planning against a baseline.",
-                    "language": "python",
-                    "workspace_path": str(Path(__file__).parent / "_test_workspace"),
-                    "entry_point": "train.py",
-                    "eval_script": "evaluate.py",
-                    "mutable_files": ["configs/hparams.yaml", "models/model.py"],
-                    "snapshot": {},
+                    "goal": "Compare retrieval planning against a baseline.",
                 },
             )
         ]
@@ -453,14 +447,12 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
                         "modification_suggestions": "",
                     }
                 )
-            if "You are modifying experiment files" in system_message:
+            if "designing a bounded local ML experiment" in system_message or (
+                "refining a bounded local ML experiment" in system_message
+            ):
                 return json.dumps(
                     {
-                        "plan": f"Evaluate retrieval planning for: {user_message[:80]}",
-                        "files": {
-                            "configs/hparams.yaml": "epochs: 5\nlearning_rate: 0.001\n",
-                            "models/model.py": "import torch\ndef build_model(hp): return torch.nn.Linear(10,10)\n",
-                        },
+                        "goal": f"Evaluate retrieval planning for: {user_message[:80]}",
                     }
                 )
             return f"LLM summary: {user_message[:120]}"
@@ -1482,7 +1474,7 @@ def test_phase5_builtin_skills_produce_expected_outputs(
     assert {artifact.artifact_type for artifact in output.output_artifacts} == expected_types
 
 
-def test_phase5_design_experiment_emits_workspace_plan() -> None:
+def test_phase5_design_experiment_emits_goal() -> None:
     registry = SkillRegistry.discover([BUILTINS_DIR])
     loaded = registry.get("design_experiment")
     ctx = SkillContext(
@@ -1494,17 +1486,10 @@ def test_phase5_design_experiment_emits_workspace_plan() -> None:
         input_artifacts=_phase5_inputs("design_experiment"),
         tools=_phase5_gateway(),
         config={
-            "project": {"data_dir": str(Path(__file__).parent / "_test_data")},
             "agent": {
                 "experiment_plan": {
                     "gpu": "cpu",
                     "objective": "test objective",
-                    "workspace": {
-                        "template": "builtin",
-                        "mutable_files": ["configs/hparams.yaml", "models/model.py"],
-                        "entry_point": "train.py",
-                        "eval_script": "evaluate.py",
-                    },
                 }
             },
         },
@@ -1514,9 +1499,11 @@ def test_phase5_design_experiment_emits_workspace_plan() -> None:
 
     assert output.success is True
     artifact = output.output_artifacts[0]
-    assert artifact.payload["plan"].startswith("Evaluate retrieval planning")
-    assert "workspace_path" in artifact.payload
-    assert artifact.payload["mutable_files"] == ["configs/hparams.yaml", "models/model.py"]
+    assert artifact.artifact_type == "ExperimentPlan"
+    assert isinstance(artifact.payload.get("goal"), str)
+    assert artifact.payload["goal"].startswith("Evaluate retrieval planning")
+    assert "workspace_path" not in artifact.payload
+    assert "mutable_files" not in artifact.payload
 
 
 def test_phase5_fetch_fulltext_and_extract_notes_use_retrieved_documents() -> None:
