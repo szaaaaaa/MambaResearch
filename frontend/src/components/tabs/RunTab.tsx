@@ -8,6 +8,7 @@ import { RouteGraph } from '../RouteGraph';
 import { BehaviorTimeline } from '../BehaviorTimeline';
 import { RawTerminalPanel } from '../RawTerminalPanel';
 import { HitlModal } from '../HitlModal';
+import { ClarificationModal } from '../ClarificationModal';
 import { ExperimentProgress } from '../ExperimentProgress';
 import { ReviewStatus } from '../ReviewStatus';
 import { roleLabel, artifactLabel, runStatusLabel, formatTimestamp } from '../../labels';
@@ -263,7 +264,7 @@ function ArtifactDetailModal({
 }
 
 export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferences }) => {
-  const { state, updateRunOverrides, startRun, stopRun, submitHitlResponse } = useAppContext();
+  const { state, updateRunOverrides, startRun, stopRun, submitHitlResponse, submitClarificationResponse } = useAppContext();
   const { conversations, activeConversationId, runOverrides } = state;
   const [runStartError, setRunStartError] = React.useState('');
   const [artifactDetail, setArtifactDetail] = React.useState<ArtifactDetailState | null>(null);
@@ -314,7 +315,12 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
         <ArtifactDetailModal detail={artifactDetail} onClose={() => setArtifactDetail(null)} />
       ) : null}
 
-      {activeConversation.hitlRequest && activeConversation.runId ? (
+      {activeConversation.clarificationState && activeConversation.clarificationState.questions.length > 0 ? (
+        <ClarificationModal
+          state={activeConversation.clarificationState}
+          onSubmit={submitClarificationResponse}
+        />
+      ) : activeConversation.hitlRequest && activeConversation.runId ? (
         <HitlModal
           runId={activeConversation.runId}
           request={activeConversation.hitlRequest}
