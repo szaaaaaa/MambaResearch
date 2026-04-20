@@ -6,7 +6,7 @@
 
 ## Tasks
 
-### [TODO] 1. artifact 契约 + `clarify_intent` skill（独立可运行）
+### [DONE] 1. artifact 契约 + `clarify_intent` skill（独立可运行）
 - **What**: 在 contracts 里新增三种 artifact type，实现 `clarify_intent` skill，挂到 `conductor` 角色。skill 内部调 `ctx.tools.llm_chat` 做真 LLM 推理、产出三层 tier 之一；单元测试用 fake LLM 覆盖三条分支，另加一个 `@pytest.mark.integration` smoke test 跑真模型验证 prompt 产出合法 schema。
 - **Files**:
   - 🔴 `src/dynamic_os/contracts/artifact.py`：新增 `ClarifiedIntent` / `ClarificationRequest` / `ClarificationResponse` 三种 artifact type 常量（改前按 CLAUDE.md 规则列受影响文件确认）
@@ -21,7 +21,7 @@
   - Smoke test（真 LLM）：输入"帮我做个实验"，断言产出 `ClarificationRequest` 且 `questions` 非空；pytest 带 marker `@pytest.mark.integration`，默认跳过，手动启用才跑
   - `roles.yaml` 里 `conductor.skills` 含 `clarify_intent`；`pytest tests/skills/test_clarify_intent.py` 通过；全量 `pytest tests/` 不因此 break
 
-### [TODO] 2. runtime 接入 + HITL 多轮（后端闭环）
+### [DONE] 2. runtime 接入 + HITL 多轮（后端闭环）
 - **What**: 改 `runtime.py`，在调 planner 之前注入 system-reminder 约束"首节点必须是 `clarify_intent`"；打通 `ClarificationRequest` → HITL pause → `ClarificationResponse` artifact → resume → 重跑 `clarify_intent` 的完整后端链路；实现追问轮数上限 3，达上限强制 Tier 2 推进。
 - **Files**:
   - 🟠 `src/dynamic_os/runtime.py`：system-reminder 注入 + HITL 分支接入
@@ -59,3 +59,4 @@
 - 2026-04-20：Q2=A — HITL 多轮状态用 artifact 累积（`ClarificationResponse` 每轮挂到 input_artifacts 链上），不用 session state。理由：符合项目 artifact 血缘原则，前端展示历史追问也天然可得。
 - 2026-04-20：Q3=独立 — Task 2 的 integration test 走 HTTP API 模拟用户回答，不等 Task 3 前端。理由：后端接口稳定前前端会反复改，解耦加速两边迭代。
 - 2026-04-20：Task 顺序 1 → 2 → 3，但 Task 3 可与 Task 2 并行（一旦 Task 2 的 resume API contract 定下）。
+- 2026-04-20：Task 1 执行时改走 A 方案——三种 artifact type 以字符串字面量呈现、payload schema 写在 skill docstring 里，不在 `contracts/artifact.py` 新增常量。理由：现有代码库本就没有 artifact type 常量惯例（全是裸字符串），单为这三个 type 开先例反而不一致。0 个 🔴 改动。

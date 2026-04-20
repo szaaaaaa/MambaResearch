@@ -41,6 +41,12 @@ artifact payload schema
 --------
 ``input_artifacts`` 中每多出一条 ``ClarificationResponse``，``round_num`` 递增。
 LLM 的 system prompt 会把历史追问与回答一并传入，使其能基于已有回答推断 tier。
+
+轮次上限
+--------
+若 LLM 在第 ``CLARIFY_ROUND_CAP + 1`` 轮仍判 ``ambiguous``，技能强制降级为 ``partial``：
+保留本轮 ``inferred_fields``，附加 ``assumptions`` 条目
+``{field: "__clarify_round_cap__", value: None, reason: "..."}`` 标识被 cap。
 """
 
 from __future__ import annotations
@@ -52,6 +58,10 @@ from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.artifact import ArtifactRecord
 from src.dynamic_os.contracts.route_plan import RoleId
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
+
+
+# 追问轮次上限：第 CLARIFY_ROUND_CAP+1 轮仍判 ambiguous 时，强制降级为 partial
+CLARIFY_ROUND_CAP = 3
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +207,10 @@ async def run(ctx: SkillContext) -> SkillOutput:
     parsed = _parse_json(raw)
     tier = str(parsed.get("tier") or "").strip().lower()
 
+    # 轮次上限：第 CLARIFY_ROUND_CAP+1 轮仍判 ambiguous → 强制降级为 partial
+    if tier == "ambiguous" and round_num > CLARIFY_ROUND_CAP:
+        parsed, tier = _apply_round_cap(parsed, user_request)
+
     if tier in ("clear", "partial"):
         return _emit_clarified_intent(ctx, parsed, tier)
     if tier == "ambiguous":
@@ -297,6 +311,43 @@ def _emit_clarification_request(
 # ---------------------------------------------------------------------------
 # 辅助
 # ---------------------------------------------------------------------------
+
+def _apply_round_cap(parsed: dict, user_request: str) -> tuple[dict, str]:
+    """轮次上限触发时，把 ambiguous 结果改写成 partial 并附上 cap 标识。
+
+    - 保留 LLM 本轮给出的 ``inferred_fields``（若有）
+    - 若 ``inferred_goal`` 为空，用 user_request 构造一个兜底目标
+    - 在 ``assumptions`` 末尾追加 ``__clarify_round_cap__`` 条目
+    """
+    inferred_goal = str(parsed.get("inferred_goal") or "").strip()
+    if not inferred_goal:
+        inferred_goal = f"Proceed with best-effort interpretation of: {user_request[:200]}"
+    inferred_fields = parsed.get("inferred_fields") if isinstance(
+        parsed.get("inferred_fields"), dict
+    ) else {}
+    assumptions = parsed.get("assumptions") if isinstance(
+        parsed.get("assumptions"), list
+    ) else []
+    assumptions = list(assumptions)
+    assumptions.append(
+        {
+            "field": "__clarify_round_cap__",
+            "value": None,
+            "reason": (
+                f"Clarification rounds capped at {CLARIFY_ROUND_CAP}; "
+                "proceeding with best-effort inferred intent."
+            ),
+        }
+    )
+    capped = {
+        "tier": "partial",
+        "inferred_goal": inferred_goal,
+        "inferred_fields": inferred_fields,
+        "assumptions": assumptions,
+        "questions": [],
+    }
+    return capped, "partial"
+
 
 def _collect_responses(artifacts: list[ArtifactRecord]) -> list[dict]:
     """从 input_artifacts 里按时间顺序收集 ClarificationResponse 的 payload。"""
