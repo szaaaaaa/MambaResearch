@@ -18,7 +18,7 @@
 - **What**: 安装 claude-code-router，在 Anthropic / Ollama / DeepSeek 等之间路由。
 - **Why deferred**: 订阅按月计费，路由省钱价值低；多厂商对比只在任务 5（Prompt 对比评测）才真正用到。若任务 5 需要再立项。
 
-### [TODO] 2. ClaudeCodeExecutor adapter
+### [DONE] 2. ClaudeCodeExecutor adapter
 - **What**: 在 `src/dynamic_os/executor/` 下新增 `cc_adapter.py`，以子进程方式调用 Claude Code，流式回传 stdout/stderr 到现有 event bus，处理超时和中断。
 - **Files**: `src/dynamic_os/executor/cc_adapter.py`（新增）、`tests/executor/test_cc_adapter.py`（新增）
 - **Risk**: 🟠 高风险区（executor/），改完必跑 `pytest tests/`
@@ -28,7 +28,7 @@
   - adapter 支持 `timeout_sec` 参数，超时后进程被 kill，返回 TimeoutError 观测事件
   - 子进程 stdout 每一行都生成一个 Observation 事件进入现有 bus（测试中用 mock bus 断言至少收到 N 条）
 
-### [TODO] 3. 实验工作区 + `run_experiment` 技能改造
+### [DONE] 3. 实验工作区 + `run_experiment` 技能改造
 - **What**: 定义工作区布局 `data/experiments/<run_id>/<task_id>/{prompt.md, workspace/, results.json, logs/}`；重写 `run_experiment/run.py`：组装 prompt → 建工作区 → 调 cc_adapter → 解析 `results.json` → 产出 artifact。
 - **Files**: `src/dynamic_os/skills/builtins/run_experiment/run.py`、`src/dynamic_os/skills/builtins/run_experiment/skill.yaml`、（可能）`src/dynamic_os/storage/experiment_workspace.py`
 - **Risk**: 🟠 改动涉及 builtin skill 契约，完成后必跑 `pytest tests/`
@@ -36,6 +36,17 @@
   - 给 trivial spec `{"goal": "compute 2+2, write {result: 4} to results.json"}`，技能产出 artifact.payload 包含 `result=4`
   - 工作区目录在运行结束后仍可检视（未被清理），里面有 `prompt.md`、`workspace/`、`results.json`、`logs/*.log`
   - 技能输出符合现有 `SkillOutput` schema（`pytest tests/skills/test_run_experiment.py` 通过）
+
+### [TODO] 3.5 上游 `design_experiment` 契约对齐
+- **What**: Task 3 把 `ExperimentPlan.payload` 从 `{plan, workspace_path, entry_point, eval_script, mutable_files, snapshot, metric_directions, language}` 切到 `{goal, prompt_template?}`。`design_experiment/run.py` 还在写旧字段 → planner 规划 `design_experiment → run_experiment` 的链路会在 `run_experiment` 开头报 "goal required"。两条路，选一条：
+  - 路径 A（轻）：改 `design_experiment` 输出 `{goal: <LLM 产出的自然语言实验描述>}`，保留 LLM 规划 step，删掉写文件/mutable_files/workspace 逻辑（CC 自己会创建）。
+  - 路径 B（彻底）：planner 不再规划 `design_experiment` 节点，user goal / EvidenceMap 直接进 `run_experiment`。需改 `planner/prompts.py:73-74` + `planner/planner.py:360` fallback（🟠 高风险区）。`design_experiment` 技能可废弃或改作"实验设计提案"纯文本产物。
+- **Files**（按路径 A 估算）: `src/dynamic_os/skills/builtins/design_experiment/run.py`、相关测试。
+- **Risk**: 🟢 若走 A；🟠 若走 B（动 planner）
+- **Acceptance**:
+  - planner 规划的 `design_experiment → run_experiment` 端到端不在 "goal required" 上断；用最小 integration test 覆盖。
+  - `pytest tests/` 全绿。
+- **Decision pending**: Task 4（MNIST 场景）开工前定。Task 4 的 AC 里自然覆盖这条端到端链路。
 
 ### [TODO] 4. 场景 A——MNIST MLP 训练
 - **What**: 端到端跑通"训练 MLP 在 MNIST 上 >95%"这条链路。用户自然语言输入 → planner → run_experiment → Claude Code 下载数据、写代码、训练、评估 → 结果回流。

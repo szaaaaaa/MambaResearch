@@ -1453,7 +1453,6 @@ def test_runtime_report_text_summarizes_partial_artifacts_when_report_is_missing
         ("extract_notes", "researcher", {"PaperNotes"}),
         ("build_evidence_map", "researcher", {"EvidenceMap", "GapMap"}),
         ("design_experiment", "experimenter", {"ExperimentPlan"}),
-        ("run_experiment", "experimenter", {"ExperimentResults"}),
         ("analyze_metrics", "analyst", {"ExperimentAnalysis", "PerformanceMetrics"}),
         ("draft_report", "writer", {"ResearchReport"}),
         ("review_artifact", "reviewer", {"ReviewVerdict"}),
@@ -1481,52 +1480,6 @@ def test_phase5_builtin_skills_produce_expected_outputs(
     assert all(tool_id.startswith("mcp.") for tool_id in loaded.spec.allowed_tools)
     assert output.success is True
     assert {artifact.artifact_type for artifact in output.output_artifacts} == expected_types
-
-
-def test_phase5_run_experiment_returns_failure_on_executor_error() -> None:
-    registry = SkillRegistry.discover([BUILTINS_DIR])
-    loaded = registry.get("run_experiment")
-    policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
-    ctx = SkillContext(
-        skill_id="run_experiment",
-        role_id="experimenter",
-        run_id="run_phase5_fail",
-        node_id="node_run_experiment_1",
-        goal="Run the experiment",
-        input_artifacts=[
-            _phase5_artifact(
-                "experiment_plan_fail_1",
-                "ExperimentPlan",
-                role=RoleId.experimenter,
-                skill="design_experiment",
-                payload={
-                    "language": "python",
-                    "workspace_path": str(Path(__file__).parent / "_test_workspace"),
-                    "entry_point": "train.py",
-                    "eval_script": "evaluate.py",
-                    "mutable_files": [],
-                    "snapshot": {},
-                },
-            )
-        ],
-        tools=ToolGateway(
-            registry=ToolRegistry.from_servers(
-                [
-                    {"server_id": "llm", "tools": [{"name": "chat", "capability": "llm_chat"}]},
-                    {"server_id": "exec", "tools": [{"name": "execute_code", "capability": "execute_code"}]},
-                ]
-            ),
-            policy=policy,
-            mcp_invoker=lambda tool, payload: "{}",
-            code_executor=lambda **kwargs: {"exit_code": 1, "stderr": "boom"},
-        ),
-        config={"agent": {"experiment_plan": {"recovery": {"max_retries": 0}}}},
-    )
-
-    output = asyncio.run(loaded.runner(ctx))
-
-    assert output.success is False
-    assert "failed" in (output.error or "").lower()
 
 
 def test_phase5_design_experiment_emits_workspace_plan() -> None:
@@ -1564,52 +1517,6 @@ def test_phase5_design_experiment_emits_workspace_plan() -> None:
     assert artifact.payload["plan"].startswith("Evaluate retrieval planning")
     assert "workspace_path" in artifact.payload
     assert artifact.payload["mutable_files"] == ["configs/hparams.yaml", "models/model.py"]
-
-
-def test_phase5_run_experiment_fails_with_bad_executor() -> None:
-    registry = SkillRegistry.discover([BUILTINS_DIR])
-    loaded = registry.get("run_experiment")
-    policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
-    ctx = SkillContext(
-        skill_id="run_experiment",
-        role_id="experimenter",
-        run_id="run_phase5_missing_workspace",
-        node_id="node_run_experiment_missing_workspace",
-        goal="Run the experiment",
-        input_artifacts=[
-            _phase5_artifact(
-                "experiment_plan_missing_ws_1",
-                "ExperimentPlan",
-                role=RoleId.experimenter,
-                skill="design_experiment",
-                payload={
-                    "language": "python",
-                    "workspace_path": "/nonexistent/workspace",
-                    "entry_point": "train.py",
-                    "eval_script": "evaluate.py",
-                    "mutable_files": [],
-                    "snapshot": {},
-                },
-            )
-        ],
-        tools=ToolGateway(
-            registry=ToolRegistry.from_servers(
-                [
-                    {"server_id": "llm", "tools": [{"name": "chat", "capability": "llm_chat"}]},
-                    {"server_id": "exec", "tools": [{"name": "execute_code", "capability": "execute_code"}]},
-                ]
-            ),
-            policy=policy,
-            mcp_invoker=lambda tool, payload: "{}",
-            code_executor=lambda **kwargs: {"exit_code": 1, "stderr": "workspace not found"},
-        ),
-        config={"agent": {"experiment_plan": {"recovery": {"max_retries": 0}}}},
-    )
-
-    output = asyncio.run(loaded.runner(ctx))
-
-    assert output.success is False
-    assert "failed" in (output.error or "").lower()
 
 
 def test_phase5_fetch_fulltext_and_extract_notes_use_retrieved_documents() -> None:

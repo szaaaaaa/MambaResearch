@@ -1,17 +1,18 @@
 id: run_experiment
 name: Run Experiment
-version: 1.0.0
+version: 2.0.0
 applicable_roles:
   - experimenter
-description: Execute a bounded experiment plan in the sandbox and collect raw results.
+description: >-
+  Delegate an experiment goal to Claude Code CLI; persist workspace +
+  results.json and emit ExperimentResults.
 input_contract:
   required:
     - ExperimentPlan
   optional: []
 output_artifacts:
   - ExperimentResults
-allowed_tools:
-  - mcp.exec.execute_code
+allowed_tools: []
 permissions:
   sandbox_exec: true
-timeout_sec: 120
+timeout_sec: 600
