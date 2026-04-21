@@ -4,11 +4,11 @@ import { Button, Card, Toggle, Select, Input } from '../../ui';
 
 export const ExperimentSection: React.FC = () => {
   const { state, updateProjectConfig, saveProjectConfig } = useAppContext();
-  const experimentPlan = state.projectConfig?.agent?.experiment_plan || {};
-  const workspace = experimentPlan.workspace || {};
-  const recovery = experimentPlan.recovery || {};
-  const stopping = experimentPlan.stopping || {};
-  const mutableFiles = (workspace.mutable_files || []).join(', ');
+  const experimentPlan = state.projectConfig.agent.experiment_plan;
+  const workspace = experimentPlan.workspace;
+  const recovery = experimentPlan.recovery;
+  const stopping = experimentPlan.stopping;
+  const mutableFiles = (workspace?.mutable_files ?? []).join(', ');
 
   return (
     <>
@@ -67,18 +67,18 @@ export const ExperimentSection: React.FC = () => {
       <Card title="实验工作区" description="配置实验模板、可修改文件和执行入口">
         <Select
           label="模板类型"
-          value={workspace.template || 'builtin'}
+          value={workspace?.template || 'builtin'}
           options={[
             { value: 'builtin', label: '内置模板 (CIFAR-10 CNN)' },
             { value: 'custom', label: '自定义工作区' },
           ]}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.workspace.template', e.target.value)}
         />
-        {(workspace.template || 'builtin') === 'custom' && (
+        {(workspace?.template || 'builtin') === 'custom' && (
           <Input
             label="自定义工作区路径"
             type="text"
-            value={workspace.custom_path || ''}
+            value={workspace?.custom_path || ''}
             placeholder="例如：/path/to/my/experiment"
             onChange={(e) => updateProjectConfig('agent.experiment_plan.workspace.custom_path', e.target.value)}
           />
@@ -98,13 +98,13 @@ export const ExperimentSection: React.FC = () => {
         <Input
           label="训练入口脚本"
           type="text"
-          value={workspace.entry_point || 'train.py'}
+          value={workspace?.entry_point || 'train.py'}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.workspace.entry_point', e.target.value)}
         />
         <Input
           label="评估脚本"
           type="text"
-          value={workspace.eval_script || 'evaluate.py'}
+          value={workspace?.eval_script || 'evaluate.py'}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.workspace.eval_script', e.target.value)}
         />
       </Card>
@@ -114,7 +114,7 @@ export const ExperimentSection: React.FC = () => {
         <Input
           label="单次执行失败重试次数"
           type="number"
-          value={recovery.max_retries ?? 3}
+          value={recovery?.max_retries ?? 3}
           min={0}
           max={10}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.recovery.max_retries', Number(e.target.value))}
@@ -122,7 +122,7 @@ export const ExperimentSection: React.FC = () => {
         <Input
           label="连续失败 N 次后微调 (REFINE)"
           type="number"
-          value={recovery.refine_after ?? 3}
+          value={recovery?.refine_after ?? 3}
           min={1}
           max={10}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.recovery.refine_after', Number(e.target.value))}
@@ -130,7 +130,7 @@ export const ExperimentSection: React.FC = () => {
         <Input
           label="连续失败 N 次后转向 (PIVOT)"
           type="number"
-          value={recovery.pivot_after ?? 5}
+          value={recovery?.pivot_after ?? 5}
           min={2}
           max={15}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.recovery.pivot_after', Number(e.target.value))}
@@ -138,7 +138,7 @@ export const ExperimentSection: React.FC = () => {
         <Input
           label="连续无提升容忍轮数 (patience)"
           type="number"
-          value={stopping.patience ?? 3}
+          value={stopping?.patience ?? 3}
           min={1}
           max={10}
           onChange={(e) => updateProjectConfig('agent.experiment_plan.stopping.patience', Number(e.target.value))}
@@ -146,7 +146,7 @@ export const ExperimentSection: React.FC = () => {
         <Input
           label="最小提升阈值"
           type="number"
-          value={stopping.min_improvement ?? 0.001}
+          value={stopping?.min_improvement ?? 0.001}
           min={0}
           max={1}
           step={0.001}
