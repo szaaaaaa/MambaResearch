@@ -367,6 +367,26 @@ export interface CodexStatus {
   last_error: string;
 }
 
+export interface ClaudeCodeSessionInfo {
+  id: string;
+  cwd: string;
+  model: string | null;
+  created_at: number;
+}
+
+export interface ClaudeCodeStreamItem {
+  id: string;
+  payload: unknown;
+}
+
+export interface ClaudeCodeState {
+  session: ClaudeCodeSessionInfo | null;
+  items: ClaudeCodeStreamItem[];
+  isRunning: boolean;
+  rawEventsVisible: boolean;
+  turnStartAt: number | null;
+}
+
 export interface AppState {
   credentials: Credentials;
   credentialStatus: CredentialStatusMap;
@@ -384,6 +404,7 @@ export interface AppState {
   openrouterCatalog: ProviderModelCatalog;
   siliconflowCatalog: ProviderModelCatalog;
   isAdvancedMode: boolean;
+  claudeCode: ClaudeCodeState;
 }
 
 export interface SkillMetricsData {

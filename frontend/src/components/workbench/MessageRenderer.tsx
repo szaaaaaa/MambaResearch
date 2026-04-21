@@ -3,7 +3,6 @@ import { MarkdownBlock } from './MarkdownBlock';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolUseLine } from './ToolUseLine';
 import { UserPromptLine } from './UserPromptLine';
-import { SystemInitLine } from './SystemInitLine';
 import { ResultFooter } from './ResultFooter';
 
 interface MessageRendererProps {
@@ -15,6 +14,7 @@ interface MessageRendererProps {
  * 归入 "原始事件" 的 SDK 消息类型 —— 默认隐藏，toggle 打开后才显示。
  */
 const RAW_EVENT_TYPES = new Set([
+  'system',
   'rate_limit_event',
   'stream_event',
   'task_started',
@@ -37,22 +37,36 @@ function RawEventFold({ label, payload }: { label: string; payload: unknown }): 
 }
 
 /**
- * Tool Result 块扁平渲染：`⎿` 前缀 + 等宽预格式化内容；错误走 rose 色。
+ * Tool Result 块折叠渲染：`⎿ N 行输出` 或 `⎿ 错误：...`，点击展开完整内容。
+ * 与 CLI "Listed 1 directory (ctrl+o to expand)" 视觉语义对齐 —— 不抢走正文焦点。
  * SDK 通过 UserMessage.content 回传工具结果，所以在 user 分支里被调用。
  */
 function renderToolResultBlock(b: Record<string, unknown>, key: React.Key): React.ReactElement {
   const raw = b.content;
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
   const isError = b.is_error === true;
+  const lines = text.split('\n');
+  const firstLine = lines[0] ?? '';
+  const summary = isError
+    ? `错误：${firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine || 'unknown'}`
+    : `${lines.length} 行输出`;
   return (
-    <pre
-      key={key}
-      className={`my-1 ml-4 overflow-x-auto whitespace-pre-wrap rounded bg-slate-50 p-2 font-mono text-[11px] ${
-        isError ? 'text-rose-700' : 'text-slate-700'
-      }`}
-    >
-      ⎿ {text}
-    </pre>
+    <details key={key} className="my-0.5 ml-4 text-xs">
+      <summary
+        className={`cursor-pointer select-none font-mono text-[12px] ${
+          isError ? 'text-rose-600 hover:text-rose-800' : 'text-slate-500 hover:text-slate-700'
+        }`}
+      >
+        ⎿ {summary}
+      </summary>
+      <pre
+        className={`mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-slate-50 p-2 font-mono text-[11px] ${
+          isError ? 'text-rose-700' : 'text-slate-700'
+        }`}
+      >
+        {text}
+      </pre>
+    </details>
   );
 }
 
@@ -82,30 +96,34 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({ message, rawEv
   if (type === 'assistant') {
     // SDK 约束：AssistantMessage.content ∈ {TextBlock, ThinkingBlock, ToolUseBlock}
     // 不含 ToolResultBlock（那是 UserMessage 的事）
+    // CLI 视觉语言：整个 assistant 轮次左侧挂一个蓝色 `●` 标记，不是每个 block 一个
     const content = Array.isArray(payload.content) ? payload.content : [];
     return (
-      <div className="flex flex-col">
-        {content.map((block, idx) => {
-          if (!block || typeof block !== 'object') return null;
-          const b = block as Record<string, unknown>;
-          const btype = typeof b.type === 'string' ? b.type : '';
-          if (btype === 'text' && typeof b.text === 'string') {
-            return <MarkdownBlock key={idx}>{b.text}</MarkdownBlock>;
-          }
-          if (btype === 'thinking' && typeof b.thinking === 'string') {
-            const durationMs =
-              typeof b.duration_ms === 'number' ? (b.duration_ms as number) : null;
-            return <ThinkingBlock key={idx} content={b.thinking} durationMs={durationMs} />;
-          }
-          if (btype === 'tool_use') {
-            const name = typeof b.name === 'string' ? b.name : '(unknown)';
-            return <ToolUseLine key={idx} name={name} input={b.input} />;
-          }
-          if (rawEventsVisible) {
-            return <RawEventFold key={idx} label={`block:${btype || 'unknown'}`} payload={b} />;
-          }
-          return null;
-        })}
+      <div className="my-2 flex items-start gap-2">
+        <span className="mt-[6px] font-mono text-[10px] leading-none text-sky-600">●</span>
+        <div className="min-w-0 flex-1">
+          {content.map((block, idx) => {
+            if (!block || typeof block !== 'object') return null;
+            const b = block as Record<string, unknown>;
+            const btype = typeof b.type === 'string' ? b.type : '';
+            if (btype === 'text' && typeof b.text === 'string') {
+              return <MarkdownBlock key={idx}>{b.text}</MarkdownBlock>;
+            }
+            if (btype === 'thinking' && typeof b.thinking === 'string') {
+              const durationMs =
+                typeof b.duration_ms === 'number' ? (b.duration_ms as number) : null;
+              return <ThinkingBlock key={idx} content={b.thinking} durationMs={durationMs} />;
+            }
+            if (btype === 'tool_use') {
+              const name = typeof b.name === 'string' ? b.name : '(unknown)';
+              return <ToolUseLine key={idx} name={name} input={b.input} />;
+            }
+            if (rawEventsVisible) {
+              return <RawEventFold key={idx} label={`block:${btype || 'unknown'}`} payload={b} />;
+            }
+            return null;
+          })}
+        </div>
       </div>
     );
   }
@@ -115,16 +133,6 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({ message, rawEv
     const totalCost = typeof payload.total_cost_usd === 'number' ? payload.total_cost_usd : null;
     const duration = typeof payload.duration_ms === 'number' ? payload.duration_ms : null;
     return <ResultFooter usage={usage} totalCostUsd={totalCost} durationMs={duration} />;
-  }
-
-  if (type === 'system') {
-    const subtype = typeof payload.subtype === 'string' ? payload.subtype : '';
-    if (subtype === 'init') {
-      const data = (payload.data ?? {}) as Record<string, unknown>;
-      return <SystemInitLine data={data} />;
-    }
-    if (!rawEventsVisible) return null;
-    return <RawEventFold label={`system:${subtype || 'unknown'}`} payload={payload} />;
   }
 
   // SDK user 消息的 content 承载 ToolResultBlock（工具执行结果回传）。

@@ -103,7 +103,10 @@ async def send_message(session_id: str, request: Request):
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
 
-    session = session_manager.get(session_id)
+    # 原子 lookup + 刷新 last_activity_at，避免与 sweeper 抢占：
+    # 若 touch 返回非 None，session 的时间戳已刷新到"刚才"，下一轮 sweeper
+    # 扫描不会把它判定为 idle；本轮内后续调用都持有同一个 session 引用。
+    session = session_manager.touch(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
 

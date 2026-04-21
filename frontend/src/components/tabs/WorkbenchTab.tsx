@@ -1,82 +1,71 @@
 import React from 'react';
 import { Send, Square, Terminal } from 'lucide-react';
-import { API_BASE } from '../../store';
+import { API_BASE, useAppContext } from '../../store';
+import { ClaudeCodeSessionInfo } from '../../types';
 import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
 import { RawEventsToggle } from '../workbench/RawEventsToggle';
 
-interface StreamItem {
-  id: string;
-  payload: unknown;
-}
-
-interface SessionInfo {
-  id: string;
-  cwd: string;
-  model: string | null;
-  created_at: number;
-}
-
-function newItemId(): string {
-  return `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
  *
- * 所有消息按 SDK 原生类型扁平渲染（`MessageRenderer`），不使用聊天气泡；
- * `ResultMessage` 只产一行 dim footer 避免与 `AssistantMessage` 正文重复；
- * 非 init 的 `system` 和 `rate_limit_event` / `stream_event` / `task_*` 默认隐藏，
- * 顶部 "显示原始事件" toggle 打开后以 dim 折叠行出现。
+ * 所有会话状态（session、items、isRunning、rawEventsVisible、turnStartAt、abort controller）
+ * 都在 ``AppContext.claudeCode`` 里，组件本身只负责渲染与用户交互。
+ * tab 切换会导致本组件 unmount，但 AppProvider 一直挂载，所以状态全部保留；后端 SDK
+ * client 由 ``SessionManager`` 的 idle TTL（60min 无活动）自行回收，前端 unmount
+ * 不再 DELETE 也不再 abort，保证"切走 → 切回"之前的对话完整还原。
  */
 export const WorkbenchTab: React.FC = () => {
-  const [prompt, setPrompt] = React.useState('');
-  const [items, setItems] = React.useState<StreamItem[]>([]);
-  const [isRunning, setIsRunning] = React.useState(false);
-  const [session, setSession] = React.useState<SessionInfo | null>(null);
-  const [rawEventsVisible, setRawEventsVisible] = React.useState(false);
-  const sessionRef = React.useRef<SessionInfo | null>(null);
-  const abortControllerRef = React.useRef<AbortController | null>(null);
-  const scrollRef = React.useRef<HTMLDivElement | null>(null);
-  // 本轮 prompt 发送时刻，用于给 ThinkingBlock 计算 duration_ms（CLI "思考（N 秒）" 语义）
-  const turnStartRef = React.useRef<number | null>(null);
+  const {
+    state,
+    ccSetSession,
+    ccAppendItem,
+    ccSetRunning,
+    ccSetRawEventsVisible,
+    ccSetTurnStartAt,
+    ccGetAbortController,
+    ccSetAbortController,
+  } = useAppContext();
+  const { session, items, isRunning, rawEventsVisible, turnStartAt } = state.claudeCode;
 
+  const [prompt, setPrompt] = React.useState('');
+  const [elapsedSec, setElapsedSec] = React.useState(0);
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+
+  // sessionRef 给 handleSend 闭包用：避免 state 未及时同步时 ensureSession 读到旧值
+  const sessionRef = React.useRef<ClaudeCodeSessionInfo | null>(session);
   React.useEffect(() => {
     sessionRef.current = session;
   }, [session]);
 
+  // 运行中底部 `✽ Vibing…` 秒数；基准取 store 的 turnStartAt，
+  // 跨 tab 切换后重新挂载仍能沿着同一轮继续计时。
+  React.useEffect(() => {
+    if (!isRunning || turnStartAt == null) {
+      setElapsedSec(0);
+      return;
+    }
+    const tick = () => setElapsedSec(Math.floor((Date.now() - turnStartAt) / 1000));
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [isRunning, turnStartAt]);
+
+  // 每次 items 变化尽量滚到底部；tab 切换重新挂载时默认也滚到底部（节点变了 scrollTop 会归零）
   React.useEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
   }, [items]);
 
-  // 组件卸载时关闭会话（下次挂载会新建）
-  React.useEffect(() => {
-    return () => {
-      const active = sessionRef.current;
-      if (active) {
-        void fetch(`${API_BASE}/api/claude-code/sessions/${active.id}`, {
-          method: 'DELETE',
-          keepalive: true,
-        });
-      }
-      abortControllerRef.current?.abort();
-    };
-  }, []);
-
-  const appendItem = React.useCallback((payload: unknown) => {
-    setItems((prev) => [...prev, { id: newItemId(), payload }]);
-  }, []);
-
   const pushError = React.useCallback(
     (text: string) => {
-      appendItem({ type: 'error_local', text });
+      ccAppendItem({ type: 'error_local', text });
     },
-    [appendItem],
+    [ccAppendItem],
   );
 
-  const ensureSession = React.useCallback(async (): Promise<SessionInfo> => {
+  const ensureSession = React.useCallback(async (): Promise<ClaudeCodeSessionInfo> => {
     if (sessionRef.current) return sessionRef.current;
     const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
       method: 'POST',
@@ -87,23 +76,24 @@ export const WorkbenchTab: React.FC = () => {
       const detail = await response.text().catch(() => '');
       throw new Error(detail || `HTTP ${response.status}`);
     }
-    const info = (await response.json()) as SessionInfo;
+    const info = (await response.json()) as ClaudeCodeSessionInfo;
     sessionRef.current = info;
-    setSession(info);
+    ccSetSession(info);
     return info;
-  }, []);
+  }, [ccSetSession]);
 
   const handleSend = async () => {
     const trimmed = prompt.trim();
     if (!trimmed || isRunning) return;
 
-    setIsRunning(true);
-    turnStartRef.current = Date.now();
-    appendItem({ type: 'user_local', text: trimmed });
+    const turnStart = Date.now();
+    ccSetTurnStartAt(turnStart);
+    ccSetRunning(true);
+    ccAppendItem({ type: 'user_local', text: trimmed });
     setPrompt('');
 
     const controller = new AbortController();
-    abortControllerRef.current = controller;
+    ccSetAbortController(controller);
 
     try {
       const active = await ensureSession();
@@ -138,9 +128,9 @@ export const WorkbenchTab: React.FC = () => {
         } catch {
           /* keep raw */
         }
-        // 终止帧：尽早释放 UI，不插入消息（CLI 里下一条 `>` 自然分轮，不需要分隔）
         if (frame.event === 'cc_finished') {
-          setIsRunning(false);
+          ccSetRunning(false);
+          ccSetTurnStartAt(null);
           return;
         }
         if (frame.event === 'cc_error') {
@@ -149,7 +139,8 @@ export const WorkbenchTab: React.FC = () => {
               ? String((parsed as { message?: unknown }).message ?? '')
               : frame.data;
           pushError(text || 'unknown error');
-          setIsRunning(false);
+          ccSetRunning(false);
+          ccSetTurnStartAt(null);
           return;
         }
         // assistant 消息到达时，给其中的 thinking block 快照本轮墙钟耗时（CLI "思考（N 秒）"）
@@ -158,27 +149,23 @@ export const WorkbenchTab: React.FC = () => {
           typeof parsed === 'object' &&
           (parsed as Record<string, unknown>).type === 'assistant'
         ) {
-          const start = turnStartRef.current;
-          if (typeof start === 'number') {
-            const duration = Date.now() - start;
-            const record = parsed as Record<string, unknown>;
-            const content = record.content;
-            if (Array.isArray(content)) {
-              record.content = content.map((block) => {
-                if (
-                  block &&
-                  typeof block === 'object' &&
-                  (block as Record<string, unknown>).type === 'thinking'
-                ) {
-                  return { ...(block as Record<string, unknown>), duration_ms: duration };
-                }
-                return block;
-              });
-            }
+          const duration = Date.now() - turnStart;
+          const record = parsed as Record<string, unknown>;
+          const content = record.content;
+          if (Array.isArray(content)) {
+            record.content = content.map((block) => {
+              if (
+                block &&
+                typeof block === 'object' &&
+                (block as Record<string, unknown>).type === 'thinking'
+              ) {
+                return { ...(block as Record<string, unknown>), duration_ms: duration };
+              }
+              return block;
+            });
           }
         }
-        // 其余事件（默认 cc_message）交由 MessageRenderer 按 payload.type 分发
-        appendItem(parsed);
+        ccAppendItem(parsed);
       };
 
       while (true) {
@@ -207,15 +194,19 @@ export const WorkbenchTab: React.FC = () => {
         pushError(String(error));
       }
     } finally {
-      abortControllerRef.current = null;
-      setIsRunning(false);
+      if (ccGetAbortController() === controller) {
+        ccSetAbortController(null);
+      }
+      ccSetRunning(false);
+      ccSetTurnStartAt(null);
     }
   };
 
   const handleStop = async () => {
     const active = sessionRef.current;
+    const controller = ccGetAbortController();
     if (!active) {
-      abortControllerRef.current?.abort();
+      controller?.abort();
       return;
     }
     try {
@@ -225,7 +216,7 @@ export const WorkbenchTab: React.FC = () => {
     } catch (error) {
       pushError(`停止失败：${String(error)}`);
     } finally {
-      abortControllerRef.current?.abort();
+      controller?.abort();
     }
   };
 
@@ -245,18 +236,7 @@ export const WorkbenchTab: React.FC = () => {
             )}
           </p>
         </div>
-        <RawEventsToggle value={rawEventsVisible} onChange={setRawEventsVisible} />
-        {isRunning ? (
-          <span className="flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-            运行中
-          </span>
-        ) : (
-          <span className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-            空闲
-          </span>
-        )}
+        <RawEventsToggle value={rawEventsVisible} onChange={ccSetRawEventsVisible} />
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
@@ -274,6 +254,14 @@ export const WorkbenchTab: React.FC = () => {
           )}
         </div>
       </div>
+
+      {isRunning && (
+        <div className="border-t border-slate-100 bg-white">
+          <div className="mx-auto max-w-3xl px-6 py-2 font-mono text-[12px] text-slate-500">
+            ✽ Vibing… ({elapsedSec}s · esc 或中止按钮取消)
+          </div>
+        </div>
+      )}
 
       <footer className="border-t border-slate-200 bg-white px-6 py-4">
         <div className="mx-auto flex max-w-3xl items-end gap-3">

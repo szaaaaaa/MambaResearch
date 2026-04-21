@@ -343,3 +343,92 @@ def test_package_exports():
     assert callable(cc_pkg.serialize_block)
     # 路由 module 能 import
     assert hasattr(cc_route, "router")
+
+
+# ---------------------------------------------------------------------------
+# Idle TTL 回收
+#
+# Task 7 把会话回收责任从"前端 unmount 触发 DELETE"移到"后端 idle TTL"，
+# 避免浏览器切 Tab / 刷新 / 断网误杀活跃会话。下面用极短 TTL（0.15-0.2s）
+# 和高频 sweep（50ms）压缩验证窗口，不等 30min。
+# ---------------------------------------------------------------------------
+
+
+def test_idle_session_is_evicted(fake_sdk, tmp_path):
+    async def run():
+        mgr = sm_module.SessionManager(idle_ttl_sec=0.15, sweep_interval_sec=0.05)
+        try:
+            session = await mgr.create(cwd=tmp_path)
+            assert mgr.get(session.id) is session
+
+            await asyncio.sleep(0.35)
+
+            assert mgr.get(session.id) is None, "idle session should have been evicted"
+            assert session.client.disconnected is True
+        finally:
+            await mgr.shutdown()
+
+    asyncio.run(run())
+
+
+def test_touch_keeps_active_session_alive(fake_sdk, tmp_path):
+    async def run():
+        mgr = sm_module.SessionManager(idle_ttl_sec=0.2, sweep_interval_sec=0.05)
+        try:
+            session = await mgr.create(cwd=tmp_path)
+            # 每 80ms touch 一次，持续 ~400ms——每次刷新都在 TTL 内
+            for _ in range(5):
+                await asyncio.sleep(0.08)
+                assert mgr.touch(session.id) is session
+
+            assert mgr.get(session.id) is session
+            assert session.client.disconnected is False
+        finally:
+            await mgr.shutdown()
+
+    asyncio.run(run())
+
+
+def test_shutdown_cancels_sweeper_task(fake_sdk, tmp_path):
+    async def run():
+        mgr = sm_module.SessionManager(idle_ttl_sec=10.0, sweep_interval_sec=0.05)
+        await mgr.create(cwd=tmp_path)
+        sweeper = mgr._sweeper_task
+        assert sweeper is not None and not sweeper.done()
+
+        await mgr.shutdown()
+
+        assert sweeper.done(), "shutdown should cancel and await the sweeper task"
+        assert mgr._sweeper_task is None
+
+    asyncio.run(run())
+
+
+def test_touch_missing_session_returns_none(fake_sdk):
+    async def run():
+        mgr = sm_module.SessionManager()
+        try:
+            assert mgr.touch("nonexistent") is None
+        finally:
+            await mgr.shutdown()
+
+    asyncio.run(run())
+
+
+def test_interrupt_refreshes_last_activity(fake_sdk, tmp_path):
+    """interrupt 也应被视作活动，刷新 last_activity_at。"""
+
+    async def run():
+        mgr = sm_module.SessionManager(idle_ttl_sec=0.2, sweep_interval_sec=0.05)
+        try:
+            session = await mgr.create(cwd=tmp_path)
+            # 快到 TTL 前调一次 interrupt 续命
+            for _ in range(5):
+                await asyncio.sleep(0.08)
+                await mgr.interrupt(session.id)
+
+            assert mgr.get(session.id) is session
+        finally:
+            await mgr.shutdown()
+
+    asyncio.run(run())

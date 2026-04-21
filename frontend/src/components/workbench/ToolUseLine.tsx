@@ -29,19 +29,20 @@ function summarize(input: unknown): string {
 }
 
 /**
- * 工具调用行：`● <name>(<summary>)`，点击展开入参 JSON。
- * Task 4 会按 tool_name 替换为专属视图，此处为通用占位。
+ * 工具调用行：condensed 单行 `<name>(<summary>)`，默认折叠、dim 色，
+ * 与 CLI 里 "Listed 1 directory (ctrl+o to expand)" 视觉语义对齐 —— 不抢走
+ * assistant 正文的视觉焦点，只在用户想深看时点开显示入参 JSON。
+ * Task 4 会按 tool_name 替换为专属 summary（"Listed N items"/"Read file (L lines)" 等）。
  */
 export const ToolUseLine: React.FC<ToolUseLineProps> = ({ name, input }) => {
   const summary = summarize(input);
   return (
-    <details className="my-1 text-sm">
-      <summary className="cursor-pointer select-none font-mono text-[13px]">
-        <span className="text-slate-400">●</span>{' '}
-        <span className="font-medium text-amber-700">{name}</span>
-        {summary ? <span className="text-slate-500">({summary})</span> : null}
+    <details className="my-0.5 text-xs">
+      <summary className="cursor-pointer select-none font-mono text-[12px] text-slate-500 hover:text-slate-700">
+        <span className="text-amber-700">{name}</span>
+        {summary ? <span>({summary})</span> : null}
       </summary>
-      <pre className="mt-2 ml-4 overflow-x-auto whitespace-pre-wrap rounded bg-slate-50 p-2 font-mono text-[11px] text-slate-700">
+      <pre className="mt-1 ml-3 overflow-x-auto whitespace-pre-wrap rounded bg-slate-50 p-2 font-mono text-[11px] text-slate-700">
         {JSON.stringify(input, null, 2)}
       </pre>
     </details>

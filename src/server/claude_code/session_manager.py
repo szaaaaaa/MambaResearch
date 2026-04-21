@@ -39,6 +39,8 @@ class ClaudeSession:
         指定模型；None 表示使用 CLI 默认。
     created_at : float
         创建 Unix 时间戳。
+    last_activity_at : float
+        最近一次活动（send_message / interrupt）时间戳，驱动 idle TTL 回收。
     client : ClaudeSDKClient
         已 ``connect`` 的 SDK 客户端。
     lock : asyncio.Lock
@@ -49,6 +51,7 @@ class ClaudeSession:
     cwd: str
     model: str | None
     created_at: float
+    last_activity_at: float
     client: ClaudeSDKClient
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -61,12 +64,31 @@ class ClaudeSession:
         }
 
 
-class SessionManager:
-    """进程内 Claude Code 会话注册表。"""
+DEFAULT_IDLE_TTL_SEC = 3600.0  # 60 分钟无活动自动回收 SDK client
+DEFAULT_SWEEP_INTERVAL_SEC = 60.0
 
-    def __init__(self) -> None:
+
+class SessionManager:
+    """进程内 Claude Code 会话注册表。
+
+    Idle TTL 回收：
+    ``last_activity_at`` 由 ``touch`` 在每次 ``send_message`` / ``interrupt`` 时刷新；
+    后台 sweeper 每 ``sweep_interval_sec`` 秒扫一次，超过 ``idle_ttl_sec`` 未活动的
+    会话会被调 ``disconnect`` 并从注册表移除。前端 Tab 切换/浏览器刷新不再需要触发
+    ``DELETE`` 端点，避免误杀活跃会话。
+    """
+
+    def __init__(
+        self,
+        *,
+        idle_ttl_sec: float = DEFAULT_IDLE_TTL_SEC,
+        sweep_interval_sec: float = DEFAULT_SWEEP_INTERVAL_SEC,
+    ) -> None:
         self._sessions: dict[str, ClaudeSession] = {}
         self._lock = asyncio.Lock()
+        self.idle_ttl_sec = idle_ttl_sec
+        self.sweep_interval_sec = sweep_interval_sec
+        self._sweeper_task: asyncio.Task[None] | None = None
 
     async def create(
         self,
@@ -96,19 +118,37 @@ class SessionManager:
         client = ClaudeSDKClient(options=options)
         await client.connect()
 
+        now = time.time()
         session = ClaudeSession(
             id=uuid.uuid4().hex,
             cwd=str(cwd),
             model=model,
-            created_at=time.time(),
+            created_at=now,
+            last_activity_at=now,
             client=client,
         )
         async with self._lock:
             self._sessions[session.id] = session
+        self._ensure_sweeper()
         return session
 
     def get(self, session_id: str) -> ClaudeSession | None:
         return self._sessions.get(session_id)
+
+    def touch(self, session_id: str) -> ClaudeSession | None:
+        """原子刷新活跃时间戳并返回会话。
+
+        将"查找"和"打点"合成单次 sync 操作——无 await 点，相对 sweeper 的
+        ``async with self._lock:`` 临界段天然串行：要么先于 sweeper 跑完刷新了
+        时间戳（sweeper 看到新值不 evict），要么在 sweeper evict 之后跑（dict
+        已 pop，返回 ``None``）。调用方凭返回值一次拿到 session，不需要再调
+        ``get`` 从而规避 get/touch 之间被抢占的竞争。
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        session.last_activity_at = time.time()
+        return session
 
     async def delete(self, session_id: str) -> bool:
         """断开并移除会话。返回是否实际删除了会话。"""
@@ -129,14 +169,63 @@ class SessionManager:
         session = self._sessions.get(session_id)
         if session is None:
             return False
+        session.last_activity_at = time.time()
         await session.client.interrupt()
         return True
 
     def list_sessions(self) -> list[ClaudeSession]:
         return list(self._sessions.values())
 
+    def _ensure_sweeper(self) -> None:
+        """首次注册会话时 lazy 启动 sweeper；已运行则 no-op。"""
+        if self._sweeper_task is not None and not self._sweeper_task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 没有运行中的 event loop（比如同步测试场景）——放弃启动
+            return
+        self._sweeper_task = loop.create_task(self._sweep_loop(), name="claude-code-sweeper")
+
+    async def _sweep_loop(self) -> None:
+        """周期扫描 idle 会话并 evict。异常只记录不冒泡，避免 loop 挂死。"""
+        while True:
+            try:
+                await asyncio.sleep(self.sweep_interval_sec)
+            except asyncio.CancelledError:
+                raise
+            try:
+                await self._evict_idle()
+            except Exception:
+                logger.exception("idle sweeper iteration failed")
+
+    async def _evict_idle(self) -> None:
+        now = time.time()
+        ttl = self.idle_ttl_sec
+        async with self._lock:
+            idle_ids = [
+                sid
+                for sid, sess in self._sessions.items()
+                if now - sess.last_activity_at > ttl
+            ]
+            victims = [self._sessions.pop(sid) for sid in idle_ids]
+        for session in victims:
+            logger.info("session %s evicted by idle ttl (>%.0fs)", session.id, ttl)
+            try:
+                await session.client.disconnect()
+            except Exception:
+                logger.exception("disconnect failed during idle eviction for %s", session.id)
+
     async def shutdown(self) -> None:
-        """进程关停时统一断开所有会话。"""
+        """进程关停时取消 sweeper 并统一断开所有会话。"""
+        sweeper = self._sweeper_task
+        self._sweeper_task = None
+        if sweeper is not None and not sweeper.done():
+            sweeper.cancel()
+            try:
+                await sweeper
+            except (asyncio.CancelledError, Exception):
+                pass
         async with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()

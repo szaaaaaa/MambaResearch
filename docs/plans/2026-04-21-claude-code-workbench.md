@@ -42,7 +42,7 @@
   - 旧的 `_ACTIVE_CC_SESSIONS` 字典被 `SessionManager` 替代；`/api/claude-code/chat`（Task 1 的旧端点）保留为兼容 shim 或删除，二选一需在改动里说明
   - `pytest tests/` 全过；`tsc --noEmit && npm run build` 通过
 
-### [PENDING-VERIFY] 3. 富消息渲染层（CLI 视觉语言 + Markdown + 每类 block 专属视图）
+### [DONE] 3. 富消息渲染层（CLI 视觉语言 + Markdown + 每类 block 专属视图）
 
 - **视觉硬约束（必须复刻原生 CLI 的扁平终端体验）**：
   - **不用聊天气泡**：不用圆角卡片、左右对齐、彩色底色。整条对话是一个垂直滚动的"终端回放"，所有内容左对齐，全宽，相同字体层级
@@ -61,16 +61,20 @@
   - 前端新增：`frontend/src/components/workbench/MessageRenderer.tsx`、`MarkdownBlock.tsx`、`ThinkingBlock.tsx`、`SystemInitLine.tsx`（注意：Line 不是 Chip）、`ResultFooter.tsx`、`UserPromptLine.tsx`、`ToolUseLine.tsx`
   - 前端新增：`frontend/src/components/workbench/RawEventsToggle.tsx`（顶部 toggle，控制内部事件可见）
   - 前端改动：`WorkbenchTab.tsx` 把原生 `extractAssistantText` / `extractToolUse` 等逻辑替换为 `<MessageRenderer message={...} />`；删除所有气泡类 CSS（`rounded-2xl bg-slate-900 text-white` 等）；删除"会话已建立""本轮结束"条目的插入
-- **Acceptance**:
-  - **扁平布局验证**：手动渲染一轮"你好"对话后审查 DOM — 不存在 `rounded-2xl`、`bg-slate-900 text-white`、`ml-auto`、`bg-emerald-50`、`border-emerald-200`、`bg-rose-50` 这些 Task 1 引入的气泡类；用户消息以 `> ` 前缀字符开头；assistant 文本直接是 Markdown 正文无包裹容器
-  - **Result 不重复**：同一轮的 assistant 文本只出现一次；ResultMessage 仅产出一行 dim footer `· 输入 N · 输出 N · $X.XXXX · Ns`
-  - **内部事件隐藏**：默认视图里**看不到** `system` / `rate_limit_event` / `stream_event` / `task_*` / `mirror_error`；点开顶部"显示原始事件"toggle 后，它们以 dim 折叠行出现
-  - **SystemMessage(init) 单行**：会话首条 init 消息渲染为一行 dim：`cwd=... · model=... · tools=N`，无可展开框
-  - **无分隔线**：同一会话里连续两轮之间除下一条 `>` 用户消息外不插入任何分隔元素
-  - 发送 "用 Python 写一个快速排序"：返回里 ```python ``` 代码块正确渲染（等宽字体 + 语法高亮、有 Copy 按钮）；列表 / 标题 / **bold** / `inline code` 都按 Markdown 正确显示
-  - 发送 "想一想 5+7 是多少"（模型开 thinking）：思考 block 默认折叠，点击展开看到推理过程，标题显示"思考（N 秒）"
-  - Tool Use 行：单行 `● ToolName(summary)` 样式（`●` 点 + amber 色工具名 + 灰色参数摘要），点击展开显示入参 JSON；同一 `tool_use_id` 的 Tool Result 紧贴其下（Task 4 会换成专属视图）
-  - 手动测试：连发 3 条不同问题，渲染稳定不错位，整体视觉贴近 CLI 的扁平终端回放
+- **Acceptance（2026-04-21 修订为真实 CLI 语义；初稿把 `●` 错挂给工具行）**:
+  - **扁平布局验证**：DOM 不存在 `rounded-2xl`、`bg-slate-900 text-white`、`ml-auto`、`bg-emerald-50`、`border-emerald-200`、`bg-rose-50`；用户消息以 `> ` 前缀；assistant 文本是 Markdown 正文无气泡容器
+  - **Result 不重复**：同一轮 assistant 文本只出现一次；ResultMessage 仅产一行 dim footer `· 输入 N · 输出 N · $X.XXXX · Ns`
+  - **`●` 归属**：`●` 是**整个 assistant 轮次的左侧外挂标记**（蓝色 `text-sky-600`），**不是工具行**的前缀；一轮 assistant 消息无论含几个 block（text/thinking/tool_use）左侧只挂一个 `●`
+  - **工具调用行**：`ToolName(summary)` 单行、amber 色 tool name + dim 参数摘要、**默认折叠**、点击展开入参 JSON；**行首无 `●`**
+  - **工具结果行**：`⎿ N 行输出` 单行 dim、默认折叠、展开为 pre 内容；错误结果走 `text-rose-600` 并显示 `⎿ 错误：...` 摘要
+  - **思考块折叠**："思考（N 秒）"单行、默认折叠；点击展开显示推理原文
+  - **`system.init` 不渲染**（归入 raw events 集合，仅 toggle 开启后可见）——CLI 本身也不向用户展示 init 元信息
+  - **运行态状态栏**：顶部 header **无** 运行/空闲 chip；运行中时底部（滚动区与 footer 之间）出现一行 `✽ Vibing… ({N}s · ...)` 等宽 dim 文字，每 500ms 刷新秒数
+  - **内部事件隐藏**：`system` / `rate_limit_event` / `stream_event` / `task_*` / `mirror_error` 默认全部隐藏，打开 raw events toggle 后以 dim 折叠行出现
+  - **无分隔线**：连续两轮之间除下一条 `> 用户消息` 外不插入任何分隔元素
+  - **Markdown**：代码块语法高亮 + hover Copy；GFM 表格 `border-collapse` 带单元格边框；列表/标题/链接按 Markdown 正确渲染
+  - **路径样内联代码染色**：启发式 `/[\\/]/ || /\.[a-z0-9]{1,6}$/` 命中的 inline code 走 `text-sky-700` 区分普通 ``x``
+  - **验证截图**：2026-04-21 ziang 提供的截图确认视觉对齐 CLI（助手 `●`、`⎿` 折叠结果、Vibing 栏）
 
 ### [TODO] 4. 工具调用专属视图
 
@@ -140,27 +144,67 @@
   - 输入 `/` 触发 autocomplete 下拉，显示所有命令的标题 + 简述；键盘上下选择、Enter 确认
   - 未知命令（如 `/foobar`）显示"未知命令：/foobar，输入 /help 查看全部"
 
-### [TODO] 7. 会话持久化 + 侧边栏
+### [TODO] 7. 会话状态提升 + 跨 Tab 切换存活
 
-- **What**: session 元数据 + 消息历史持久化（SQLite）；Workbench 左侧栏显示会话列表（与 ResearchAgent run 会话区分开）；支持 resume、重命名、删除。
+- **What**: 把 Workbench 的 `items` / `session` / `isRunning` / `rawEventsVisible` / `elapsedSec` 相关状态从 `WorkbenchTab` 组件内 `useState` 提升到 `store.tsx` 的 `AppContext`（新加 `claudeCode` slice）；WorkbenchTab 改为订阅者组件，卸载不丢状态。**删除组件 unmount 时的 `DELETE /api/claude-code/sessions/{id}` 副作用**——SDK client 回收改由后端 idle TTL（60 分钟无活动）管理，浏览器刷新/切 Tab 不再误杀会话。
 - **Files**:
-  - 后端新增：`src/server/claude_code/storage.py`（SQLite schema + CRUD）
-  - 存储位置：`.tmp/claude_code/sessions.db`
-  - 后端新增端点：`GET /api/claude-code/sessions`（列表）、`GET /api/claude-code/sessions/{id}/messages`（历史）、`PATCH /api/claude-code/sessions/{id}`（重命名）
-  - 前端新增：`frontend/src/components/workbench/SessionSidebar.tsx`
-  - 前端改动：`WorkbenchTab.tsx` 加载侧栏，`App.tsx` 在 workbench 模式下替换原 Sidebar 或在 WorkbenchTab 内部自带双栏
+  - 前端改动：`frontend/src/store.tsx`（新加 `claudeCode` slice：session info、items 列表、isRunning、rawEventsVisible、abort controller ref 或等价方案、appendItem / setSession / setRunning actions）
+  - 前端改动：`frontend/src/components/tabs/WorkbenchTab.tsx`（改用 `useAppContext()`；移除 unmount 的 DELETE fetch；Vibing 计时器保留在组件本地）
+  - 后端改动：`src/server/claude_code/session_manager.py`（加 idle TTL 扫描协程，60min 无活动的 session 自动调 SDK `disconnect` 释放 client；DB 记录不删除——为 Task 8 铺路。**若 Task 8 尚未落地，TTL 触发后 session 直接销毁内存记录**）
+  - 后端改动：`src/server/routes/claude_code.py`（`DELETE` 端点语义明确："结束会话"；非 idle TTL 路径）
 - **Acceptance**:
-  - Schema 字段：`id, title, cwd, model, permission_mode, created_at, last_message_at, message_count, total_input_tokens, total_output_tokens, total_cost_usd`
-  - 消息表：`session_id, sequence, role, content_json, created_at`
-  - 创建 session → 刷新页面 → session 在侧栏还在，点击加载历史全部消息
-  - 切换 session → 消息流替换为对应历史，context 隔离（session A 不能看到 session B 的消息）
-  - Resume 时后端通过 SDK 重建 client 并用历史消息预热（SDK 支持传入 messages 作为 conversation history）
-  - 重命名：右键菜单或双击 title
-  - 删除：询问确认后移除 SDK client + DB 记录
-  - 侧栏每项显示 title、最后一条消息时间、累计 cost
-  - `pytest tests/test_claude_code_storage.py` 覆盖 CRUD
+  - 发一轮消息 → 切到 Run/Skills/History tab → 切回 Workbench → 消息列表完整、session id 不变、Vibing 状态正确（若仍运行中继续计时；不运行则 idle）
+  - 切 Tab 期间 `GET /api/claude-code/sessions/{id}` 仍返回 200（SDK client 存活）
+  - 切回后继续发消息 → Claude 能引用切 Tab 前的内容（SDK 上下文保留）
+  - `WorkbenchTab.tsx` 不再包含 unmount 时的 `fetch(..., { method: 'DELETE' })` 调用；只在用户显式"结束会话"或 `beforeunload` 钩子触发时才发 DELETE
+  - 后端 idle TTL：60min 无 `messages` / `interrupt` / `permissions` 请求的 session 会触发 SDK `disconnect`（日志可查 `session {id} evicted by idle ttl`）
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 8. 中断（Esc）+ 会话控制
+### [TODO] 8. SQLite 会话持久化 + 刷新恢复
+
+- **What**: session 元数据 + 消息历史写入 SQLite；每条 SSE 事件 serialize 时同步落库；session 懒重建——前端刷新后若 localStorage 记录了 `lastSessionId`，后端按 ID 从 DB 取历史消息，用它们预热新建的 SDK client，实现"刷新不丢会话"。
+- **Files**:
+  - 后端新增：`src/server/claude_code/storage.py`（SQLite schema + CRUD + 事务写入）
+  - 存储位置：`.tmp/claude_code/sessions.db`（加入 `.gitignore`）
+  - 后端改动：`session_manager.py` 挂 DB 写钩子（创建 session 时 `sessions.insert`，每条 SSE 事件 `messages.insert`，每条 ResultMessage 累计 token/cost 到 sessions 表）；加懒重建逻辑（`get_or_restore(session_id)` 若内存没有但 DB 有就用历史消息重建 SDK client）
+  - 后端新增端点：`GET /api/claude-code/sessions/{id}/messages`（返回历史消息数组，分页可选）
+  - 前端改动：`WorkbenchTab.tsx` 挂载时若 store 内 session 为空但 localStorage 有 `lastSessionId` 则发 GET 拉历史，灌回 store
+  - 测试新增：`tests/test_claude_code_storage.py`
+- **Acceptance**:
+  - Schema：
+    - `sessions` 表：`id TEXT PK, title TEXT, cwd TEXT, model TEXT, permission_mode TEXT, created_at REAL, last_message_at REAL, message_count INTEGER, total_input_tokens INTEGER, total_output_tokens INTEGER, total_cost_usd REAL`
+    - `messages` 表：`session_id TEXT, sequence INTEGER, event_type TEXT, payload_json TEXT, created_at REAL, PK(session_id, sequence)` + `INDEX(session_id, sequence)`
+  - 3 轮对话 → 刷新浏览器 → Workbench 自动加载该 session 的 3 条消息 + 元信息；未发新消息时后端不重建 SDK client（纯只读展示）
+  - 发第 4 条 → 后端按 DB 历史预热 SDK client，Claude 能引用前 3 条
+  - idle TTL 触发销毁 SDK client 后，DB 历史仍在；下次 GET 仍可返回
+  - round-trip 测试：序列化一条 AssistantMessage（含 ToolUseBlock + ThinkingBlock）到 DB 再读回，MessageRenderer 渲染结果与原 SSE 推送一致
+  - `pytest tests/test_claude_code_storage.py` 覆盖 sessions CRUD、messages append、累计更新、懒重建路径
+
+### [TODO] 9. Workbench Shell 框架 + 多会话侧栏 + resume/rename/delete
+
+- **What**: 把 Workbench tab 的内部布局改造为 **"Activity Bar（窄图标列） + Primary Panel（可折叠主边栏） + Main Content"** 的 VS Code 派 shell，把当前全宽对话区降级为 Main Content 区域；Task 9 本体只实现 Activity Bar 的第一个项目（Sessions）+ 对应 Primary Panel（`SessionSidebar`），**但架构必须为未来 Files / Artifacts 等 activity 项无痛接入**。同时实现 multi-session 的列表、切换、重命名、删除、新建；`/resume` slash 命令（Task 6 的）把 Sessions 面板聚焦/展开。
+- **Files**:
+  - 前端新增：`frontend/src/components/workbench/shell/WorkbenchShell.tsx`（三段布局 + 响应 store 的 `activeActivity` / `panelCollapsed`）
+  - 前端新增：`frontend/src/components/workbench/shell/ActivityBar.tsx`（窄竖条，图标 + tooltip；注册表驱动，`activities` 数组定义 `{ id, icon, label, panel }`；本 Task 只注册 `sessions`，但留好 slot）
+  - 前端新增：`frontend/src/components/workbench/shell/activities/SessionsPanel.tsx`（列表 + 新建按钮 + 空态 + 右键菜单）
+  - 前端新增：`frontend/src/components/workbench/shell/SessionListItem.tsx`（title / 最后消息时间 / 累计 cost / active 高亮 / 双击重命名）
+  - 前端改动：`WorkbenchTab.tsx` 改为 `<WorkbenchShell>`，把现有 header + 滚动区 + Vibing + footer 放到 Main Content slot
+  - 前端改动：`store.tsx` 加 `activeActivity` / `panelCollapsed` / `activeSessionId` / sessions 列表 state + 切换/重命名/删除 actions
+  - 后端新增：`GET /api/claude-code/sessions`（列表，按 `last_message_at DESC`）、`PATCH /api/claude-code/sessions/{id}`（title）、`DELETE`（已有，确认语义为"彻底删除"，删 DB + SDK client）
+- **Acceptance**:
+  - **Shell 结构**：DOM 层级为 `[ActivityBar 48px] [PrimaryPanel 260px（可折叠到 0）] [Main Content flex-1]`；点击 ActivityBar 的 Sessions 图标切换 panel 可见性；再次点击同一图标收起 panel
+  - **可扩展性**：`activities` 注册表定义为数组；当前只有 1 项（Sessions），但追加一个新 `{ id: 'files', icon, label, panel: <FilesPanel/> }` 对象即可多出一个图标条目，无需改 `ActivityBar` / `WorkbenchShell` 本体代码（注释或 README 里示范）
+  - **视觉风格**：ActivityBar 背景 `bg-slate-50` / 边框 `border-r border-slate-200` / 图标 `text-slate-500` + active `text-slate-900` + 左侧 2px indicator；Primary Panel 白底 + 右边 `border-r`；与 Main Content 三列视觉分区清晰但无撞色，整体气质与现有 Workbench 保持一致
+  - **Main Content 自适应**：conversation 区仍居中 `max-w-3xl`，当 Primary Panel 打开时自动收窄但不错位；小屏（<1024px）Panel 默认收起
+  - **Sessions 面板**：列表每项显示 title（默认 `会话 <前 6 位 id>`，可编辑）/ 相对时间（`刚刚` / `N 分钟前` / `MM-DD HH:mm`）/ 累计 cost `$X.XXXX`；空态显示"暂无会话，点击 + 新建"
+  - **切换 session**：点击 → 若有未发送的 pending prompt 弹确认；确认后切换，Main Content 消息流替换为该 session 历史（调 Task 8 的 GET）
+  - **重命名**：双击 title 进入编辑模式，Enter 保存，Esc 取消；PATCH 成功后本地立即更新
+  - **删除**：右键菜单 → 弹确认 Modal → DELETE 端点清理 DB + SDK client（如存活）；当前 active session 被删时回退到列表首项或创建空态
+  - **新建**：+ 按钮创建新 session（调现有 POST）并自动激活
+  - **`/resume` 钩子预留**：store 暴露 `openActivity('sessions')` action，Task 6 的 `/resume` handler 只需调它即可聚焦面板（Task 9 内不实现 Task 6 本身，仅留接口）
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+
+### [TODO] 10. 中断（Esc）+ 会话控制
 
 - **What**: 用 SDK 的 `interrupt()` 让当前生成停止但 session 保留；Esc 键绑定；按钮语义区分"中断本轮"与"结束会话"。
 - **Files**:
@@ -173,7 +217,7 @@
   - 中断后已收到的部分消息保留（不被清空）
   - Esc 在 `isRunning=false` 时无副作用
 
-### [TODO] 9. ResearchAgent MCP 桥
+### [TODO] 11. ResearchAgent MCP 桥
 
 - **What**: 写 stdio MCP server，把 ResearchAgent builtin skills 按 `research_agent.<skill_id>` 暴露为 MCP 工具；SDK session 启动时通过 `mcp_servers` 配置挂载，实现 Claude Code 里直接调 skill。
 - **Files**:
@@ -188,7 +232,7 @@
   - 在 Workbench 输入"搜索 Mamba 架构的综述论文"：SSE 流里观察到 `tool_use` 事件 `name='mcp__research_agent__search_papers'`（或类似 SDK 命名）
   - MCP server 启动失败时，session init 不崩溃；前端显示"MCP bridge failed"但其他工具可用
 
-### [TODO] 10. 实验联动
+### [TODO] 12. 实验联动
 
 - **What**: ExperimentPlan artifact 渲染出"在工作台运行"按钮；点击后跨 Tab 跳转、创建 session（cwd=workspace、首条 prompt=plan.goal、绑定 bound_artifact_id）；运行中持续监听 workspace/results.json 变化，自动封装为 ExperimentResults artifact 挂到原 run。
 - **Files**:
@@ -206,6 +250,7 @@
 ## Out of scope
 
 - 多 session 并行同时运行（Task 2 只保证多 session 但单活跃；并行由 SDK 底层可能支持但不暴露为 UI 特性）
+- Workbench 文件浏览器 / 编辑器面板（Task 9 只把 shell 框架搭好并预留 activity slot；真正的文件树、编辑器、diff viewer 是后续独立任务，本 plan 不覆盖）
 - Workbench 内置完整文件编辑器（仅只读 diff；用户需要编辑去外部编辑器）
 - `claude` 账户登录 / profile 切换 UI（SDK 假设已登录；未登录时显示跳转到原生 CLI 登录的提示）
 - 与现有 `run_experiment` skill 的整合重构（Task 10 是**并行路径**，不替换现有执行流）
@@ -228,3 +273,9 @@
 - 2026-04-21（重写）: MCP 桥暴露粒度 = 每 skill 一个工具（`research_agent.<skill_id>`），保留原 Task 4 的方案
 - 2026-04-21（重写）: Task 1 标为 DONE；但其 `src/server/routes/claude_code.py` 的 subprocess 实现会在 Task 2 里被 SDK 方案全量替换，`WorkbenchTab.tsx` 的渲染会在 Task 3 被重写（壳保留、内脏换）
 - 2026-04-21（视觉路线）: **Workbench 渲染层采用"扁平终端"视觉语言**，不是聊天气泡。原因：原生 Claude Code CLI 就是扁平终端回放（`>` prompt + 左对齐正文 + `●` 工具行 + 单行 result footer），Task 1 的气泡 UI（圆角卡片、右对齐用户、绿色 RESULT 重复框、"本轮结束"分隔）属于 WhatsApp 式聊天 UI，和 CLI 体验相背。Task 3 的 Acceptance 里把"扁平布局验证"钉为必过项，禁止 `rounded-2xl` / `ml-auto` / `bg-emerald-50` 等气泡类出现在 assistant/user/result 消息上
+- 2026-04-21（Task 3 修订）: 初稿 Task 3 Acceptance 错把 `●` 写成工具行前缀——真实 CLI 里 `●` 是**整个 assistant 轮次的左侧外挂标记**，工具行是 condensed dim 单行可折叠、**无 `●`**。已按 2026-04-21 晚间 ziang 确认的截图把 Acceptance 改写为真实语义并标 DONE
+- 2026-04-21（会话管理路线）: 把原 Task 7 "会话持久化 + 侧栏"按照 **渐进验收** 原则拆成 3 个任务：
+  - **Task 7 = 状态提升 + 跨 Tab 切换存活**（解决 ziang 最先反馈的"切走一回来对话就没了"），前端 state 提升到 store，后端取消 unmount-DELETE，换为 idle TTL（60min）自动释放 SDK client
+  - **Task 8 = SQLite 持久化 + 刷新恢复**，DB 落盘 + 懒重建 SDK client
+  - **Task 9 = Workbench Shell + 多会话侧栏**，引入 VS Code 派 `ActivityBar + PrimaryPanel + MainContent` 三段布局，本 Task 只注册 Sessions activity，但架构为未来 Files / Artifacts activity 预留 slot；原因：ziang 计划后续集成文件管理，现在不搭好 shell 后面只会把 Workbench tab 堆成一锅粥
+- 2026-04-21（后端回收策略）: **SDK client 不由前端 unmount 触发销毁**；改为后端 idle TTL（60min 无活动）自动调 `disconnect`。原因：浏览器刷新 / 切 Tab / 意外断网都会误触发前端 unmount，把长会话杀掉非常糟糕。DB 历史永远保留，只是 SDK 内存 client 按需重建

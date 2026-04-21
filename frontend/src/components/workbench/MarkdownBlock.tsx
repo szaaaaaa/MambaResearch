@@ -73,9 +73,15 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = ({ children }) => {
                 </code>
               );
             }
+            // 路径样内联代码（含 `/` / `\` / 有扩展名）走 CLI 里的蓝色，区分于普通 `x`
+            const text = collectText(children);
+            const looksLikePath =
+              /[\\/]/.test(text) || /\.[a-zA-Z0-9]{1,6}$/.test(text);
             return (
               <code
-                className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[12.5px] text-slate-800"
+                className={`rounded bg-slate-100 px-1 py-0.5 font-mono text-[12.5px] ${
+                  looksLikePath ? 'text-sky-700' : 'text-slate-800'
+                }`}
                 {...rest}
               >
                 {children}

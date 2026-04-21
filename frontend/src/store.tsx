@@ -8,6 +8,8 @@ import {
   ClarificationHistoryRound,
   ClarificationQuestion,
   ClarificationState,
+  ClaudeCodeSessionInfo,
+  ClaudeCodeStreamItem,
   Credentials,
   CredentialStatusMap,
   HitlRequest,
@@ -937,6 +939,14 @@ interface AppContextType {
   archiveConversation: (conversationId: string) => void;
   deleteConversation: (conversationId: string) => void;
   toggleAdvancedMode: () => void;
+  ccSetSession: (session: ClaudeCodeSessionInfo | null) => void;
+  ccAppendItem: (payload: unknown) => void;
+  ccSetRunning: (running: boolean) => void;
+  ccSetRawEventsVisible: (visible: boolean) => void;
+  ccSetTurnStartAt: (at: number | null) => void;
+  ccGetAbortController: () => AbortController | null;
+  ccSetAbortController: (controller: AbortController | null) => void;
+  ccReset: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -964,7 +974,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     openrouterCatalog: defaultProviderCatalogs.openrouterCatalog,
     siliconflowCatalog: defaultProviderCatalogs.siliconflowCatalog,
     isAdvancedMode: false,
+    claudeCode: {
+      session: null,
+      items: [],
+      isRunning: false,
+      rawEventsVisible: false,
+      turnStartAt: null,
+    },
   });
+  // Workbench 的 AbortController 不进 React state——跟随 AppProvider 的 ref，
+  // tab 切换不销毁；用户显式"结束会话"或浏览器卸载时才 abort
+  const ccAbortControllerRef = useRef<AbortController | null>(null);
   const activeConversationIdRef = useRef<string>(savedSessions.activeConversationId);
   const activeRunAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const activeRunRequestIdsRef = useRef<Map<string, string>>(
@@ -2042,6 +2062,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setState((prev) => ({ ...prev, isAdvancedMode: !prev.isAdvancedMode }));
   };
 
+  const ccSetSession = (session: ClaudeCodeSessionInfo | null) => {
+    setState((prev) => ({ ...prev, claudeCode: { ...prev.claudeCode, session } }));
+  };
+
+  const ccAppendItem = (payload: unknown) => {
+    const item: ClaudeCodeStreamItem = {
+      id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      payload,
+    };
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, items: [...prev.claudeCode.items, item] },
+    }));
+  };
+
+  const ccSetRunning = (running: boolean) => {
+    setState((prev) => ({ ...prev, claudeCode: { ...prev.claudeCode, isRunning: running } }));
+  };
+
+  const ccSetRawEventsVisible = (visible: boolean) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, rawEventsVisible: visible },
+    }));
+  };
+
+  const ccSetTurnStartAt = (at: number | null) => {
+    setState((prev) => ({ ...prev, claudeCode: { ...prev.claudeCode, turnStartAt: at } }));
+  };
+
+  const ccGetAbortController = () => ccAbortControllerRef.current;
+
+  const ccSetAbortController = (controller: AbortController | null) => {
+    ccAbortControllerRef.current = controller;
+  };
+
+  const ccReset = () => {
+    ccAbortControllerRef.current?.abort();
+    ccAbortControllerRef.current = null;
+    setState((prev) => ({
+      ...prev,
+      claudeCode: {
+        session: null,
+        items: [],
+        isRunning: false,
+        rawEventsVisible: prev.claudeCode.rawEventsVisible,
+        turnStartAt: null,
+      },
+    }));
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -2070,6 +2141,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         archiveConversation,
         deleteConversation,
         toggleAdvancedMode,
+        ccSetSession,
+        ccAppendItem,
+        ccSetRunning,
+        ccSetRawEventsVisible,
+        ccSetTurnStartAt,
+        ccGetAbortController,
+        ccSetAbortController,
+        ccReset,
       }}
     >
       {children}
