@@ -1,6 +1,6 @@
 import React from 'react';
 
-interface ToolUseLineProps {
+interface GenericToolViewProps {
   name: string;
   input: unknown;
 }
@@ -29,12 +29,10 @@ function summarize(input: unknown): string {
 }
 
 /**
- * 工具调用行：condensed 单行 `<name>(<summary>)`，默认折叠、dim 色，
- * 与 CLI 里 "Listed 1 directory (ctrl+o to expand)" 视觉语义对齐 —— 不抢走
- * assistant 正文的视觉焦点，只在用户想深看时点开显示入参 JSON。
- * Task 4 会按 tool_name 替换为专属 summary（"Listed N items"/"Read file (L lines)" 等）。
+ * 未注册工具的兜底视图：condensed 单行 `<name>(<summary>)`，默认折叠、dim 色。
+ * 与 CLI "Listed 1 directory (ctrl+o to expand)" 视觉语义对齐——不抢走正文焦点。
  */
-export const ToolUseLine: React.FC<ToolUseLineProps> = ({ name, input }) => {
+export const GenericToolView: React.FC<GenericToolViewProps> = ({ name, input }) => {
   const summary = summarize(input);
   return (
     <details className="my-0.5 text-xs">

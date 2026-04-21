@@ -1,7 +1,7 @@
 import React from 'react';
 import { MarkdownBlock } from './MarkdownBlock';
 import { ThinkingBlock } from './ThinkingBlock';
-import { ToolUseLine } from './ToolUseLine';
+import { dispatchToolView } from './tools';
 import { UserPromptLine } from './UserPromptLine';
 import { ResultFooter } from './ResultFooter';
 
@@ -116,7 +116,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({ message, rawEv
             }
             if (btype === 'tool_use') {
               const name = typeof b.name === 'string' ? b.name : '(unknown)';
-              return <ToolUseLine key={idx} name={name} input={b.input} />;
+              return <React.Fragment key={idx}>{dispatchToolView({ name, input: b.input })}</React.Fragment>;
             }
             if (rawEventsVisible) {
               return <RawEventFold key={idx} label={`block:${btype || 'unknown'}`} payload={b} />;

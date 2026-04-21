@@ -76,26 +76,74 @@
   - **路径样内联代码染色**：启发式 `/[\\/]/ || /\.[a-z0-9]{1,6}$/` 命中的 inline code 走 `text-sky-700` 区分普通 ``x``
   - **验证截图**：2026-04-21 ziang 提供的截图确认视觉对齐 CLI（助手 `●`、`⎿` 折叠结果、Vibing 栏）
 
-### [TODO] 4. 工具调用专属视图
+### [TODO] 4a. 工具调用分发器 + Edit / Write diff 视图
 
-- **What**: 为常用工具实现专属 UI，匹配 CLI 视觉语言：Edit/Write → diff；Bash → 终端块；Read → 文件预览；Grep/Glob → 文件列表；**TodoWrite → 实时 checkbox 列表（替换式刷新而非累加）**；WebFetch/WebSearch → 链接卡片；Task → 嵌套子对话。
+- **What**: 建 `tools/` 目录的 dispatcher 骨架与 Generic 兜底，实现 Edit / Write 两类"文件改写"的 diff 视图——为 4b-4e 铺基础设施并交付首两种专属视图。
 - **Files**:
-  - 依赖：`frontend/package.json` 加 `diff`（或 `react-diff-viewer-continued`）
-  - 前端新增：`frontend/src/components/workbench/tools/EditView.tsx`、`WriteView.tsx`、`BashView.tsx`、`ReadView.tsx`、`GrepView.tsx`、`GlobView.tsx`、`TodoView.tsx`、`WebFetchView.tsx`、`WebSearchView.tsx`、`TaskView.tsx`、`GenericToolView.tsx`
-  - 前端新增：`frontend/src/components/workbench/tools/index.tsx`（按 `tool_name` 分发到专属组件，兜底 Generic）
-  - 前端改动：`MessageRenderer.tsx` 调用分发器
+  - 依赖：`frontend/package.json` 加 `diff`（轻量算法库，~20KB，自行渲染 +/- 行）
+  - 前端新增：`frontend/src/components/workbench/tools/index.tsx`（按 `tool_name` 分发；注册表驱动，未匹配走 Generic）
+  - 前端新增：`frontend/src/components/workbench/tools/GenericToolView.tsx`（当前 `ToolUseLine` 的下位替代：单行 `ToolName(summary)` + 折叠 JSON 入参）
+  - 前端新增：`frontend/src/components/workbench/tools/EditView.tsx`
+  - 前端新增：`frontend/src/components/workbench/tools/WriteView.tsx`
+  - 前端改动：`MessageRenderer.tsx` `tool_use` 分支改调 dispatcher；`ToolUseLine` 保留为 GenericToolView 内部实现细节或废弃删除（二选一在实现时决定）
 - **Acceptance**:
-  - Edit：显示文件路径 header + 行级 diff（删除行红底、新增行绿底）；超长文件仅显示 diff 附近上下文 3 行
-  - Write：显示"创建文件 path"横幅 + 内容预览（前 30 行，超出折叠）
-  - Bash：黑底白字终端样式，显示 `$ command` + 完整 stdout + exit code（非 0 标红）
-  - Read：文件名 + 行号列 + 内容预览（超 100 行折叠）
-  - Grep / Glob：列出命中文件（路径 + 匹配计数）
-  - TodoWrite：同一轮里后续 TodoWrite 事件**替换**前一个的渲染（而非再插入一张新卡），实时看到 pending / in_progress / completed 状态 icon 变化
-  - WebFetch：URL card（favicon + domain + title） + 前 500 字节摘要
-  - WebSearch：结果列表，每项 title + URL + snippet
-  - Task：卡片折叠一个子对话流（可展开看到子 agent 的完整工具调用 + 响应）
-  - 未识别工具回退 GenericToolView（显示 tool_name + JSON 入参）
-  - 每种专属视图可通过手动任务验证：`find . -name "*.py"`（Bash）、编辑某文件（Edit）、`TodoWrite` 3 个任务（Todo）
+  - dispatcher：注册表 `{ Edit: EditView, Write: WriteView }`，未命中的 `tool_name` 走 `GenericToolView`，渲染 `tool_name` + JSON 入参折叠，等同现 `ToolUseLine` 视觉
+  - **Edit**：header 显示 `Edit <path>` + 行级 diff（删除行 `bg-rose-50 text-rose-700`、新增行 `bg-emerald-50 text-emerald-700`，带 `-` / `+` 前缀）；长文件只显示 diff 附近上下文 3 行
+  - **Write**：header 显示 `Write <path>` + 前 30 行内容预览，超 30 行 `<details>` 折叠
+  - 未注册工具（如 Bash、Read）当前仍走 Generic（待 4b/4c 替换）
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+
+### [TODO] 4b. Bash 终端块视图
+
+- **What**: 为 `Bash` tool 实现终端样式渲染。
+- **Files**:
+  - 前端新增：`frontend/src/components/workbench/tools/BashView.tsx`
+  - 前端改动：`tools/index.tsx` 注册 `Bash: BashView`
+- **Acceptance**:
+  - 黑底白字终端块（`bg-slate-900 text-slate-100 font-mono`）
+  - 第一行 `$ <command>`（`description` 字段作为副标题 dim）
+  - stdout 完整（不折叠，但容器 `max-h-96 overflow-auto`）
+  - exit code 非 0 时底部一行 `text-rose-400 "exit N"`
+  - 手测：在 Workbench 让 Claude 跑 `find . -name "*.py" | head` → 视觉确认
+
+### [TODO] 4c. Read / Grep / Glob 列表视图
+
+- **What**: 为"只读查询类"工具实现文件/匹配列表视图。
+- **Files**:
+  - 前端新增：`tools/ReadView.tsx` / `GrepView.tsx` / `GlobView.tsx`
+  - 前端改动：`tools/index.tsx` 注册 3 项
+- **Acceptance**:
+  - **Read**：header `Read <path>`；内容区左侧行号列（`text-slate-400 tabular-nums`）+ 右侧源码（等宽）；超 100 行折叠成"显示 N 行内容"展开
+  - **Grep**：header `Grep <pattern>`；命中文件列表每项 `<path> · N matches`；0 命中显示"未命中"
+  - **Glob**：header `Glob <pattern>`；命中路径列表每项独立行
+  - 手测：让 Claude `Read app.py`、`Grep "FastAPI"`、`Glob "src/**/*.py"` → 视觉确认
+
+### [TODO] 4d. TodoWrite 替换式刷新
+
+- **What**: 同一轮内多次 TodoWrite 调用**渲染层去重**——按 `tool_use_id` 聚合，只保留最新一次的 render，实时看 pending → in_progress → completed 状态迁移。
+- **Files**:
+  - 前端新增：`tools/TodoView.tsx`（checkbox 列表 + 状态 icon）
+  - 前端改动：`MessageRenderer.tsx` 或上层（`WorkbenchTab` 传给 MessageRenderer 的列表前）做一次按 `tool_use_id` 去重——**展现层实现，不污染 store**；Task 8 SQLite 回放按原始顺序落盘，渲染层去重不影响持久化正确性
+  - 前端改动：`tools/index.tsx` 注册 `TodoWrite: TodoView`
+- **Acceptance**:
+  - **去重实现层 = MessageRenderer（渲染层）**，store 里 items 仍保留所有 TodoWrite 事件
+  - 一轮内连发 3 次 TodoWrite（任务依次从 pending → in_progress → completed），UI 上只出现 1 张 `TodoView` 卡片
+  - 卡片实时反映最新状态：`pending` → `○`、`in_progress` → `◐` + amber、`completed` → `✓` + emerald + 删除线
+  - 不同 `tool_use_id` 的 TodoWrite 仍各自独立渲染（不跨聚合）
+  - 手测：让 Claude"给我写 3 个子任务的 TodoWrite 并依次推进完成"→ 观察 UI 刷新
+
+### [TODO] 4e. WebFetch / WebSearch / Task + 收口
+
+- **What**: 收齐剩余 3 类工具视图，本阶段 Task 4 全部落地。
+- **Files**:
+  - 前端新增：`tools/WebFetchView.tsx` / `WebSearchView.tsx` / `TaskView.tsx`
+  - 前端改动：`tools/index.tsx` 注册 3 项
+- **Acceptance**:
+  - **WebFetch**：URL 卡片——domain（从 URL 提取）+ URL 全文 + 前 500 字节摘要（`prompt` 字段）
+  - **WebSearch**：结果列表，每项 title + URL + snippet；空结果显示"未命中"
+  - **Task**（SubagentTool）：卡片显示 `Task: <description>` + 子对话流 `<details>` 折叠；展开显示嵌套 tool_use / tool_result 链条；**若 SDK 实际不推 Task block，TaskView 降级为 GenericToolView 的别名并留注释说明**
+  - dispatcher 注册表最终包含 10 项 + Generic 兜底
+  - 手测：WebFetch 一个 URL、WebSearch 一个 query；Task block 若未触达则标注 "SDK 未暴露，降级 Generic"
 
 ### [TODO] 5. HITL 权限请求（can_use_tool 回调）
 
@@ -279,3 +327,6 @@
   - **Task 8 = SQLite 持久化 + 刷新恢复**，DB 落盘 + 懒重建 SDK client
   - **Task 9 = Workbench Shell + 多会话侧栏**，引入 VS Code 派 `ActivityBar + PrimaryPanel + MainContent` 三段布局，本 Task 只注册 Sessions activity，但架构为未来 Files / Artifacts activity 预留 slot；原因：ziang 计划后续集成文件管理，现在不搭好 shell 后面只会把 Workbench tab 堆成一锅粥
 - 2026-04-21（后端回收策略）: **SDK client 不由前端 unmount 触发销毁**；改为后端 idle TTL（60min 无活动）自动调 `disconnect`。原因：浏览器刷新 / 切 Tab / 意外断网都会误触发前端 unmount，把长会话杀掉非常糟糕。DB 历史永远保留，只是 SDK 内存 client 按需重建
+- 2026-04-21（Task 4 拆分）: 原 Task 4 "工具调用专属视图" 含 10+ 独立验收项（每工具一个），单次 /dev 写完但验证做不完——按视觉/功能相似性拆成 **4a dispatcher + Edit/Write、4b Bash、4c Read/Grep/Glob、4d TodoWrite（去重）、4e WebFetch/WebSearch/Task**。每子任务独立 /dev → /review → /ship → 浏览器手验 → 下一轮，代码与验证同步推进
+- 2026-04-21（diff 库选型）: **选 `diff` 包（npm，~20KB，只含 Myers 算法）**，不选 `react-diff-viewer-continued`（~100KB，运行时依赖重）。EditView 自行渲染 +/- 行（约 40 行 TSX），成本可控且不引入额外运行时黑盒
+- 2026-04-21（TodoWrite 去重实现层）: **渲染层去重**（MessageRenderer 按 tool_use_id 聚合取最新），不在 store 层合并。原因：store items 保留原始顺序有利于 Task 8 SQLite 回放正确性，渲染层去重是纯展现决策，可随时调整不影响数据流
