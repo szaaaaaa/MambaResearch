@@ -105,6 +105,24 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = ({ children }) => {
             </blockquote>
           ),
           hr: () => <hr className="my-3 border-slate-200" />,
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto">
+              <table className="w-auto border-collapse text-[13px]">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-slate-50">{children}</thead>,
+          tbody: ({ children }) => <tbody>{children}</tbody>,
+          tr: ({ children }) => <tr>{children}</tr>,
+          th: ({ children }) => (
+            <th className="border border-slate-300 px-3 py-1.5 text-left font-semibold text-slate-800">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border border-slate-200 px-3 py-1.5 align-top text-slate-700">
+              {children}
+            </td>
+          ),
         }}
       >
         {children}
