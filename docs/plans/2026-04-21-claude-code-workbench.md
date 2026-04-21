@@ -23,7 +23,7 @@
 
 ## Tasks（完整 CLI 复刻）
 
-### [TODO] 2. 后端迁移到 Claude Agent SDK + 多轮持久会话
+### [PENDING-VERIFY] 2. 后端迁移到 Claude Agent SDK + 多轮持久会话
 
 - **What**: 用 `claude-agent-sdk` 的 `ClaudeSDKClient` 接管会话；一个 session 内长驻一个 client，多轮对话共享上下文；后端维护 `SessionManager`，对外暴露 session 级 REST + SSE 接口。
 - **Files**:
@@ -42,7 +42,7 @@
   - 旧的 `_ACTIVE_CC_SESSIONS` 字典被 `SessionManager` 替代；`/api/claude-code/chat`（Task 1 的旧端点）保留为兼容 shim 或删除，二选一需在改动里说明
   - `pytest tests/` 全过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 3. 富消息渲染层（CLI 视觉语言 + Markdown + 每类 block 专属视图）
+### [PENDING-VERIFY] 3. 富消息渲染层（CLI 视觉语言 + Markdown + 每类 block 专属视图）
 
 - **视觉硬约束（必须复刻原生 CLI 的扁平终端体验）**：
   - **不用聊天气泡**：不用圆角卡片、左右对齐、彩色底色。整条对话是一个垂直滚动的"终端回放"，所有内容左对齐，全宽，相同字体层级
