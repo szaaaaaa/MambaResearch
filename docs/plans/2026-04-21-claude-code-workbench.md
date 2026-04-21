@@ -139,16 +139,17 @@
 
 ### [TODO] 4e. WebFetch / WebSearch / Task + 收口
 
-- **What**: 收齐剩余 3 类工具视图，本阶段 Task 4 全部落地。
+- **What**: 收齐剩余 3 类工具视图（Path A：只消费 tool_use.input），Task 4 全部落地。
 - **Files**:
   - 前端新增：`tools/WebFetchView.tsx` / `WebSearchView.tsx` / `TaskView.tsx`
   - 前端改动：`tools/index.tsx` 注册 3 项
 - **Acceptance**:
-  - **WebFetch**：URL 卡片——domain（从 URL 提取）+ URL 全文 + 前 500 字节摘要（`prompt` 字段）
-  - **WebSearch**：结果列表，每项 title + URL + snippet；空结果显示"未命中"
-  - **Task**（SubagentTool）：卡片显示 `Task: <description>` + 子对话流 `<details>` 折叠；展开显示嵌套 tool_use / tool_result 链条；**若 SDK 实际不推 Task block，TaskView 降级为 GenericToolView 的别名并留注释说明**
-  - dispatcher 注册表最终包含 10 项 + Generic 兜底
-  - 手测：WebFetch 一个 URL、WebSearch 一个 query；Task block 若未触达则标注 "SDK 未暴露，降级 Generic"
+  - **WebFetch**：卡片 header `WebFetch <domain>`（从 URL 提取 hostname，解析失败 fallback 到前 40 字符）；下方完整 URL dim mono；再下方 `prompt` 摘要（截断 500 字符 + `…`）。抓回的页面内容走 tool_result `⎿` 折叠
+  - **WebSearch**：单行 `WebSearch <query>`（query chip）；若 `allowed_domains` 提供显示 emerald chip `allow=`，`blocked_domains` 提供显示 rose chip `block=`。结果列表走 tool_result `⎿` 折叠
+  - **Task**（SubagentTool）：卡片 header `Task <subagent_type>`（indigo chip）+ description；`prompt` 用 `<details>` 折叠。子对话流（若 SDK 推送）走 tool_result `⎿` 折叠；TaskView 注册了也不会出问题（dispatch 按名称，SDK 不推就不会命中）
+  - dispatcher 注册表最终 10 项 + Generic 兜底
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+  - 手测：WebFetch 一个 URL、WebSearch 一个 query → 视觉确认 header/filter chip 正确
 
 ### [TODO] 5. HITL 权限请求（can_use_tool 回调）
 

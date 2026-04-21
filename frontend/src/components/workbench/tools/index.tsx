@@ -6,13 +6,16 @@ import { ReadView } from './ReadView';
 import { GrepView } from './GrepView';
 import { GlobView } from './GlobView';
 import { TodoView } from './TodoView';
+import { WebFetchView } from './WebFetchView';
+import { WebSearchView } from './WebSearchView';
+import { TaskView } from './TaskView';
 import { GenericToolView } from './GenericToolView';
 
 type ToolView = React.ComponentType<{ input: unknown }>;
 
 /**
  * 工具名 → 专属视图注册表。未命中的走 GenericToolView。
- * 随 Task 4e 推进，逐步把 WebFetch/WebSearch/Task 填进来。
+ * 10 个常用工具 + Generic 兜底（Task 4 收口）。
  */
 const REGISTRY: Record<string, ToolView> = {
   Edit: EditView,
@@ -22,6 +25,9 @@ const REGISTRY: Record<string, ToolView> = {
   Grep: GrepView,
   Glob: GlobView,
   TodoWrite: TodoView,
+  WebFetch: WebFetchView,
+  WebSearch: WebSearchView,
+  Task: TaskView,
 };
 
 interface DispatchArgs {
