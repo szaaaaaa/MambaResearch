@@ -1,5 +1,5 @@
 import React from 'react';
-import { LoaderCircle, Sparkles } from 'lucide-react';
+import { LoaderCircle, Sparkles, X } from 'lucide-react';
 import {
   ClarificationAnswer,
   ClarificationHistoryRound,
@@ -13,6 +13,7 @@ const CUSTOM_LABEL = '其它（自填）';
 interface ClarificationModalProps {
   state: ClarificationState;
   onSubmit: (runId: string, answers: ClarificationAnswer[]) => Promise<void>;
+  onClose: () => void;
 }
 
 interface Selection {
@@ -20,7 +21,7 @@ interface Selection {
   customText: string;
 }
 
-export const ClarificationModal: React.FC<ClarificationModalProps> = ({ state, onSubmit }) => {
+export const ClarificationModal: React.FC<ClarificationModalProps> = ({ state, onSubmit, onClose }) => {
   const [selections, setSelections] = React.useState<Record<string, Selection>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -96,9 +97,21 @@ export const ClarificationModal: React.FC<ClarificationModalProps> = ({ state, o
               </h3>
             </div>
           </div>
-          <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
-            CLARIFY
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
+              CLARIFY
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              aria-label="关闭并停止运行"
+              title="关闭并停止当前运行"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">

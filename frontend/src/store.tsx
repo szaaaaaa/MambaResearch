@@ -534,6 +534,7 @@ function createEmptySession(): ChatSession {
     rawTerminalLog: '',
     hitlRequest: null,
     clarificationState: null,
+    clientRequestId: null,
     messages: [
       {
         id: `assistant-${Date.now()}`,
@@ -627,6 +628,8 @@ function normalizeSession(value: unknown): ChatSession | null {
     rawTerminalLog: String(value.rawTerminalLog || ''),
     hitlRequest: null,
     clarificationState: null,
+    clientRequestId:
+      typeof value.clientRequestId === 'string' && value.clientRequestId ? value.clientRequestId : null,
     messages: messages.length > 0 ? messages : createEmptySession().messages,
   };
 }
@@ -985,12 +988,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
   const activeConversationIdRef = useRef<string>(savedSessions.activeConversationId);
   const activeRunAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
-  const activeRunRequestIdsRef = useRef<Map<string, string>>(new Map());
+  const activeRunRequestIdsRef = useRef<Map<string, string>>(
+    new Map(
+      savedSessions.conversations
+        .filter((session) => session.clientRequestId)
+        .map((session) => [session.id, session.clientRequestId as string]),
+    ),
+  );
   const manuallyStoppedRequestIdsRef = useRef<Set<string>>(new Set());
+  const conversationsRef = useRef<ChatSession[]>(savedSessions.conversations);
 
   useEffect(() => {
     activeConversationIdRef.current = state.activeConversationId;
   }, [state.activeConversationId]);
+
+  useEffect(() => {
+    conversationsRef.current = state.conversations;
+  }, [state.conversations]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1742,6 +1756,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           rawTerminalLog: '',
           hitlRequest: null,
           clarificationState: null,
+          clientRequestId,
           messages: [
             ...session.messages,
             {
@@ -1883,6 +1898,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return {
             ...session,
             updatedAt: nowIso(),
+            clientRequestId: null,
             status:
               wasStopped
                 ? 'Stopped'
@@ -1914,10 +1930,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const stopRun = async () => {
     const activeConversationId = activeConversationIdRef.current;
-    const clientRequestId = activeRunRequestIdsRef.current.get(activeConversationId);
+    const persistedRequestId =
+      conversationsRef.current.find((session) => session.id === activeConversationId)
+        ?.clientRequestId ?? null;
+    const clientRequestId =
+      activeRunRequestIdsRef.current.get(activeConversationId) ?? persistedRequestId ?? null;
     const controller = activeRunAbortControllersRef.current.get(activeConversationId);
 
     if (!clientRequestId) {
+      updateSession(activeConversationId, (session) => ({
+        ...session,
+        updatedAt: nowIso(),
+        status: 'Stopped',
+        clientRequestId: null,
+        clarificationState: null,
+        hitlRequest: null,
+        nodeStatus: nodeStatusAfterStop(session.nodeStatus),
+        runEvents: [
+          ...session.runEvents,
+          {
+            id: `run-stopped-${Date.now()}`,
+            ts: nowIso(),
+            type: 'run_terminate',
+            runId: session.runId,
+            nodeId: '',
+            role: '',
+            skillId: '',
+            toolId: '',
+            status: 'stopped',
+            reason: 'stopped_local_only',
+            iteration: null,
+            detail: '没有正在运行的后端进程，仅在本地标记为已停止。',
+          },
+        ].slice(-40),
+      }));
+      controller?.abort();
       return;
     }
 
@@ -1938,13 +1985,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         throw new Error(await readErrorDetail(response));
       }
       const payload = (await response.json()) as { status?: string };
-      if (!['terminated', 'already_exited', 'killed'].includes(String(payload.status || ''))) {
+      if (!['terminated', 'already_exited', 'killed', 'not_found'].includes(String(payload.status || ''))) {
         throw new Error(String(payload.status || 'stop_failed'));
       }
+      activeRunRequestIdsRef.current.delete(activeConversationId);
       updateSession(activeConversationId, (session) => ({
         ...session,
         updatedAt: nowIso(),
         status: 'Stopped',
+        clientRequestId: null,
+        clarificationState: null,
+        hitlRequest: null,
         nodeStatus: nodeStatusAfterStop(session.nodeStatus),
         runEvents: [
           ...session.runEvents,
