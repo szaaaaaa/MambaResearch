@@ -8,6 +8,12 @@ import { ResultFooter } from './ResultFooter';
 interface MessageRendererProps {
   message: unknown;
   rawEventsVisible: boolean;
+  /**
+   * 需要在渲染层抑制的 tool_use id 集合。当前用于 TodoWrite 去重：
+   * WorkbenchTab 扫描 items 找出所有 TodoWrite tool_use，除最后一次外的 id
+   * 都加进这个集合，命中即 return null，只保留最新一张 Todo 卡片。
+   */
+  suppressedToolUseIds?: Set<string>;
 }
 
 /**
@@ -78,7 +84,11 @@ function renderToolResultBlock(b: Record<string, unknown>, key: React.Key): Reac
  * ResultMessage **不** 渲染 `result` 字段正文（与 AssistantMessage 重复），
  * 只留一行 dim footer。
  */
-export const MessageRenderer: React.FC<MessageRendererProps> = ({ message, rawEventsVisible }) => {
+export const MessageRenderer: React.FC<MessageRendererProps> = ({
+  message,
+  rawEventsVisible,
+  suppressedToolUseIds,
+}) => {
   if (!message || typeof message !== 'object') return null;
   const payload = message as Record<string, unknown>;
   const type = typeof payload.type === 'string' ? payload.type : '';
@@ -116,6 +126,10 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({ message, rawEv
             }
             if (btype === 'tool_use') {
               const name = typeof b.name === 'string' ? b.name : '(unknown)';
+              const toolUseId = typeof b.id === 'string' ? b.id : '';
+              if (toolUseId && suppressedToolUseIds?.has(toolUseId)) {
+                return null;
+              }
               return <React.Fragment key={idx}>{dispatchToolView({ name, input: b.input })}</React.Fragment>;
             }
             if (rawEventsVisible) {
@@ -149,6 +163,12 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({ message, rawEv
       const b = block as Record<string, unknown>;
       const btype = typeof b.type === 'string' ? b.type : '';
       if (btype === 'tool_result') {
+        // tool_use_id 回链到被 suppress 的 tool_use 时，同样隐藏对应折叠，
+        // 避免 TodoWrite 去重场景下留下没有 header 的孤儿 `⎿` 折叠
+        const linkedId = typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
+        if (linkedId && suppressedToolUseIds?.has(linkedId)) {
+          return;
+        }
         nodes.push(renderToolResultBlock(b, idx));
         return;
       }

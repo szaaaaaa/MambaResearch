@@ -58,6 +58,28 @@ export const WorkbenchTab: React.FC = () => {
     node.scrollTop = node.scrollHeight;
   }, [items]);
 
+  // TodoWrite 渲染层去重：扫描 items 里所有 assistant 消息的 tool_use 块，
+  // 找出所有 name === "TodoWrite" 的 tool_use_id，除最后一次外都进 suppress 集合。
+  // 效果：同一会话里不论 TodoWrite 被调几次，UI 上只留最新那张 Todo 卡片，其余隐藏。
+  // store 不动——持久化仍保留全部事件，纯渲染层决策。
+  const suppressedToolUseIds = React.useMemo(() => {
+    const todoIds: string[] = [];
+    for (const item of items) {
+      const payload = item.payload as Record<string, unknown> | null;
+      if (!payload || payload.type !== 'assistant') continue;
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const b = block as Record<string, unknown>;
+        if (b.type === 'tool_use' && b.name === 'TodoWrite' && typeof b.id === 'string') {
+          todoIds.push(b.id);
+        }
+      }
+    }
+    // 保留最后一个，其余全部 suppress
+    return new Set(todoIds.slice(0, -1));
+  }, [items]);
+
   const pushError = React.useCallback(
     (text: string) => {
       ccAppendItem({ type: 'error_local', text });
@@ -248,7 +270,11 @@ export const WorkbenchTab: React.FC = () => {
           ) : (
             items.map((item) => (
               <React.Fragment key={item.id}>
-                <MessageRenderer message={item.payload} rawEventsVisible={rawEventsVisible} />
+                <MessageRenderer
+                  message={item.payload}
+                  rawEventsVisible={rawEventsVisible}
+                  suppressedToolUseIds={suppressedToolUseIds}
+                />
               </React.Fragment>
             ))
           )}

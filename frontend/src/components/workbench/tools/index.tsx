@@ -5,13 +5,14 @@ import { BashView } from './BashView';
 import { ReadView } from './ReadView';
 import { GrepView } from './GrepView';
 import { GlobView } from './GlobView';
+import { TodoView } from './TodoView';
 import { GenericToolView } from './GenericToolView';
 
 type ToolView = React.ComponentType<{ input: unknown }>;
 
 /**
  * 工具名 → 专属视图注册表。未命中的走 GenericToolView。
- * 随 Task 4d-4e 推进，逐步把 TodoWrite/WebFetch/WebSearch/Task 填进来。
+ * 随 Task 4e 推进，逐步把 WebFetch/WebSearch/Task 填进来。
  */
 const REGISTRY: Record<string, ToolView> = {
   Edit: EditView,
@@ -20,6 +21,7 @@ const REGISTRY: Record<string, ToolView> = {
   Read: ReadView,
   Grep: GrepView,
   Glob: GlobView,
+  TodoWrite: TodoView,
 };
 
 interface DispatchArgs {

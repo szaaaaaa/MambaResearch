@@ -124,17 +124,18 @@
 
 ### [TODO] 4d. TodoWrite 替换式刷新
 
-- **What**: 同一轮内多次 TodoWrite 调用**渲染层去重**——按 `tool_use_id` 聚合，只保留最新一次的 render，实时看 pending → in_progress → completed 状态迁移。
+- **What**: 全会话内多次 TodoWrite 调用**渲染层去重**——每次 TodoWrite 都带独立 `tool_use_id`，TodoWrite 本身的设计就是"全量快照替换"，所以只保留整个 items 列表里**最后一次**调用的 tool_use 块，其余 tool_use_id 在渲染层 suppress。store 保持原样（不污染持久化数据）。
 - **Files**:
   - 前端新增：`tools/TodoView.tsx`（checkbox 列表 + 状态 icon）
-  - 前端改动：`MessageRenderer.tsx` 或上层（`WorkbenchTab` 传给 MessageRenderer 的列表前）做一次按 `tool_use_id` 去重——**展现层实现，不污染 store**；Task 8 SQLite 回放按原始顺序落盘，渲染层去重不影响持久化正确性
+  - 前端改动：`MessageRenderer.tsx` 加 `suppressedToolUseIds?: Set<string>` prop，tool_use 分支命中 set 即 `return null`
+  - 前端改动：`WorkbenchTab.tsx` 用 `useMemo` 扫 items 收集所有 TodoWrite tool_use_id，`slice(0, -1)` 后构造 suppress set 传入
   - 前端改动：`tools/index.tsx` 注册 `TodoWrite: TodoView`
 - **Acceptance**:
-  - **去重实现层 = MessageRenderer（渲染层）**，store 里 items 仍保留所有 TodoWrite 事件
+  - **去重实现层 = MessageRenderer prop + WorkbenchTab useMemo**，store 里 items 仍保留所有 TodoWrite 事件
   - 一轮内连发 3 次 TodoWrite（任务依次从 pending → in_progress → completed），UI 上只出现 1 张 `TodoView` 卡片
-  - 卡片实时反映最新状态：`pending` → `○`、`in_progress` → `◐` + amber、`completed` → `✓` + emerald + 删除线
-  - 不同 `tool_use_id` 的 TodoWrite 仍各自独立渲染（不跨聚合）
-  - 手测：让 Claude"给我写 3 个子任务的 TodoWrite 并依次推进完成"→ 观察 UI 刷新
+  - 卡片实时反映最新状态：`pending` → `○` slate、`in_progress` → `◐` amber、`completed` → `✓` emerald + 删除线；`in_progress` 显示 `activeForm`（若有）否则 `content`
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+  - 手测：让 Claude"给我写 3 个子任务的 TodoWrite 并依次推进完成"→ 观察 UI 只保留最新一张，实时刷新
 
 ### [TODO] 4e. WebFetch / WebSearch / Task + 收口
 
@@ -336,3 +337,4 @@
 - 2026-04-21（TodoWrite 去重实现层）: **渲染层去重**（MessageRenderer 按 tool_use_id 聚合取最新），不在 store 层合并。原因：store items 保留原始顺序有利于 Task 8 SQLite 回放正确性，渲染层去重是纯展现决策，可随时调整不影响数据流
 - 2026-04-21（Task 4b BashView 边界=Path A）: BashView **只渲染 tool_use 阶段**的 `$ <command>` 终端块头部，**不跨消息类型**抽取 tool_result 的 stdout/exit code。后者继续由已有的 `renderToolResultBlock` `⎿ N 行输出` 折叠承载。原因：跨 assistant→user 消息配对需要在上层维护 tool_use_id→tool_result 映射，改面过大且与现有折叠语义重复。终端块 + `⎿` 折叠组合已经能传达"命令+输出"语义
 - 2026-04-21（Task 4c Read/Grep/Glob 沿用 Path A）: 原 Acceptance 想在 Read 视图内渲染"行号+源码"、Grep 渲染"文件·N matches" 列表——这些数据均在 tool_result 里。沿用 4b 路线：视图只消费 tool_use 入参，结果走已有 `⎿` 折叠。这样与 CLI 原生 `Read(path)\n⎿ Read 149 lines` 视觉一致，且避免跨消息类型配对
+- 2026-04-21（Task 4d TodoWrite 去重语义澄清）: 原 Acceptance 存在内部矛盾——"按 tool_use_id 聚合"与"不同 tool_use_id 独立渲染"不能同时成立（每次 TodoWrite 调用都带独立 id）。按工具语义实际意图是"TodoWrite 本身是全量快照覆盖"，所以**整个 items 列表里只保留最后一次 TodoWrite 的 tool_use**，早期的全部 suppress。实现上 WorkbenchTab 用 useMemo 构造 `Set<suppressedToolUseIds>` 传给 MessageRenderer，命中即 return null——store 保持原样，仅渲染层决策
