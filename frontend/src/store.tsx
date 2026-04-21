@@ -23,6 +23,7 @@ import {
   getModelOptionsForProvider,
   isOpenAICodexModelRef,
 } from './modelOptions';
+import { parseSseFrames } from './utils/sse';
 
 export const API_BASE = window.location.port === '3000' ? 'http://localhost:8000' : '';
 
@@ -413,28 +414,6 @@ function normalizeRunEvent(value: unknown): RunEvent | null {
     iteration: Number.isFinite(iteration) ? iteration : null,
     detail,
   };
-}
-
-function parseSseFrames(chunk: string): Array<{ event: string; data: string }> {
-  return chunk
-    .split('\n\n')
-    .map((frame) => frame.trim())
-    .filter(Boolean)
-    .map((frame) => {
-      let event = 'message';
-      const dataLines: string[] = [];
-      for (const line of frame.split('\n')) {
-        if (line.startsWith('event:')) {
-          event = line.slice(6).trim();
-          continue;
-        }
-        if (line.startsWith('data:')) {
-          dataLines.push(line.slice(5).trim());
-        }
-      }
-      return { event, data: dataLines.join('\n') };
-    })
-    .filter((frame) => frame.data);
 }
 
 function parseClarificationQuestions(raw: unknown): ClarificationQuestion[] {

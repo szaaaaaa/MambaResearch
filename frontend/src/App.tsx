@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { RunTab } from './components/tabs/RunTab';
 import { HistoryTab } from './components/tabs/HistoryTab';
 import { SkillsTab } from './components/tabs/SkillsTab';
+import { WorkbenchTab } from './components/tabs/WorkbenchTab';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { UiPreferences } from './components/settings/types';
 
@@ -59,7 +60,7 @@ const AppContent: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(() => loadUiPreferences());
   const [toolPanelTab, setToolPanelTab] = React.useState<ToolPanelTab | null>(null);
-  const [activeTab, setActiveTab] = React.useState<'run' | 'history' | 'skills'>('run');
+  const [activeTab, setActiveTab] = React.useState<'run' | 'history' | 'skills' | 'workbench'>('run');
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
 
   const sidebarPanelRef = usePanelRef();
@@ -69,9 +70,9 @@ const AppContent: React.FC = () => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
   }, [uiPreferences]);
 
-  const handleTabChange = (tab: 'run' | 'history' | 'skills') => {
+  const handleTabChange = (tab: 'run' | 'history' | 'skills' | 'workbench') => {
     setActiveTab(tab);
-    if (tab === 'run') {
+    if (tab === 'run' || tab === 'workbench') {
       setToolPanelTab(null);
       toolsPanelRef.current?.collapse();
     } else {
@@ -145,8 +146,8 @@ const AppContent: React.FC = () => {
                 <PanelLeft className="h-4 w-4" />
               </button>
             )}
-            {/* 工具面板关闭时显示打开按钮 */}
-            {!toolPanelOpen && (
+            {/* 工具面板关闭时显示打开按钮；Workbench 模式右上角已有自己的状态标签，避免遮挡 */}
+            {!toolPanelOpen && activeTab !== 'workbench' && (
               <button
                 type="button"
                 onClick={() => handleTabChange('history')}
@@ -156,7 +157,7 @@ const AppContent: React.FC = () => {
                 <PanelRight className="h-4 w-4" />
               </button>
             )}
-            <RunTab uiPreferences={uiPreferences} />
+            {activeTab === 'workbench' ? <WorkbenchTab /> : <RunTab uiPreferences={uiPreferences} />}
           </main>
         </Panel>
 

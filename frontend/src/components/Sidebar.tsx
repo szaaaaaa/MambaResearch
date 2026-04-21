@@ -1,5 +1,5 @@
 import React from 'react';
-import { Archive, Clock, Copy, Cpu, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
+import { Archive, Clock, Copy, Cpu, Pencil, Plus, Settings2, Terminal, Trash2 } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Button } from './ui';
 import { runStatusLabel } from '../labels';
@@ -74,8 +74,8 @@ interface SidebarProps {
   onArchiveConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onOpenSettings: () => void;
-  activeTab: 'run' | 'history' | 'skills';
-  onTabChange: (tab: 'run' | 'history' | 'skills') => void;
+  activeTab: 'run' | 'history' | 'skills' | 'workbench';
+  onTabChange: (tab: 'run' | 'history' | 'skills' | 'workbench') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -232,6 +232,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <Cpu className="h-4 w-4" />
               技能
+            </button>
+          </div>
+
+          <div className="mt-2 flex">
+            <button
+              type="button"
+              onClick={() => onTabChange(activeTab === 'workbench' ? 'run' : 'workbench')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === 'workbench'
+                  ? 'bg-slate-900 text-white'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+              title="Claude Code 工作台"
+            >
+              <Terminal className="h-4 w-4" />
+              Claude Code
             </button>
           </div>
         </div>
