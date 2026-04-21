@@ -110,15 +110,17 @@
 
 ### [TODO] 4c. Read / Grep / Glob 列表视图
 
-- **What**: 为"只读查询类"工具实现文件/匹配列表视图。
+- **What**: 为"只读查询类"工具的 `tool_use` 阶段实现结构化单行头部（Path A，沿用 4b 决策）。实际文件内容 / 命中列表由已有的 `⎿ N 行输出` 折叠承载，与 CLI 原生 `Read(path) \n ⎿ Read 149 lines (ctrl+r to expand)` 语义对齐。
 - **Files**:
   - 前端新增：`tools/ReadView.tsx` / `GrepView.tsx` / `GlobView.tsx`
   - 前端改动：`tools/index.tsx` 注册 3 项
 - **Acceptance**:
-  - **Read**：header `Read <path>`；内容区左侧行号列（`text-slate-400 tabular-nums`）+ 右侧源码（等宽）；超 100 行折叠成"显示 N 行内容"展开
-  - **Grep**：header `Grep <pattern>`；命中文件列表每项 `<path> · N matches`；0 命中显示"未命中"
-  - **Glob**：header `Glob <pattern>`；命中路径列表每项独立行
-  - 手测：让 Claude `Read app.py`、`Grep "FastAPI"`、`Glob "src/**/*.py"` → 视觉确认
+  - **Read**：单行 `Read <path>`；若入参含 `offset` / `limit`，尾部追加 `[offset..offset+limit]` 徽标（dim）
+  - **Grep**：单行 `Grep <pattern>`（pattern 用 `bg-slate-100` chip）；过滤条件作为 dim chips：`path=` / `glob=` / `type=` / `-i` / `multiline` / `mode=`
+  - **Glob**：单行 `Glob <pattern>`（pattern chip）+ 可选 `path=` chip
+  - 文件内容 / 命中列表由 `renderToolResultBlock` `⎿` 折叠承载（现有实现，展开可看完整输出）
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+  - 手测：让 Claude `Read app.py`、`Grep "FastAPI"`、`Glob "src/**/*.py"` → 视觉确认单行 header + `⎿` 折叠
 
 ### [TODO] 4d. TodoWrite 替换式刷新
 
@@ -333,3 +335,4 @@
 - 2026-04-21（diff 库选型）: **选 `diff` 包（npm，~20KB，只含 Myers 算法）**，不选 `react-diff-viewer-continued`（~100KB，运行时依赖重）。EditView 自行渲染 +/- 行（约 40 行 TSX），成本可控且不引入额外运行时黑盒
 - 2026-04-21（TodoWrite 去重实现层）: **渲染层去重**（MessageRenderer 按 tool_use_id 聚合取最新），不在 store 层合并。原因：store items 保留原始顺序有利于 Task 8 SQLite 回放正确性，渲染层去重是纯展现决策，可随时调整不影响数据流
 - 2026-04-21（Task 4b BashView 边界=Path A）: BashView **只渲染 tool_use 阶段**的 `$ <command>` 终端块头部，**不跨消息类型**抽取 tool_result 的 stdout/exit code。后者继续由已有的 `renderToolResultBlock` `⎿ N 行输出` 折叠承载。原因：跨 assistant→user 消息配对需要在上层维护 tool_use_id→tool_result 映射，改面过大且与现有折叠语义重复。终端块 + `⎿` 折叠组合已经能传达"命令+输出"语义
+- 2026-04-21（Task 4c Read/Grep/Glob 沿用 Path A）: 原 Acceptance 想在 Read 视图内渲染"行号+源码"、Grep 渲染"文件·N matches" 列表——这些数据均在 tool_result 里。沿用 4b 路线：视图只消费 tool_use 入参，结果走已有 `⎿` 折叠。这样与 CLI 原生 `Read(path)\n⎿ Read 149 lines` 视觉一致，且避免跨消息类型配对
