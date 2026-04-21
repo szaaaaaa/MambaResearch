@@ -95,16 +95,18 @@
 
 ### [TODO] 4b. Bash 终端块视图
 
-- **What**: 为 `Bash` tool 实现终端样式渲染。
+- **What**: 为 `Bash` tool 的 `tool_use` 阶段实现终端块样式的 `$ <command>` 头部（Path A）。stdout/exit code 复用已有的 `⎿ N 行输出` 折叠，不跨消息类型取数——保持 tool_use 视图边界。
 - **Files**:
   - 前端新增：`frontend/src/components/workbench/tools/BashView.tsx`
   - 前端改动：`tools/index.tsx` 注册 `Bash: BashView`
 - **Acceptance**:
-  - 黑底白字终端块（`bg-slate-900 text-slate-100 font-mono`）
-  - 第一行 `$ <command>`（`description` 字段作为副标题 dim）
-  - stdout 完整（不折叠，但容器 `max-h-96 overflow-auto`）
-  - exit code 非 0 时底部一行 `text-rose-400 "exit N"`
-  - 手测：在 Workbench 让 Claude 跑 `find . -name "*.py" | head` → 视觉确认
+  - 黑底白字终端块（`bg-slate-900 text-slate-100 font-mono`），`$` 前缀 `text-emerald-400`
+  - 第一行 `$ <command>`；`description` 字段作为副标题 dim（`text-[11px] text-slate-400`）
+  - `run_in_background: true` 时命令行尾追加 `(background)` 标记（amber）
+  - stdout 完整展示——**由已有 `renderToolResultBlock` 折叠承载**（tool_result 块在下一条 user 消息里），BashView 本体不管
+  - exit code 非 0 时，tool_result 的 `is_error: true` 会触发现有折叠的红色标题——**也不在 BashView 本体内**
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+  - 手测：在 Workbench 让 Claude 跑 `find . -name "*.py" | head` → 视觉确认 `$` 终端块 + 下方 `⎿` 折叠
 
 ### [TODO] 4c. Read / Grep / Glob 列表视图
 
@@ -330,3 +332,4 @@
 - 2026-04-21（Task 4 拆分）: 原 Task 4 "工具调用专属视图" 含 10+ 独立验收项（每工具一个），单次 /dev 写完但验证做不完——按视觉/功能相似性拆成 **4a dispatcher + Edit/Write、4b Bash、4c Read/Grep/Glob、4d TodoWrite（去重）、4e WebFetch/WebSearch/Task**。每子任务独立 /dev → /review → /ship → 浏览器手验 → 下一轮，代码与验证同步推进
 - 2026-04-21（diff 库选型）: **选 `diff` 包（npm，~20KB，只含 Myers 算法）**，不选 `react-diff-viewer-continued`（~100KB，运行时依赖重）。EditView 自行渲染 +/- 行（约 40 行 TSX），成本可控且不引入额外运行时黑盒
 - 2026-04-21（TodoWrite 去重实现层）: **渲染层去重**（MessageRenderer 按 tool_use_id 聚合取最新），不在 store 层合并。原因：store items 保留原始顺序有利于 Task 8 SQLite 回放正确性，渲染层去重是纯展现决策，可随时调整不影响数据流
+- 2026-04-21（Task 4b BashView 边界=Path A）: BashView **只渲染 tool_use 阶段**的 `$ <command>` 终端块头部，**不跨消息类型**抽取 tool_result 的 stdout/exit code。后者继续由已有的 `renderToolResultBlock` `⎿ N 行输出` 折叠承载。原因：跨 assistant→user 消息配对需要在上层维护 tool_use_id→tool_result 映射，改面过大且与现有折叠语义重复。终端块 + `⎿` 折叠组合已经能传达"命令+输出"语义
