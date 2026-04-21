@@ -253,7 +253,7 @@ agent:
     max_per_rq: 2
     require_human_results: false
     workspace:
-      template: generic
+      template: builtin
       custom_path: ''
       mutable_files:
       - configs/hparams.yaml
