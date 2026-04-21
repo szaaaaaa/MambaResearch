@@ -319,6 +319,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
         <ClarificationModal
           state={activeConversation.clarificationState}
           onSubmit={submitClarificationResponse}
+          onClose={() => void stopRun()}
         />
       ) : activeConversation.hitlRequest && activeConversation.runId ? (
         <HitlModal

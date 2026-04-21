@@ -328,6 +328,7 @@ export interface ChatSession {
   rawTerminalLog: string;
   hitlRequest: HitlRequest | null;
   clarificationState: ClarificationState | null;
+  clientRequestId: string | null;
 }
 
 export interface ProviderModelCatalog {
