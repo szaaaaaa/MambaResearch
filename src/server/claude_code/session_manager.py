@@ -219,6 +219,10 @@ class SessionManager:
             options_kwargs["can_use_tool"] = _build_permission_bridge(
                 session_id, permission_state
             )
+            # 仅加载 user 层设置；跳过项目 .claude/settings.json 的 allow-list，
+            # 否则 Write/Edit/Bash 等被项目预批的工具会直接放行，can_use_tool
+            # 桥永远不被触发，Workbench 的 Modal 就失去存在意义。
+            options_kwargs.setdefault("setting_sources", ["user"])
         if options_overrides:
             options_kwargs.update(options_overrides)
 
