@@ -15,6 +15,9 @@ import { CostPanel } from '../workbench/panels/CostPanel';
 import { ConfigPanel } from '../workbench/panels/ConfigPanel';
 import { InfoPanel } from '../workbench/panels/InfoPanel';
 import { AgentsPanel } from '../workbench/panels/AgentsPanel';
+import { ModelPicker } from '../workbench/panels/ModelPicker';
+import { PermissionsPanel } from '../workbench/panels/PermissionsPanel';
+import { McpStatusPanel } from '../workbench/panels/McpStatusPanel';
 import { SLASH_COMMANDS } from '../workbench/slash/registry';
 
 /**
@@ -422,6 +425,20 @@ export const WorkbenchTab: React.FC = () => {
         );
       case 'agents':
         return <AgentsPanel onClose={ccClosePanel} />;
+      case 'model':
+        return (
+          <ModelPicker session={session} onUpdated={ccSetSession} onClose={ccClosePanel} />
+        );
+      case 'mcp':
+        return <McpStatusPanel session={session} onClose={ccClosePanel} />;
+      case 'permissions':
+        return (
+          <PermissionsPanel
+            session={session}
+            onUpdated={ccSetSession}
+            onClose={ccClosePanel}
+          />
+        );
       case 'config':
         return (
           <ConfigPanel

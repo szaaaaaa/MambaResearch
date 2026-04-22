@@ -410,6 +410,9 @@ export type ClaudeCodePanel =
   | { kind: 'memory' }
   | { kind: 'config' }
   | { kind: 'agents' }
+  | { kind: 'model' }
+  | { kind: 'mcp' }
+  | { kind: 'permissions' }
   | {
       kind: 'info';
       title: string;

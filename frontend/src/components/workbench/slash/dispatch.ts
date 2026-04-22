@@ -183,6 +183,15 @@ function runFrontendHandler(
     case 'agents':
       ctx.openPanel({ kind: 'agents' });
       return;
+    case 'model':
+      ctx.openPanel({ kind: 'model' });
+      return;
+    case 'mcp':
+      ctx.openPanel({ kind: 'mcp' });
+      return;
+    case 'permissions':
+      ctx.openPanel({ kind: 'permissions' });
+      return;
     case 'init':
       ctx.submitPrompt(INIT_PROMPT);
       return;

@@ -4,11 +4,14 @@
 
 - ``POST   /api/claude-code/sessions``                 新建 SDK 会话
 - ``GET    /api/claude-code/sessions``                 列出会话
+- ``PATCH  /api/claude-code/sessions/{id}``            更新 model / permission_mode
+- ``GET    /api/claude-code/sessions/{id}/mcp``        查询挂载的 MCP server 状态
 - ``POST   /api/claude-code/sessions/{id}/messages``    发送一轮消息，SSE 回流 SDK 事件
 - ``POST   /api/claude-code/sessions/{id}/permissions`` HITL 权限请求决策回传
 - ``POST   /api/claude-code/sessions/{id}/interrupt``   打断当前推理
 - ``POST   /api/claude-code/sessions/{id}/command``     会话生命周期命令（clear/exit/add-dir）
 - ``DELETE /api/claude-code/sessions/{id}``            关闭并移除会话
+- ``GET    /api/claude-code/models``                   列出可选 Claude 模型
 """
 
 from __future__ import annotations
@@ -27,6 +30,15 @@ from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, sessi
 from src.server.settings import ROOT
 
 router = APIRouter()
+
+
+# 可选模型清单：id 直接用 SDK 接受的字符串；label 面向用户展示。
+# 新增模型时在这里扩一行即可——无需改 session_manager / SDK 侧。
+AVAILABLE_MODELS: list[dict[str, str]] = [
+    {"id": "claude-opus-4-7", "label": "Claude Opus 4.7"},
+    {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
+    {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5"},
+]
 
 
 def _sse_frame(event: str, payload: dict[str, Any]) -> str:
@@ -101,6 +113,103 @@ async def delete_session(session_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="session not found")
     return {"status": "deleted", "id": session_id}
+
+
+@router.patch("/api/claude-code/sessions/{session_id}")
+async def patch_session(session_id: str, request: Request):
+    """更新会话 model / permission_mode。
+
+    Body: ``{"model"?: str | null, "permission_mode"?: str}``
+
+    - 两字段至少给一个；都不给 → 400
+    - ``model`` 允许 ``null``，表示重置为 CLI 默认；字符串必须在 ``AVAILABLE_MODELS`` 白名单
+    - ``permission_mode`` 必须是 SDK 合法值（见 ``VALID_PERMISSION_MODES``）
+    - 两者都给时依次应用（model → permission_mode），任一失败后续不继续
+    """
+    payload = await _parse_json_body(request)
+    has_model = "model" in payload
+    has_mode = "permission_mode" in payload
+    if not has_model and not has_mode:
+        raise HTTPException(
+            status_code=400,
+            detail="request body must include at least one of: model, permission_mode",
+        )
+
+    # 预校验所有字段再下发，避免模型切成功后 mode 再 400 导致状态不一致
+    model: str | None = None
+    if has_model:
+        model_raw = payload.get("model")
+        if model_raw is None:
+            model = None
+        elif isinstance(model_raw, str) and model_raw.strip():
+            model = model_raw.strip()
+            allowed = {m["id"] for m in AVAILABLE_MODELS}
+            if model not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"invalid model: {model!r} "
+                        f"(must be one of {sorted(allowed)} or null)"
+                    ),
+                )
+        else:
+            raise HTTPException(
+                status_code=400, detail="model must be a non-empty string or null"
+            )
+
+    mode: str | None = None
+    if has_mode:
+        mode_raw = payload.get("permission_mode")
+        if not isinstance(mode_raw, str) or not mode_raw.strip():
+            raise HTTPException(
+                status_code=400, detail="permission_mode must be a non-empty string"
+            )
+        mode = mode_raw.strip()
+        if mode not in VALID_PERMISSION_MODES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"invalid permission_mode: {mode!r} "
+                    f"(must be one of {sorted(VALID_PERMISSION_MODES)})"
+                ),
+            )
+
+    session = session_manager.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    if has_model:
+        session = await session_manager.switch_model(session_id, model)
+        if session is None:  # 竞争下被 sweeper 回收
+            raise HTTPException(status_code=404, detail="session not found")
+    if has_mode:
+        assert mode is not None
+        session = await session_manager.switch_permission_mode(session_id, mode)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+
+    assert session is not None
+    return {"status": "updated", "session": session.to_dict()}
+
+
+@router.get("/api/claude-code/sessions/{session_id}/mcp")
+async def get_session_mcp(session_id: str):
+    """查询会话挂载的 MCP server 状态。
+
+    返回 SDK ``get_mcp_status`` 的原始响应，通常形如
+    ``{"mcpServers": [{"name": "...", "status": "connected" | ...}, ...]}``，
+    未挂载时 ``mcpServers`` 为空列表。
+    """
+    status = await session_manager.get_mcp_status(session_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return status
+
+
+@router.get("/api/claude-code/models")
+async def list_models():
+    """列出前端 ModelPicker 可选的 Claude 模型白名单。"""
+    return {"models": list(AVAILABLE_MODELS)}
 
 
 @router.post("/api/claude-code/sessions/{session_id}/permissions")

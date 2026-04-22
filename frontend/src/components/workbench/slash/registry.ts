@@ -13,7 +13,7 @@ import type { SlashCommand } from './types';
 const CLI_ONLY_HINT = '此命令仅原生 CLI 可用，请在终端运行 `claude` 后使用。';
 
 const DEFERRED_HINT =
-  '此命令正在实现中，将在 Task 6c / 6d 落地——届时会连上真实的后端会话控制。';
+  '此命令正在实现中，将在 Task 6d 落地——届时会连上真实的后端会话控制。';
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   // ── 展示 / 信息面板 ──────────────────────────────────────────────
@@ -139,22 +139,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     handlerKey: 'add-dir',
   },
 
-  // ── 待实现（6c / 6d） ───────────────────────────────────────────
+  // ── 会话配置（6c） ───────────────────────────────────────────────
   {
     id: 'model',
-    description: '切换会话使用的模型（6c 实现）',
-    scope: 'deferred',
+    description: '切换会话使用的模型（保留历史上下文）',
+    scope: 'frontend',
+    handlerKey: 'model',
   },
   {
     id: 'mcp',
-    description: '查看已挂载的 MCP server（6c 实现）',
-    scope: 'deferred',
+    description: '查看已挂载的 MCP server 及其连接状态',
+    scope: 'frontend',
+    handlerKey: 'mcp',
   },
   {
     id: 'permissions',
-    description: '切换权限模式（6c 实现）',
-    scope: 'deferred',
+    description: '切换权限模式（default / acceptEdits / plan / bypassPermissions / dontAsk / auto）',
+    scope: 'frontend',
+    handlerKey: 'permissions',
   },
+
+  // ── 待实现（6d） ────────────────────────────────────────────────
   {
     id: 'compact',
     description: '压缩会话上下文（6d 实现）',

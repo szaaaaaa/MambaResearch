@@ -33,8 +33,6 @@ logger = logging.getLogger(__name__)
 VALID_PERMISSION_MODES: frozenset[str] = frozenset(
     {"default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"}
 )
-# 仅在 "default" 模式下注入 can_use_tool 桥触发 Modal；其余模式沿用 SDK 原生语义
-_INTERACTIVE_PERMISSION_MODES: frozenset[str] = frozenset({"default"})
 
 # SSE 发射器签名：(event_name, payload_dict) -> None
 SseEmitter = Callable[[str, dict[str, Any]], None]
@@ -117,8 +115,9 @@ class ClaudeSession:
     model : str or None
         指定模型；None 表示使用 CLI 默认。
     permission_mode : str
-        SDK ``PermissionMode`` 字面量之一。仅 ``"default"`` 时桥挂钩触发前端 Modal，
-        其余模式沿用 SDK 原生语义（acceptEdits 自动放行编辑工具等）。
+        SDK ``PermissionMode`` 字面量之一。仅 ``"default"`` 时 SDK 会调用 can_use_tool
+        桥触发前端 Modal，其余模式沿用 SDK 原生语义（acceptEdits 自动放行编辑工具等）；
+        桥本身无条件挂载，保证运行时 /permissions 切换进/出 default 都立即生效。
     created_at : float
         创建 Unix 时间戳。
     last_activity_at : float
@@ -322,6 +321,79 @@ class SessionManager:
         session.last_activity_at = time.time()
         return session
 
+    async def switch_model(
+        self, session_id: str, model: str | None
+    ) -> ClaudeSession | None:
+        """切换会话模型，SDK 运行时调用 ``set_model`` 保留上下文。
+
+        传入 ``None`` 表示重置为 CLI 默认模型。SDK 未校验模型字符串，非法值会在
+        下一次 query 时由子进程报错——路由层若需前置校验应自行把 ``/models``
+        返回的白名单做 membership 检查。
+
+        ``set_model`` 会向 SDK 子进程写 stdin 帧；为避免与 ``send_message`` 的
+        ``query/receive_response`` 并发造成帧交错，整段 SDK 调用持会话锁。
+
+        Returns
+        -------
+        ClaudeSession or None
+            更新后的会话；若 id 不存在返回 ``None``。
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        async with session.lock:
+            await session.client.set_model(model)
+            session.model = model
+            session.last_activity_at = time.time()
+        return session
+
+    async def switch_permission_mode(
+        self, session_id: str, mode: str
+    ) -> ClaudeSession | None:
+        """切换会话权限模式，SDK 运行时调用 ``set_permission_mode`` 保留上下文。
+
+        非法 mode 显式 ``raise ValueError``；这是运行期契约而不是开发期断言，
+        故不能用 ``assert``（会被 ``python -O`` 优化掉）。``set_permission_mode``
+        会向 SDK 子进程写 stdin 帧，调用前后持会话锁避免与 ``query`` 帧交错。
+
+        Returns
+        -------
+        ClaudeSession or None
+            更新后的会话；若 id 不存在返回 ``None``。
+        """
+        if mode not in VALID_PERMISSION_MODES:
+            raise ValueError(
+                f"invalid permission_mode {mode!r} "
+                f"(must be one of {sorted(VALID_PERMISSION_MODES)})"
+            )
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        async with session.lock:
+            await session.client.set_permission_mode(mode)
+            session.permission_mode = mode
+            session.last_activity_at = time.time()
+        return session
+
+    async def get_mcp_status(self, session_id: str) -> dict[str, Any] | None:
+        """读取会话挂载的 MCP server 状态，委托给 SDK ``get_mcp_status``。
+
+        ``get_mcp_status`` 走 SDK 子进程的 request/response，同样需要持会话锁
+        避免与当前轮 ``query/receive_response`` 的 stdin/stdout 帧交错。
+
+        Returns
+        -------
+        dict or None
+            SDK 返回的原始响应；若 id 不存在返回 ``None``。未挂任何 server 时
+            返回 ``{"mcpServers": []}`` 形状的空列表，由前端展示"无挂载"。
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        async with session.lock:
+            session.last_activity_at = time.time()
+            return await session.client.get_mcp_status()
+
     def get(self, session_id: str) -> ClaudeSession | None:
         return self._sessions.get(session_id)
 
@@ -454,14 +526,15 @@ async def _build_client(
         options_kwargs["model"] = model
     if add_dirs:
         options_kwargs["add_dirs"] = list(add_dirs)
-    if permission_mode in _INTERACTIVE_PERMISSION_MODES:
-        options_kwargs["can_use_tool"] = _build_permission_bridge(
-            session_id, permission_state
-        )
-        # 仅加载 user 层设置；跳过项目 .claude/settings.json 的 allow-list，
-        # 否则 Write/Edit/Bash 等被项目预批的工具会直接放行，can_use_tool
-        # 桥永远不被触发，Workbench 的 Modal 就失去存在意义。
-        options_kwargs.setdefault("setting_sources", ["user"])
+    # 无条件挂桥接：SDK 仅在 permission_mode == "default" 时调用 can_use_tool，
+    # 但运行时 /permissions 切换进/出 default 需要桥接随时可用；挂上是等价改动。
+    # 配合仅加载 user 层设置，跳过项目 .claude/settings.json 的 allow-list，
+    # 否则 Write/Edit/Bash 等被项目预批的工具会直接放行，default 模式下
+    # can_use_tool 桥永远不被触发，Workbench 的 Modal 就失去存在意义。
+    options_kwargs["can_use_tool"] = _build_permission_bridge(
+        session_id, permission_state
+    )
+    options_kwargs.setdefault("setting_sources", ["user"])
     if options_overrides:
         options_kwargs.update(options_overrides)
 
