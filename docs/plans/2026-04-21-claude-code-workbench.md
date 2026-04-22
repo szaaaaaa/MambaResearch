@@ -256,7 +256,9 @@
   - 后端 idle TTL：60min 无 `messages` / `interrupt` / `permissions` 请求的 session 会触发 SDK `disconnect`（日志可查 `session {id} evicted by idle ttl`）
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 8. SQLite 会话持久化 + 刷新恢复
+### [PENDING-VERIFY] 8. SQLite 会话持久化 + 刷新恢复
+
+> **Notes（2026-04-22）**：后端 `ClaudeCodeStore` + `SessionManager` 集成 + 新路由 + 前端 localStorage 恢复全部落地；`pytest tests/` 184 passed（其中新增 16 个 persistence 测试覆盖 store CRUD、记录与累计、get_or_restore、GET messages 路由、evict-then-restore 全流程）；`npx tsc --noEmit` + `npm run build` 通过。SDK resume 采用上游原生 `resume` 参数（策略 A 可用，无需回退）。待手测：浏览器三轮对话 → 刷新 → 恢复；刷新后第 4 条引用前文；idle TTL 触发后仍可 GET 历史。
 
 - **What**: session 元数据 + 消息历史写入 SQLite；每条 SSE 事件 serialize 时同步落库；session 懒重建——前端刷新后若 localStorage 记录了 `lastSessionId`，后端按 ID 从 DB 取历史消息，用它们预热新建的 SDK client，实现"刷新不丢会话"。
 - **Files**:

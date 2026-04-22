@@ -104,7 +104,28 @@ async def create_session(request: Request):
 
 @router.get("/api/claude-code/sessions")
 async def list_sessions():
-    return {"sessions": [s.to_dict() for s in session_manager.list_sessions()]}
+    """列出所有会话。DB 可用时以 DB 为准（含被 evict 的冷会话），否则退回 memory。
+
+    返回字段：StoredSession.to_dict() 的超集 + ``running`` 标记该会话当前是否
+    在内存中有 SDK client；冷会话 running=False，前端点击后 send_message 会
+    触发 get_or_restore 按需重建。
+    """
+    store = session_manager.store
+    hot_ids = {s.id for s in session_manager.list_sessions()}
+    if store is not None:
+        rows = store.list_sessions()
+        return {
+            "sessions": [
+                {**row.to_dict(), "running": row.id in hot_ids}
+                for row in rows
+            ]
+        }
+    return {
+        "sessions": [
+            {**s.to_dict(), "running": True}
+            for s in session_manager.list_sessions()
+        ]
+    }
 
 
 @router.delete("/api/claude-code/sessions/{session_id}")
@@ -308,6 +329,47 @@ async def session_command(session_id: str, request: Request):
     )
 
 
+@router.get("/api/claude-code/sessions/{session_id}/messages")
+async def list_session_messages(session_id: str, request: Request):
+    """回灌历史事件流，供前端刷新后恢复 Workbench Tab 的对话视图。
+
+    Query params:
+    - ``limit``: 可选，最多返回条目；省略 = 全部
+    - ``offset``: 可选，起始 sequence 偏移，默认 0
+
+    返回 ``{"messages": [{"sequence", "event_type", "payload", "created_at"}, ...]}``，
+    按 sequence 升序。数据仅从 DB 读，不触发 SDK 恢复——前端可以先列消息再按需发下一轮。
+    """
+    store = session_manager.store
+    if store is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    stored = store.get_session(session_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    def _parse_int(name: str) -> int | None:
+        raw = request.query_params.get(name)
+        if raw is None or raw == "":
+            return None
+        try:
+            val = int(raw)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"{name} must be an integer"
+            ) from exc
+        if val < 0:
+            raise HTTPException(status_code=400, detail=f"{name} must be >= 0")
+        return val
+
+    limit = _parse_int("limit")
+    offset = _parse_int("offset") or 0
+    messages = store.get_messages(session_id, limit=limit, offset=offset)
+    return {
+        "session": stored.to_dict(),
+        "messages": [m.to_dict() for m in messages],
+    }
+
+
 @router.post("/api/claude-code/sessions/{session_id}/messages")
 async def send_message(session_id: str, request: Request):
     payload = await _parse_json_body(request)
@@ -315,18 +377,42 @@ async def send_message(session_id: str, request: Request):
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
 
-    # 原子 lookup + 刷新 last_activity_at，避免与 sweeper 抢占：
-    # 若 touch 返回非 None，session 的时间戳已刷新到"刚才"，下一轮 sweeper
-    # 扫描不会把它判定为 idle；本轮内后续调用都持有同一个 session 引用。
-    session = session_manager.touch(session_id)
+    # 刷新恢复路径：若会话被 idle sweeper evict 或进程重启后只剩 DB 行，
+    # get_or_restore 会用 SDK resume 重建 client；DB 也查不到才 404。
+    # 同时刷新 last_activity_at，避免与 sweeper 竞态。
+    try:
+        session = await session_manager.get_or_restore(session_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"failed to restore session: {exc}"
+        ) from exc
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
+
+    # 把用户 prompt 落库——SDK 侧由 CLI 存档掌握上下文，但前端刷新回放需要
+    # 在 UI 里重现"用户说了什么"，否则只看到 assistant 回复读起来错位。
+    try:
+        session_manager.record_event(
+            session.id,
+            event_type="cc_user_prompt",
+            payload={"type": "user_local", "text": prompt},
+        )
+    except Exception:
+        pass
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     def _emit(event: str, data: dict[str, Any]) -> None:
-        """can_use_tool 桥把权限请求帧推到当前轮的 SSE 队列。"""
+        """SSE 帧入队 + 同步落 DB。
+        can_use_tool 桥也通过它推 cc_permission_request 帧——权限请求也落库，
+        保证刷新后回灌历史里能看到过去的授权瞬间。
+        """
         queue.put_nowait(_sse_frame(event, data))
+        try:
+            session_manager.record_event(session.id, event_type=event, payload=data)
+        except Exception:
+            # 落库失败不影响 SSE 流——DB 不可用时会话仍可继续，next turn 会再次尝试
+            pass
 
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
@@ -340,12 +426,12 @@ async def send_message(session_id: str, request: Request):
                         payload_dict = serialize_message(message)
                     except Exception as exc:  # 序列化失败不能让连接挂住
                         payload_dict = {"type": "error", "message": f"serialize failed: {exc}"}
-                    queue.put_nowait(_sse_frame("cc_message", payload_dict))
+                    _emit("cc_message", payload_dict)
             except Exception as exc:
-                queue.put_nowait(_sse_frame("cc_error", {"message": str(exc)}))
+                _emit("cc_error", {"message": str(exc)})
             finally:
                 session.permission_state.current_sse_emitter = None
-                queue.put_nowait(_sse_frame("cc_finished", {"session_id": session.id}))
+                _emit("cc_finished", {"session_id": session.id})
                 queue.put_nowait(None)
 
     turn_task = asyncio.create_task(_run_turn())

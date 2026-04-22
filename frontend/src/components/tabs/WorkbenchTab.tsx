@@ -29,6 +29,25 @@ import { SLASH_COMMANDS } from '../workbench/slash/registry';
  * client 由 ``SessionManager`` 的 idle TTL（60min 无活动）自行回收，前端 unmount
  * 不再 DELETE 也不再 abort，保证"切走 → 切回"之前的对话完整还原。
  */
+const CC_LAST_SESSION_KEY = 'cc_last_session_id';
+
+const readLastSessionId = (): string | null => {
+  try {
+    return window.localStorage.getItem(CC_LAST_SESSION_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const writeLastSessionId = (id: string | null) => {
+  try {
+    if (id) window.localStorage.setItem(CC_LAST_SESSION_KEY, id);
+    else window.localStorage.removeItem(CC_LAST_SESSION_KEY);
+  } catch {
+    /* localStorage 不可用就放弃持久化，不影响会话功能 */
+  }
+};
+
 export const WorkbenchTab: React.FC = () => {
   const {
     state,
@@ -46,6 +65,7 @@ export const WorkbenchTab: React.FC = () => {
     ccSetMarkdownEnabled,
     ccSetThinkingDefaultCollapsed,
     ccClearItems,
+    ccHydrateHistory,
     ccReset,
   } = useAppContext();
   const {
@@ -160,8 +180,47 @@ export const WorkbenchTab: React.FC = () => {
     const info = (await response.json()) as ClaudeCodeSessionInfo;
     sessionRef.current = info;
     ccSetSession(info);
+    writeLastSessionId(info.id);
     return info;
   }, [ccSetSession, permissionMode]);
+
+  // 刷新恢复：挂载时若 state 无 session 且 localStorage 记着上次 id，
+  // 拉 DB 历史回灌到 UI。Tab 切换路径不触发——state.session 已在 AppProvider
+  // 上下文里保留。DB 侧找不到（404）就清 localStorage 回到空态。
+  const hydrateAttemptedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (hydrateAttemptedRef.current) return;
+    if (state.claudeCode.session) return;
+    const lastId = readLastSessionId();
+    if (!lastId) return;
+    hydrateAttemptedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/claude-code/sessions/${lastId}/messages`,
+        );
+        if (cancelled) return;
+        if (response.status === 404) {
+          writeLastSessionId(null);
+          return;
+        }
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          session: ClaudeCodeSessionInfo;
+          messages: Array<{ sequence: number; event_type: string; payload: unknown }>;
+        };
+        if (cancelled) return;
+        sessionRef.current = data.session;
+        ccHydrateHistory(data.session, data.messages);
+      } catch {
+        /* 网络问题等——下次进入 Workbench 再试即可 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.claudeCode.session, ccHydrateHistory]);
 
   const sendToBackend = async (text: string) => {
     const turnStart = Date.now();
@@ -348,6 +407,7 @@ export const WorkbenchTab: React.FC = () => {
           ccClearItems();
         } else if (command === 'exit') {
           sessionRef.current = null;
+          writeLastSessionId(null);
           ccReset();
         } else if (command === 'add-dir') {
           const path = typeof args?.path === 'string' ? args.path : '';
@@ -419,6 +479,7 @@ export const WorkbenchTab: React.FC = () => {
       return;
     }
     sessionRef.current = null;
+    writeLastSessionId(null);
     ccReset();
   }, [isRunning, pushError, ccReset]);
 

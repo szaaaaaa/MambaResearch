@@ -957,6 +957,10 @@ interface AppContextType {
   ccSetMarkdownEnabled: (enabled: boolean) => void;
   ccSetThinkingDefaultCollapsed: (collapsed: boolean) => void;
   ccClearItems: () => void;
+  ccHydrateHistory: (
+    session: ClaudeCodeSessionInfo,
+    items: Array<{ sequence: number; event_type: string; payload: unknown }>,
+  ) => void;
   ccReset: () => void;
 }
 
@@ -2193,6 +2197,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  /**
+   * 刷新/Tab 切换后从后端 DB 回灌历史：按 sequence 顺序把 stored events
+   * 重建为 UI items。过滤 cc_permission_request / cc_finished（已失效或仅
+   * 为 UI 标记），保留 cc_user_prompt / cc_message / cc_error。
+   */
+  const ccHydrateHistory = (
+    session: ClaudeCodeSessionInfo,
+    rows: Array<{ sequence: number; event_type: string; payload: unknown }>,
+  ) => {
+    const hydrated: ClaudeCodeStreamItem[] = [];
+    for (const row of rows) {
+      if (row.event_type === 'cc_message') {
+        hydrated.push({ id: `cc-seq-${row.sequence}`, payload: row.payload });
+        continue;
+      }
+      if (row.event_type === 'cc_user_prompt') {
+        hydrated.push({ id: `cc-seq-${row.sequence}`, payload: row.payload });
+        continue;
+      }
+      if (row.event_type === 'cc_error') {
+        const payload = row.payload as Record<string, unknown> | null;
+        const text =
+          payload && typeof payload.message === 'string'
+            ? payload.message
+            : JSON.stringify(row.payload);
+        hydrated.push({
+          id: `cc-seq-${row.sequence}`,
+          payload: { type: 'error_local', text },
+        });
+        continue;
+      }
+      // cc_permission_request / cc_finished 不回灌：前者已由 SDK 决策完成，
+      // 后者只是流终止标记，重建后无意义
+    }
+    setState((prev) => ({
+      ...prev,
+      claudeCode: {
+        ...prev.claudeCode,
+        session,
+        items: hydrated,
+        isRunning: false,
+        turnStartAt: null,
+        pendingPermissions: [],
+      },
+    }));
+  };
+
   const ccReset = () => {
     ccAbortControllerRef.current?.abort();
     ccAbortControllerRef.current = null;
@@ -2256,6 +2307,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccSetMarkdownEnabled,
         ccSetThinkingDefaultCollapsed,
         ccClearItems,
+        ccHydrateHistory,
         ccReset,
       }}
     >

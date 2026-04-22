@@ -101,9 +101,11 @@ def fake_sdk(monkeypatch):
     """把 SessionManager 用到的 SDK 客户端换成 FakeClient，并清空全局注册表。"""
     FakeClient.created = []
     monkeypatch.setattr(sm_module, "ClaudeSDKClient", FakeClient)
-    # 重置进程内 session_manager 的存储与锁
+    # 重置进程内 session_manager 的存储与锁；同时关掉默认 DB store，
+    # 避免测试跨运行累计写入 .tmp/claude_code/sessions.db
     monkeypatch.setattr(sm_module.session_manager, "_sessions", {})
     monkeypatch.setattr(sm_module.session_manager, "_lock", asyncio.Lock())
+    monkeypatch.setattr(sm_module.session_manager, "_store", None)
     yield FakeClient
 
 

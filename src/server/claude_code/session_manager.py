@@ -27,6 +27,8 @@ from claude_agent_sdk import (
     PermissionResultDeny,
 )
 
+from src.server.claude_code.storage import ClaudeCodeStore
+
 logger = logging.getLogger(__name__)
 
 # 与 SDK 字面量一致，禁止前端传入 "strict" 这种非 SDK 合法值
@@ -174,12 +176,20 @@ class SessionManager:
         *,
         idle_ttl_sec: float = DEFAULT_IDLE_TTL_SEC,
         sweep_interval_sec: float = DEFAULT_SWEEP_INTERVAL_SEC,
+        store: ClaudeCodeStore | None = None,
     ) -> None:
         self._sessions: dict[str, ClaudeSession] = {}
         self._lock = asyncio.Lock()
         self.idle_ttl_sec = idle_ttl_sec
         self.sweep_interval_sec = sweep_interval_sec
         self._sweeper_task: asyncio.Task[None] | None = None
+        # 持久化 store；None = 禁用（测试场景或首次未接入路径）。所有 store.* 调用
+        # 必须先检查 _store is not None，避免测试注入空 store 时崩溃。
+        self._store = store
+
+    @property
+    def store(self) -> ClaudeCodeStore | None:
+        return self._store
 
     async def create(
         self,
@@ -220,6 +230,7 @@ class SessionManager:
             add_dirs=[],
             permission_state=permission_state,
             options_overrides=options_overrides,
+            sdk_resume=False,
         )
 
         now = time.time()
@@ -236,16 +247,28 @@ class SessionManager:
         )
         async with self._lock:
             self._sessions[session.id] = session
+        if self._store is not None:
+            # 让新行跟 SDK 指定的 session_id 对齐。insert 失败视为致命错误直接上抛——
+            # 比悄悄 DB 无记录但内存有 session 更诚实（后续 record_event 也会失败）。
+            self._store.insert_session(
+                session_id=session_id,
+                cwd=str(cwd),
+                model=model,
+                permission_mode=permission_mode,
+                add_dirs=[],
+            )
         self._ensure_sweeper()
         return session
 
     async def clear_context(self, session_id: str) -> ClaudeSession | None:
-        """清空会话上下文：dispose 旧 SDK client 并重建同 id 新 client。
+        """清空会话上下文：dispose 旧 SDK client 并重建同 id 新 client（不 resume）。
 
         - 保留 ``add_dirs`` 累计目录（用户的"工作区"配置不该被 /clear 抹掉）
         - 保留 ``permission_state.allowed_always``（"允许本会话"属于用户信任选择
           而非上下文，/clear 只清对话历史不清权限授权，与 CLI 语义一致）
         - 刷新 ``last_activity_at``，保留原 ``created_at``
+        - DB 侧清空该 session 的 messages 行（``store.clear_messages``），保留
+          sessions 行的元数据。与 SDK 侧"同 id 不 resume 重建"语义对齐
 
         Returns
         -------
@@ -270,21 +293,23 @@ class SessionManager:
             add_dirs=list(session.add_dirs),
             permission_state=session.permission_state,
             options_overrides=None,
+            sdk_resume=False,
         )
         session.client = new_client
         session.last_activity_at = time.time()
+        if self._store is not None:
+            self._store.clear_messages(session_id)
         return session
 
     async def add_directory(self, session_id: str, path: str) -> ClaudeSession | None:
-        """把 ``path`` 加入会话的 ``add_dirs`` 并重建 SDK client。
+        """把 ``path`` 加入会话的 ``add_dirs`` 并重建 SDK client（带 resume 保留上下文）。
 
-        SDK 的 ``ClaudeAgentOptions.add_dirs`` 只在 client 初始化时生效，没有运行
-        时 mutator——所以追加目录必须重建 client。重建意味着 SDK 内部上下文丢失
-        （与 /clear 副作用相同）；6c 给 /model 建立 resume 基础设施后可回来改造
-        为带 resume 的 rebuild 以保留历史。
+        SDK 的 ``ClaudeAgentOptions.add_dirs`` 只在 client 初始化时生效，没有运行时
+        mutator——所以追加目录必须重建 client。重建路径传 ``sdk_resume=True``，
+        SDK 从本地 session 存档回放历史到新 client，用户继续对话时上下文完整。
 
         路径校验（存在 + 属于项目根）由路由层完成；SessionManager 只负责 append
-        + rebuild。
+        + rebuild。DB 侧同步 ``update_add_dirs``。
 
         Returns
         -------
@@ -315,10 +340,13 @@ class SessionManager:
             add_dirs=new_add_dirs,
             permission_state=session.permission_state,
             options_overrides=None,
+            sdk_resume=True,
         )
         session.client = new_client
         session.add_dirs = new_add_dirs
         session.last_activity_at = time.time()
+        if self._store is not None:
+            self._store.update_add_dirs(session_id, new_add_dirs)
         return session
 
     async def switch_model(
@@ -345,6 +373,8 @@ class SessionManager:
             await session.client.set_model(model)
             session.model = model
             session.last_activity_at = time.time()
+        if self._store is not None:
+            self._store.update_model(session_id, model)
         return session
 
     async def switch_permission_mode(
@@ -373,6 +403,8 @@ class SessionManager:
             await session.client.set_permission_mode(mode)
             session.permission_mode = mode
             session.last_activity_at = time.time()
+        if self._store is not None:
+            self._store.update_permission_mode(session_id, mode)
         return session
 
     async def get_mcp_status(self, session_id: str) -> dict[str, Any] | None:
@@ -413,11 +445,19 @@ class SessionManager:
         return session
 
     async def delete(self, session_id: str) -> bool:
-        """断开并移除会话。返回是否实际删除了会话。"""
+        """断开并移除会话，同步清理 DB。返回是否实际删除了会话。
+
+        删除语义：用户显式"结束会话"——永久销毁，memory + DB 都清。
+        与 idle evict 区分：后者仅清 memory 保 DB 历史供刷新恢复。
+        """
         async with self._lock:
             session = self._sessions.pop(session_id, None)
+        # DB 侧无论 memory 是否命中都清——允许删除"已被 evict 仅剩 DB 行"的会话
+        had_db_row = False
+        if self._store is not None:
+            had_db_row = self._store.delete_session(session_id)
         if session is None:
-            return False
+            return had_db_row
         # 先解锁所有悬挂的权限 Future，避免 SDK 协程 await 死在那
         _cancel_pending_permissions(session)
         try:
@@ -439,6 +479,107 @@ class SessionManager:
 
     def list_sessions(self) -> list[ClaudeSession]:
         return list(self._sessions.values())
+
+    async def get_or_restore(self, session_id: str) -> ClaudeSession | None:
+        """查找会话；若仅存在于 DB（被 idle evict 或进程重启），按 metadata rebuild。
+
+        恢复路径传 ``sdk_resume=True``——SDK 从 ``~/.claude/projects/<cwd>/<uuid>.jsonl``
+        回放 CLI 本地存档到新 client，用户后续 send_message 时上下文完整。DB 的
+        messages 表只负责前端 UI 历史回灌（``GET /sessions/{id}/messages``），不参与
+        SDK 侧上下文重建——真相单一源在 CLI 存档。
+
+        Returns
+        -------
+        ClaudeSession or None
+            ``None`` 表示 DB 也查不到该 id（真的不存在）。
+        """
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.last_activity_at = time.time()
+            return session
+        if self._store is None:
+            return None
+        stored = self._store.get_session(session_id)
+        if stored is None:
+            return None
+        permission_state = PermissionState()
+        client = await _build_client(
+            session_id=session_id,
+            cwd=stored.cwd,
+            model=stored.model,
+            permission_mode=stored.permission_mode,
+            add_dirs=list(stored.add_dirs),
+            permission_state=permission_state,
+            options_overrides=None,
+            sdk_resume=True,
+        )
+        now = time.time()
+        session = ClaudeSession(
+            id=session_id,
+            cwd=stored.cwd,
+            model=stored.model,
+            permission_mode=stored.permission_mode,
+            created_at=stored.created_at,
+            last_activity_at=now,
+            client=client,
+            add_dirs=list(stored.add_dirs),
+            permission_state=permission_state,
+        )
+        async with self._lock:
+            # 在 await connect 期间若并发请求已恢复过，让那次的 session 胜出，把
+            # 我们刚建的 client disconnect 掉——避免 CLI 双开同一 session id 的档案。
+            existing = self._sessions.get(session_id)
+            if existing is not None:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    logger.exception("disconnect failed for lost-race restore %s", session_id)
+                existing.last_activity_at = now
+                return existing
+            self._sessions[session_id] = session
+        self._ensure_sweeper()
+        return session
+
+    def record_event(
+        self,
+        session_id: str,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """把一条 SSE 事件序列化后落库。路由层在每次 emit 后调用。
+
+        对 ``cc_message`` 且 payload.type == "result" 的事件，额外从 usage/cost
+        字段累加到 sessions 行；其余事件只写 messages。DB 未配置时 no-op。
+        """
+        if self._store is None:
+            return
+        seq = self._store.append_message(
+            session_id, event_type=event_type, payload=payload
+        )
+        if seq < 0:
+            # session 行已被删除（比如用户 DELETE 后还在收尾帧）——静默丢弃
+            return
+        if event_type != "cc_message":
+            return
+        if payload.get("type") != "result":
+            return
+        usage = payload.get("usage") or {}
+        if not isinstance(usage, dict):
+            return
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        cost_usd = payload.get("total_cost_usd") or 0.0
+        try:
+            cost_usd = float(cost_usd)
+        except (TypeError, ValueError):
+            cost_usd = 0.0
+        self._store.accumulate_usage(
+            session_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+        )
 
     def _ensure_sweeper(self) -> None:
         """首次注册会话时 lazy 启动 sweeper；已运行则 no-op。"""
@@ -500,6 +641,11 @@ class SessionManager:
                 await session.client.disconnect()
             except Exception:
                 logger.exception("disconnect failed for session %s during shutdown", session.id)
+        if self._store is not None:
+            try:
+                self._store.close()
+            except Exception:
+                logger.exception("claude code store close failed during shutdown")
 
 
 async def _build_client(
@@ -511,12 +657,25 @@ async def _build_client(
     add_dirs: list[str],
     permission_state: PermissionState,
     options_overrides: dict[str, Any] | None,
+    sdk_resume: bool,
 ) -> ClaudeSDKClient:
     """组装 ``ClaudeAgentOptions`` → 实例化 ``ClaudeSDKClient`` → ``connect``。
 
-    create 与 clear_context / add_directory 的 rebuild 路径共用此工厂，保证
-    options 组装规则（permission bridge 注入、setting_sources 限制、add_dirs 透传）
-    只有一处真相。调用方确保 ``permission_mode`` 合法（create 侧入口已校验）。
+    Parameters
+    ----------
+    session_id : str
+        后端分配的 UUID，同时作为 permission bridge 的凭据、SDK 侧的 session 标识。
+    sdk_resume : bool
+        ``False`` 表示创建新 SDK session（透传 ``session_id=<uuid>``，SDK 用我们的
+        UUID 作为它自己的 session id，确保后续 ``resume`` 可找到 CLI 本地存档）。
+        ``True`` 表示恢复旧 session（透传 ``resume=<uuid>``，SDK 从 ``~/.claude/``
+        下对应目录的本地存档里回放历史到新 client，用户随后发消息时上下文完整）。
+        两个参数互斥，不同时传。
+
+    create 与 clear_context / add_directory / get_or_restore 的 rebuild 路径共用此
+    工厂，保证 options 组装规则（permission bridge 注入、setting_sources 限制、
+    add_dirs 透传、session_id/resume 互斥写法）只有一处真相。调用方确保
+    ``permission_mode`` 合法（create 侧入口已校验）。
     """
     options_kwargs: dict[str, Any] = {
         "cwd": str(cwd),
@@ -526,6 +685,10 @@ async def _build_client(
         options_kwargs["model"] = model
     if add_dirs:
         options_kwargs["add_dirs"] = list(add_dirs)
+    if sdk_resume:
+        options_kwargs["resume"] = session_id
+    else:
+        options_kwargs["session_id"] = session_id
     # 无条件挂桥接：SDK 仅在 permission_mode == "default" 时调用 can_use_tool，
     # 但运行时 /permissions 切换进/出 default 需要桥接随时可用；挂上是等价改动。
     # 配合仅加载 user 层设置，跳过项目 .claude/settings.json 的 allow-list，
@@ -557,4 +720,5 @@ def _cancel_pending_permissions(session: ClaudeSession) -> None:
             fut.set_result({"decision": "deny", "message": "session closed"})
 
 
-session_manager = SessionManager()
+_DEFAULT_DB_PATH = Path(".tmp") / "claude_code" / "sessions.db"
+session_manager = SessionManager(store=ClaudeCodeStore(_DEFAULT_DB_PATH))
