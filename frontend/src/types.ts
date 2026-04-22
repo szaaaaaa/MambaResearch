@@ -367,10 +367,19 @@ export interface CodexStatus {
   last_error: string;
 }
 
+export type ClaudeCodePermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'plan'
+  | 'bypassPermissions'
+  | 'dontAsk'
+  | 'auto';
+
 export interface ClaudeCodeSessionInfo {
   id: string;
   cwd: string;
   model: string | null;
+  permission_mode?: ClaudeCodePermissionMode;
   created_at: number;
 }
 
@@ -379,12 +388,25 @@ export interface ClaudeCodeStreamItem {
   payload: unknown;
 }
 
+/**
+ * HITL 权限请求（后端 `cc_permission_request` SSE 帧的前端表示）。
+ * `input` 保留原样 unknown —— Modal 内部按工具类型可视化。
+ */
+export interface ClaudeCodePermissionRequest {
+  request_id: string;
+  session_id: string;
+  tool_name: string;
+  input: unknown;
+}
+
 export interface ClaudeCodeState {
   session: ClaudeCodeSessionInfo | null;
   items: ClaudeCodeStreamItem[];
   isRunning: boolean;
   rawEventsVisible: boolean;
   turnStartAt: number | null;
+  permissionMode: ClaudeCodePermissionMode;
+  pendingPermissions: ClaudeCodePermissionRequest[];
 }
 
 export interface AppState {

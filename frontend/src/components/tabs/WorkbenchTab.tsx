@@ -1,9 +1,10 @@
 import React from 'react';
 import { Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
-import { ClaudeCodeSessionInfo } from '../../types';
+import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
 import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
+import { PermissionModal } from '../workbench/PermissionModal';
 import { RawEventsToggle } from '../workbench/RawEventsToggle';
 
 /**
@@ -25,8 +26,18 @@ export const WorkbenchTab: React.FC = () => {
     ccSetTurnStartAt,
     ccGetAbortController,
     ccSetAbortController,
+    ccEnqueuePermissionRequest,
+    ccResolvePermissionRequest,
   } = useAppContext();
-  const { session, items, isRunning, rawEventsVisible, turnStartAt } = state.claudeCode;
+  const {
+    session,
+    items,
+    isRunning,
+    rawEventsVisible,
+    turnStartAt,
+    permissionMode,
+    pendingPermissions,
+  } = state.claudeCode;
 
   const [prompt, setPrompt] = React.useState('');
   const [elapsedSec, setElapsedSec] = React.useState(0);
@@ -92,7 +103,7 @@ export const WorkbenchTab: React.FC = () => {
     const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ permission_mode: permissionMode }),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
@@ -102,7 +113,7 @@ export const WorkbenchTab: React.FC = () => {
     sessionRef.current = info;
     ccSetSession(info);
     return info;
-  }, [ccSetSession]);
+  }, [ccSetSession, permissionMode]);
 
   const handleSend = async () => {
     const trimmed = prompt.trim();
@@ -163,6 +174,25 @@ export const WorkbenchTab: React.FC = () => {
           pushError(text || 'unknown error');
           ccSetRunning(false);
           ccSetTurnStartAt(null);
+          return;
+        }
+        if (frame.event === 'cc_permission_request') {
+          // 形状契约：{ request_id, session_id, tool_name, input }
+          if (parsed && typeof parsed === 'object') {
+            const rec = parsed as Record<string, unknown>;
+            const requestId = typeof rec.request_id === 'string' ? rec.request_id : '';
+            const sessionId = typeof rec.session_id === 'string' ? rec.session_id : '';
+            const toolName = typeof rec.tool_name === 'string' ? rec.tool_name : '';
+            if (requestId && sessionId && toolName) {
+              const req: ClaudeCodePermissionRequest = {
+                request_id: requestId,
+                session_id: sessionId,
+                tool_name: toolName,
+                input: rec.input,
+              };
+              ccEnqueuePermissionRequest(req);
+            }
+          }
           return;
         }
         // assistant 消息到达时，给其中的 thinking block 快照本轮墙钟耗时（CLI "思考（N 秒）"）
@@ -242,8 +272,13 @@ export const WorkbenchTab: React.FC = () => {
     }
   };
 
+  const activePermission = pendingPermissions[0] ?? null;
+
   return (
     <div className="flex h-full flex-col bg-[var(--app-bg)]">
+      {activePermission ? (
+        <PermissionModal request={activePermission} onResolved={ccResolvePermissionRequest} />
+      ) : null}
       <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3">
         <Terminal className="h-5 w-5 text-slate-500" />
         <div className="min-w-0 flex-1">

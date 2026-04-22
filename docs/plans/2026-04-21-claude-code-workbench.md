@@ -160,12 +160,13 @@
   - 前端新增：`frontend/src/components/workbench/PermissionModal.tsx`
   - 前端改动：`WorkbenchTab.tsx` 监听 `cc_permission_request` 事件，渲染 Modal
 - **Acceptance**:
-  - 配置 `permission_mode='strict'` 的 session 里，让 Claude 写文件：前端出现 Modal 显示 "Claude 想使用 Write 工具：path=..., content 前 200 字符..."
+  - 配置 `permission_mode='default'` 的 session 里，让 Claude 写文件：前端出现 Modal 显示 "Claude 想使用 Write 工具：path=..., content 前 200 字符..."
   - 点"允许"：该次工具调用继续执行
-  - 点"允许（本会话）"：同一 session 之后相同工具 + 相同参数不再弹（简单 key=tool_name 缓存允许）
+  - 点"允许（本会话）"：同一 session 之后相同工具不再弹（简单 key=tool_name 缓存允许；SDK 桥命中 `allowed_always` 直接 allow）
   - 点"拒绝"：Claude 收到工具被拒，在后续消息中说明
-  - Modal 期间不阻塞其他 SSE 事件接收
-  - `permission_mode='default'` 下不触发 Modal（行为同原 CLI）
+  - Modal 期间不阻塞其他 SSE 事件接收（决策走独立 REST 端点 `POST /permissions`，SSE 流仅单向推）
+  - `permission_mode` ∈ {`acceptEdits`, `bypassPermissions`, `dontAsk`, `plan`, `auto`} 时不触发 Modal（行为同原 CLI，后端不注入 `can_use_tool` 桥）
+  - SDK `PermissionMode` 字面量合法值：`default | acceptEdits | plan | bypassPermissions | dontAsk | auto`，非法值后端返回 400
 
 ### [TODO] 6. Slash 命令（原生语义，全量实现）
 

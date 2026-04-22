@@ -2,11 +2,12 @@
 
 基于 ``claude-agent-sdk`` 的 ``ClaudeSDKClient`` 暴露 REST + SSE：
 
-- ``POST   /api/claude-code/sessions``              新建 SDK 会话
-- ``GET    /api/claude-code/sessions``              列出会话
-- ``POST   /api/claude-code/sessions/{id}/messages`` 发送一轮消息，SSE 回流 SDK 事件
-- ``POST   /api/claude-code/sessions/{id}/interrupt`` 打断当前推理
-- ``DELETE /api/claude-code/sessions/{id}``         关闭并移除会话
+- ``POST   /api/claude-code/sessions``                 新建 SDK 会话
+- ``GET    /api/claude-code/sessions``                 列出会话
+- ``POST   /api/claude-code/sessions/{id}/messages``    发送一轮消息，SSE 回流 SDK 事件
+- ``POST   /api/claude-code/sessions/{id}/permissions`` HITL 权限请求决策回传
+- ``POST   /api/claude-code/sessions/{id}/interrupt``   打断当前推理
+- ``DELETE /api/claude-code/sessions/{id}``            关闭并移除会话
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from src.server.claude_code import serialize_message
-from src.server.claude_code.session_manager import session_manager
+from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
 from src.server.settings import ROOT
 
 router = APIRouter()
@@ -64,9 +65,25 @@ async def create_session(request: Request):
     cwd = _resolve_cwd(payload.get("cwd"))
     model_raw = payload.get("model")
     model = str(model_raw).strip() if isinstance(model_raw, str) and model_raw.strip() else None
+    mode_raw = payload.get("permission_mode")
+    permission_mode = (
+        str(mode_raw).strip() if isinstance(mode_raw, str) and mode_raw.strip() else "default"
+    )
+    if permission_mode not in VALID_PERMISSION_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"invalid permission_mode: {permission_mode!r} "
+                f"(must be one of {sorted(VALID_PERMISSION_MODES)})"
+            ),
+        )
 
     try:
-        session = await session_manager.create(cwd=cwd, model=model)
+        session = await session_manager.create(
+            cwd=cwd, model=model, permission_mode=permission_mode
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to create session: {exc}") from exc
     return session.to_dict()
@@ -83,6 +100,41 @@ async def delete_session(session_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="session not found")
     return {"status": "deleted", "id": session_id}
+
+
+@router.post("/api/claude-code/sessions/{session_id}/permissions")
+async def resolve_permission(session_id: str, request: Request):
+    """前端 Modal 决策回传端点。
+
+    Body: ``{"request_id": str, "decision": "allow"|"allow_session"|"deny", "message"?: str}``
+    """
+    payload = await _parse_json_body(request)
+    request_id = str(payload.get("request_id", "") or "").strip()
+    decision = str(payload.get("decision", "") or "").strip()
+    if not request_id:
+        raise HTTPException(status_code=400, detail="request_id is required")
+    if decision not in ("allow", "allow_session", "deny"):
+        raise HTTPException(
+            status_code=400,
+            detail="decision must be one of: allow, allow_session, deny",
+        )
+
+    session = session_manager.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    fut = session.permission_state.pending_requests.get(request_id)
+    if fut is None or fut.done():
+        raise HTTPException(
+            status_code=404, detail=f"no pending permission request for id {request_id}"
+        )
+
+    result: dict[str, Any] = {"decision": decision}
+    message = payload.get("message")
+    if isinstance(message, str) and message:
+        result["message"] = message
+    fut.set_result(result)
+    return {"status": "ok", "request_id": request_id, "decision": decision}
 
 
 @router.post("/api/claude-code/sessions/{session_id}/interrupt")
@@ -112,9 +164,15 @@ async def send_message(session_id: str, request: Request):
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+    def _emit(event: str, data: dict[str, Any]) -> None:
+        """can_use_tool 桥把权限请求帧推到当前轮的 SSE 队列。"""
+        queue.put_nowait(_sse_frame(event, data))
+
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
         async with session.lock:
+            # 绑定本轮 SSE 发射器——can_use_tool 桥通过它推 cc_permission_request 帧
+            session.permission_state.current_sse_emitter = _emit
             try:
                 await session.client.query(prompt)
                 async for message in session.client.receive_response():
@@ -126,6 +184,7 @@ async def send_message(session_id: str, request: Request):
             except Exception as exc:
                 queue.put_nowait(_sse_frame("cc_error", {"message": str(exc)}))
             finally:
+                session.permission_state.current_sse_emitter = None
                 queue.put_nowait(_sse_frame("cc_finished", {"session_id": session.id}))
                 queue.put_nowait(None)
 

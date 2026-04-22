@@ -8,6 +8,8 @@ import {
   ClarificationHistoryRound,
   ClarificationQuestion,
   ClarificationState,
+  ClaudeCodePermissionMode,
+  ClaudeCodePermissionRequest,
   ClaudeCodeSessionInfo,
   ClaudeCodeStreamItem,
   Credentials,
@@ -946,6 +948,9 @@ interface AppContextType {
   ccSetTurnStartAt: (at: number | null) => void;
   ccGetAbortController: () => AbortController | null;
   ccSetAbortController: (controller: AbortController | null) => void;
+  ccSetPermissionMode: (mode: ClaudeCodePermissionMode) => void;
+  ccEnqueuePermissionRequest: (req: ClaudeCodePermissionRequest) => void;
+  ccResolvePermissionRequest: (requestId: string) => void;
   ccReset: () => void;
 }
 
@@ -980,6 +985,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isRunning: false,
       rawEventsVisible: false,
       turnStartAt: null,
+      permissionMode: 'default',
+      pendingPermissions: [],
     },
   });
   // Workbench 的 AbortController 不进 React state——跟随 AppProvider 的 ref，
@@ -2098,6 +2105,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ccAbortControllerRef.current = controller;
   };
 
+  const ccSetPermissionMode = (mode: ClaudeCodePermissionMode) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, permissionMode: mode },
+    }));
+  };
+
+  const ccEnqueuePermissionRequest = (req: ClaudeCodePermissionRequest) => {
+    setState((prev) => {
+      // request_id 去重——SSE 理论上不会重投，但稳健处理
+      if (prev.claudeCode.pendingPermissions.some((r) => r.request_id === req.request_id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        claudeCode: {
+          ...prev.claudeCode,
+          pendingPermissions: [...prev.claudeCode.pendingPermissions, req],
+        },
+      };
+    });
+  };
+
+  const ccResolvePermissionRequest = (requestId: string) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: {
+        ...prev.claudeCode,
+        pendingPermissions: prev.claudeCode.pendingPermissions.filter(
+          (r) => r.request_id !== requestId,
+        ),
+      },
+    }));
+  };
+
   const ccReset = () => {
     ccAbortControllerRef.current?.abort();
     ccAbortControllerRef.current = null;
@@ -2109,6 +2151,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isRunning: false,
         rawEventsVisible: prev.claudeCode.rawEventsVisible,
         turnStartAt: null,
+        permissionMode: prev.claudeCode.permissionMode,
+        pendingPermissions: [],
       },
     }));
   };
@@ -2148,6 +2192,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccSetTurnStartAt,
         ccGetAbortController,
         ccSetAbortController,
+        ccSetPermissionMode,
+        ccEnqueuePermissionRequest,
+        ccResolvePermissionRequest,
         ccReset,
       }}
     >

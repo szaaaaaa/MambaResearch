@@ -18,11 +18,90 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
+)
 
 logger = logging.getLogger(__name__)
+
+# 与 SDK 字面量一致，禁止前端传入 "strict" 这种非 SDK 合法值
+VALID_PERMISSION_MODES: frozenset[str] = frozenset(
+    {"default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"}
+)
+# 仅在 "default" 模式下注入 can_use_tool 桥触发 Modal；其余模式沿用 SDK 原生语义
+_INTERACTIVE_PERMISSION_MODES: frozenset[str] = frozenset({"default"})
+
+# SSE 发射器签名：(event_name, payload_dict) -> None
+SseEmitter = Callable[[str, dict[str, Any]], None]
+
+
+@dataclass
+class PermissionState:
+    """单会话级 HITL 权限状态。
+
+    - ``allowed_always`` 缓存本会话内用户点过"允许（本会话）"的工具名
+    - ``pending_requests`` 由 bridge 填充、由 REST 决策端点解锁
+    - ``current_sse_emitter`` 每一轮 send_message 进入时绑定到该轮 SSE 队列，
+      轮结束后路由层负责清空——bridge 通过它把权限请求帧推到当前活跃 SSE 流
+    """
+
+    allowed_always: set[str] = field(default_factory=set)
+    pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
+    current_sse_emitter: SseEmitter | None = None
+
+
+def _build_permission_bridge(
+    session_id: str, state: PermissionState
+) -> Callable[..., Any]:
+    """构造 SDK ``can_use_tool`` 异步桥。
+
+    命中 ``allowed_always`` → 直接 allow；否则生成 ``request_id``，通过
+    ``current_sse_emitter`` 推 ``cc_permission_request`` 帧，等待 Future
+    被 REST 决策端点 ``set_result``，将结果映射回 SDK PermissionResult。
+    """
+
+    async def bridge(tool_name: str, tool_input: dict[str, Any], _context: Any):
+        if tool_name in state.allowed_always:
+            return PermissionResultAllow()
+        emitter = state.current_sse_emitter
+        if emitter is None:
+            # 理论不会发生——query 必须在 current_sse_emitter 绑定后才跑
+            return PermissionResultDeny(
+                message="no active SSE channel for permission request"
+            )
+        request_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+        state.pending_requests[request_id] = fut
+        try:
+            emitter(
+                "cc_permission_request",
+                {
+                    "request_id": request_id,
+                    "session_id": session_id,
+                    "tool_name": tool_name,
+                    "input": tool_input,
+                },
+            )
+            result = await fut
+        finally:
+            state.pending_requests.pop(request_id, None)
+
+        decision = result.get("decision") if isinstance(result, dict) else None
+        message = result.get("message") if isinstance(result, dict) else None
+        if decision == "allow":
+            return PermissionResultAllow()
+        if decision == "allow_session":
+            state.allowed_always.add(tool_name)
+            return PermissionResultAllow()
+        return PermissionResultDeny(message=str(message or "user denied"))
+
+    return bridge
 
 
 @dataclass
@@ -37,6 +116,9 @@ class ClaudeSession:
         子进程工作目录。
     model : str or None
         指定模型；None 表示使用 CLI 默认。
+    permission_mode : str
+        SDK ``PermissionMode`` 字面量之一。仅 ``"default"`` 时桥挂钩触发前端 Modal，
+        其余模式沿用 SDK 原生语义（acceptEdits 自动放行编辑工具等）。
     created_at : float
         创建 Unix 时间戳。
     last_activity_at : float
@@ -45,21 +127,27 @@ class ClaudeSession:
         已 ``connect`` 的 SDK 客户端。
     lock : asyncio.Lock
         会话级互斥锁，保证 query/receive_response 串行。
+    permission_state : PermissionState
+        HITL 权限请求状态（allowed_always 缓存、pending_requests Future 表、
+        当前轮 SSE 发射器）。
     """
 
     id: str
     cwd: str
     model: str | None
+    permission_mode: str
     created_at: float
     last_activity_at: float
     client: ClaudeSDKClient
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    permission_state: PermissionState = field(default_factory=PermissionState)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "cwd": self.cwd,
             "model": self.model,
+            "permission_mode": self.permission_mode,
             "created_at": self.created_at,
         }
 
@@ -95,6 +183,7 @@ class SessionManager:
         cwd: str | Path,
         *,
         model: str | None = None,
+        permission_mode: str = "default",
         options_overrides: dict[str, Any] | None = None,
     ) -> ClaudeSession:
         """新建并 ``connect`` 一个 SDK 会话。
@@ -105,12 +194,31 @@ class SessionManager:
             子进程工作目录，必须存在且由调用方校验合法性。
         model : str or None
             可选模型覆盖。
+        permission_mode : str
+            SDK PermissionMode 字面量，默认 ``"default"``（每次弹 Modal）。传入
+            非法值会 raise ValueError。仅 ``"default"`` 模式注入 can_use_tool 桥。
         options_overrides : dict or None
             透传给 ``ClaudeAgentOptions`` 的额外字段（未来支持 system_prompt、mcp_servers 等）。
         """
-        options_kwargs: dict[str, Any] = {"cwd": str(cwd)}
+        if permission_mode not in VALID_PERMISSION_MODES:
+            raise ValueError(
+                f"invalid permission_mode: {permission_mode!r} "
+                f"(must be one of {sorted(VALID_PERMISSION_MODES)})"
+            )
+
+        session_id = uuid.uuid4().hex
+        permission_state = PermissionState()
+
+        options_kwargs: dict[str, Any] = {
+            "cwd": str(cwd),
+            "permission_mode": permission_mode,
+        }
         if model:
             options_kwargs["model"] = model
+        if permission_mode in _INTERACTIVE_PERMISSION_MODES:
+            options_kwargs["can_use_tool"] = _build_permission_bridge(
+                session_id, permission_state
+            )
         if options_overrides:
             options_kwargs.update(options_overrides)
 
@@ -120,12 +228,14 @@ class SessionManager:
 
         now = time.time()
         session = ClaudeSession(
-            id=uuid.uuid4().hex,
+            id=session_id,
             cwd=str(cwd),
             model=model,
+            permission_mode=permission_mode,
             created_at=now,
             last_activity_at=now,
             client=client,
+            permission_state=permission_state,
         )
         async with self._lock:
             self._sessions[session.id] = session
@@ -156,6 +266,8 @@ class SessionManager:
             session = self._sessions.pop(session_id, None)
         if session is None:
             return False
+        # 先解锁所有悬挂的权限 Future，避免 SDK 协程 await 死在那
+        _cancel_pending_permissions(session)
         try:
             await session.client.disconnect()
         except Exception:
@@ -211,6 +323,7 @@ class SessionManager:
             victims = [self._sessions.pop(sid) for sid in idle_ids]
         for session in victims:
             logger.info("session %s evicted by idle ttl (>%.0fs)", session.id, ttl)
+            _cancel_pending_permissions(session)
             try:
                 await session.client.disconnect()
             except Exception:
@@ -230,10 +343,24 @@ class SessionManager:
             sessions = list(self._sessions.values())
             self._sessions.clear()
         for session in sessions:
+            _cancel_pending_permissions(session)
             try:
                 await session.client.disconnect()
             except Exception:
                 logger.exception("disconnect failed for session %s during shutdown", session.id)
+
+
+def _cancel_pending_permissions(session: ClaudeSession) -> None:
+    """会话关停前把所有悬挂的权限 Future 置为 deny，避免 SDK 侧死等。"""
+    state = session.permission_state
+    state.current_sse_emitter = None
+    if not state.pending_requests:
+        return
+    pending = list(state.pending_requests.values())
+    state.pending_requests.clear()
+    for fut in pending:
+        if not fut.done():
+            fut.set_result({"decision": "deny", "message": "session closed"})
 
 
 session_manager = SessionManager()
