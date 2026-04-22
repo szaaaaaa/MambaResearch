@@ -21,10 +21,10 @@ from src.dynamic_os.policy.engine import PolicyEngine, PolicyViolationError
 from src.dynamic_os.tools.gateway.exec import CodeExecutor, ExecutionGateway
 from src.dynamic_os.tools.gateway.filesystem import FilesystemGateway
 from src.dynamic_os.tools.gateway.llm import LLMGateway
-from src.dynamic_os.tools.gateway.mcp import McpGateway, ToolInvoker
+from src.dynamic_os.tools.gateway.mcp import ContextualMcpGateway, McpGateway, ToolInvoker
 from src.dynamic_os.tools.gateway.retrieval import RetrievalGateway
 from src.dynamic_os.tools.gateway.search import SearchGateway
-from src.dynamic_os.tools.registry import ToolCapability, ToolRegistry
+from src.dynamic_os.tools.registry import ToolRegistry
 
 # 事件接收器类型：接收任意事件对象的回调函数
 EventSink = Callable[[object], None]
@@ -48,9 +48,10 @@ class ToolGateway:
         code_executor: CodeExecutor | None = None,
         event_sink: EventSink | None = None,
     ) -> None:
-        self._registry = registry        # 工具注册表
-        self._policy = policy            # 策略引擎
-        self._event_sink = event_sink    # 事件接收器（可选）
+        self._registry = registry            # 工具注册表
+        self._policy = policy                # 策略引擎
+        self._event_sink = event_sink        # 事件接收器（可选）
+        self._code_executor = code_executor  # 自定义代码执行器（供 ContextualToolGateway 复用）
         # 初始化各子网关
         self._mcp = McpGateway(registry=registry, policy=policy, invoker=mcp_invoker)
         self._llm = LLMGateway(self._mcp)
@@ -154,8 +155,13 @@ class ContextualToolGateway:
     """带上下文和权限约束的工具网关。
 
     在 ToolGateway 基础上注入运行时上下文（run_id、node_id、skill_id）、
-    技能权限（SkillPermissions）和工具白名单。每次工具调用前会进行权限校验，
-    调用时自动发射 ToolInvokeEvent 事件。
+    技能权限（SkillPermissions）和工具白名单。
+
+    白名单校验和 ToolInvokeEvent 事件发射下沉到 :class:`ContextualMcpGateway`，
+    由它在每次 MCP 工具调用的真实入口处完成，从而避免"上层按能力解析出
+    工具 A、下层实际调用工具 B"时白名单判错的问题。文件系统读写和自定义
+    代码执行器不经过 MCP，仅由 SkillPermissions 管控；若走 MCP 回退路径，
+    依然由 ContextualMcpGateway 做白名单校验。
     """
 
     def __init__(
@@ -169,13 +175,32 @@ class ContextualToolGateway:
         permissions: SkillPermissions | None = None,
         allowed_tools: list[str] | frozenset[str] | None = None,
     ) -> None:
-        self._base = base                # 底层 ToolGateway
+        self._base = base                # 底层 ToolGateway（提供 registry/policy/事件出口）
         self._run_id = run_id            # 当前运行 ID
         self._node_id = node_id          # 当前执行节点 ID
         self._skill_id = skill_id        # 当前技能 ID
         self._role_id = role_id          # 当前角色 ID
         self._permissions = permissions or SkillPermissions()  # 技能权限声明
-        self._allowed_tools = None if allowed_tools is None else frozenset(allowed_tools)  # 工具白名单
+        # 工具白名单（None 表示不限制）
+        self._allowed_tools = None if allowed_tools is None else frozenset(allowed_tools)
+
+        # 构造带白名单校验和事件发射的 MCP 网关
+        contextual_mcp = ContextualMcpGateway(
+            base._mcp,
+            allowed_tools=self._allowed_tools,
+            event_emitter=self._emit_tool_event,
+        )
+        # 所有涉及 MCP 调用的子网关都改用 ContextualMcpGateway
+        self._llm = LLMGateway(contextual_mcp)
+        self._search = SearchGateway(mcp=contextual_mcp, policy=base._policy)
+        self._retrieval = RetrievalGateway(contextual_mcp)
+        self._execution = ExecutionGateway(
+            policy=base._policy,
+            mcp=contextual_mcp,
+            executor=base._code_executor,
+        )
+        # 文件系统网关直接使用本地文件 I/O，不经 MCP
+        self._filesystem = base._filesystem
 
     def with_context(self, *, run_id: str, node_id: str, skill_id: str, role_id: str = "") -> "ContextualToolGateway":
         """创建新的上下文网关（继承权限和白名单）。"""
@@ -223,20 +248,15 @@ class ContextualToolGateway:
         max_tokens: int = 4096,
         response_format: dict | None = None,
     ) -> str:
-        """调用 LLM 聊天补全（带权限校验和事件发射）。"""
-        tool_id = self._resolve_tool_id(ToolCapability.llm_chat)
-        self._ensure_tool_allowed(tool_id)
-        return await self._wrap_tool_call(
-            tool_id,
-            self._base.llm_chat(
-                messages,
-                provider=provider,
-                model=model,
-                role_id=self._role_id,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format=response_format,
-            ),
+        """调用 LLM 聊天补全。白名单与事件由 ContextualMcpGateway 处理。"""
+        return await self._llm.llm_chat(
+            messages,
+            provider=provider,
+            model=model,
+            role_id=self._role_id,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
         )
 
     async def search(
@@ -247,18 +267,11 @@ class ContextualToolGateway:
         max_results: int = 10,
         academic_sources: list[str] | None = None,
     ) -> dict:
-        """执行搜索（带网络权限校验）。"""
+        """执行搜索（带网络权限校验，具体工具白名单下沉到 MCP 层）。"""
         if not self._permissions.network:
             raise PolicyViolationError("skill does not allow network access")
-        # 对特殊来源值不做偏好解析
-        preferred_source = source if source not in {"", "auto", "academic", "web"} else "auto"
-        tool_id = self._resolve_tool_id(ToolCapability.search, preferred=preferred_source)
-        self._ensure_tool_allowed(tool_id)
-        return await self._wrap_tool_call(
-            tool_id,
-            self._base.search(
-                query, source=source, max_results=max_results, academic_sources=academic_sources,
-            ),
+        return await self._search.search(
+            query, source=source, max_results=max_results, academic_sources=academic_sources,
         )
 
     async def retrieve(
@@ -271,12 +284,7 @@ class ContextualToolGateway:
         """执行向量检索（带网络权限校验）。"""
         if not self._permissions.network:
             raise PolicyViolationError("skill does not allow network access")
-        tool_id = self._resolve_tool_id(ToolCapability.retrieve)
-        self._ensure_tool_allowed(tool_id)
-        return await self._wrap_tool_call(
-            tool_id,
-            self._base.retrieve(query, top_k=top_k, filters=filters),
-        )
+        return await self._retrieval.retrieve(query, top_k=top_k, filters=filters)
 
     async def index(
         self,
@@ -284,13 +292,8 @@ class ContextualToolGateway:
         *,
         collection: str = "default",
     ) -> None:
-        """将文档索引到指定集合（带白名单校验）。"""
-        tool_id = self._resolve_tool_id(ToolCapability.index)
-        self._ensure_tool_allowed(tool_id)
-        await self._wrap_tool_call(
-            tool_id,
-            self._base.index(documents, collection=collection),
-        )
+        """将文档索引到指定集合。"""
+        await self._retrieval.index(documents, collection=collection)
 
     async def execute_code(
         self,
@@ -300,58 +303,34 @@ class ContextualToolGateway:
         timeout_sec: int = 60,
         remote: bool = False,
     ) -> dict:
-        """执行代码（带执行权限校验）。"""
+        """执行代码（带执行权限校验）。
+
+        自定义 CodeExecutor 不经过 MCP，由 sandbox_exec/remote_exec 权限独立把关；
+        回退到 MCP 路径时，ContextualMcpGateway 会校验工具白名单。
+        """
         if remote:
             if not self._permissions.remote_exec:
                 raise PolicyViolationError("skill does not allow remote execution")
         elif not self._permissions.sandbox_exec:
             raise PolicyViolationError("skill does not allow sandbox execution")
-        tool_id = self._resolve_tool_id(
-            ToolCapability.execute_code,
-            preferred="remote_execute_code" if remote else "execute_code",
-            fallback="mcp.exec.remote_execute_code" if remote else "mcp.exec.execute_code",
-        )
-        self._ensure_tool_allowed(tool_id)
-        return await self._wrap_tool_call(
-            tool_id,
-            self._base.execute_code(code, language=language, timeout_sec=timeout_sec, remote=remote),
+        return await self._execution.execute_code(
+            code, language=language, timeout_sec=timeout_sec, remote=remote,
         )
 
     async def read_file(self, path: str) -> str:
         """读取文件（带文件系统读权限校验）。"""
         if not self._permissions.filesystem_read:
             raise PolicyViolationError("skill does not allow filesystem read")
-        tool_id = self._resolve_tool_id(
-            ToolCapability.read_file,
-            fallback="mcp.filesystem.read_file",
-        )
-        self._ensure_tool_allowed(tool_id)
-        return await self._wrap_tool_call(tool_id, self._base.read_file(path))
+        return await self._filesystem.read_file(path)
 
     async def write_file(self, path: str, content: str) -> None:
         """写入文件（带文件系统写权限校验）。"""
         if not self._permissions.filesystem_write:
             raise PolicyViolationError("skill does not allow filesystem write")
-        tool_id = self._resolve_tool_id(
-            ToolCapability.write_file,
-            fallback="mcp.filesystem.write_file",
-        )
-        self._ensure_tool_allowed(tool_id)
-        await self._wrap_tool_call(tool_id, self._base.write_file(path, content))
-
-    async def _wrap_tool_call(self, tool_id: str, awaitable):
-        """包装工具调用：在调用前后发射 start/end/error 事件。"""
-        self._emit_tool_event(tool_id, "start")
-        try:
-            result = await awaitable
-        except Exception:
-            self._emit_tool_event(tool_id, "error")
-            raise
-        self._emit_tool_event(tool_id, "end")
-        return result
+        await self._filesystem.write_file(path, content)
 
     def _emit_tool_event(self, tool_id: str, phase: str) -> None:
-        """构建并发射 ToolInvokeEvent 事件。"""
+        """构建并发射 ToolInvokeEvent（作为 ContextualMcpGateway 的回调）。"""
         self._base._emit(
             ToolInvokeEvent(
                 ts=_now_iso(),
@@ -362,23 +341,3 @@ class ContextualToolGateway:
                 phase=phase,
             )
         )
-
-    def _resolve_tool_id(
-        self,
-        capability: ToolCapability,
-        *,
-        preferred: str = "auto",
-        fallback: str | None = None,
-    ) -> str:
-        """从注册表中解析工具 ID，找不到时使用 fallback。"""
-        try:
-            return self._base._registry.resolve(capability, preferred=preferred).tool_id
-        except ValueError:
-            if fallback is None:
-                raise
-            return fallback
-
-    def _ensure_tool_allowed(self, tool_id: str) -> None:
-        """校验工具是否在白名单中（如果配置了白名单）。"""
-        if self._allowed_tools is not None and tool_id not in self._allowed_tools:
-            raise PolicyViolationError(f"tool is not allowed for skill: {tool_id}")

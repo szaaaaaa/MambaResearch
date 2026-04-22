@@ -14,12 +14,15 @@ from __future__ import annotations
 import inspect
 from typing import Any, Awaitable, Callable
 
-from src.dynamic_os.policy.engine import PolicyEngine
+from src.dynamic_os.policy.engine import PolicyEngine, PolicyViolationError
 from src.dynamic_os.tools.registry import ToolCapability, ToolDescriptor, ToolRegistry
 
 # ToolInvoker 签名：接收工具描述符和参数字典，返回调用结果
 # 支持同步和异步两种调用方式
 ToolInvoker = Callable[[ToolDescriptor, dict[str, Any]], Awaitable[Any] | Any]
+
+# 事件发射回调：接收 (tool_id, phase)，phase 取值 "start" / "end" / "error"
+ToolEventEmitter = Callable[[str, str], None]
 
 
 class McpGateway:
@@ -105,3 +108,51 @@ class McpGateway:
         """
         tool = self._registry.resolve(capability, preferred=preferred)
         return await self.invoke_tool(tool.tool_id, payload)
+
+
+class ContextualMcpGateway(McpGateway):
+    """带白名单和事件发射的上下文 MCP 网关。
+
+    继承自 :class:`McpGateway`，在工具调用前校验 ``allowed_tools`` 白名单，
+    并在调用开始、结束、异常时通过 ``event_emitter`` 回调上报事件。
+
+    将白名单校验下沉到实际调用 MCP 的唯一入口，避免上层网关按能力解析
+    出来的工具 ID 与下层真正调用的工具 ID 不一致时出现漏判或误拒。
+    """
+
+    def __init__(
+        self,
+        base: McpGateway,
+        *,
+        allowed_tools: frozenset[str] | None = None,
+        event_emitter: ToolEventEmitter | None = None,
+    ) -> None:
+        # 复用 base 网关的 registry / policy / invoker，保持策略记账一致
+        super().__init__(registry=base._registry, policy=base._policy, invoker=base._invoker)
+        self._allowed_tools = allowed_tools    # 允许调用的工具 ID 白名单，None 表示不限制
+        self._event_emitter = event_emitter    # 工具事件回调，None 表示不上报
+
+    async def invoke_tool(self, tool_id: str, payload: dict[str, Any]) -> Any:
+        """在基类调用逻辑之外增加白名单校验和事件发射。
+
+        异常
+        ------
+        PolicyViolationError
+            当 ``tool_id`` 不在白名单内时抛出。
+        """
+        # 白名单校验发生在记账和实际调用之前
+        if self._allowed_tools is not None and tool_id not in self._allowed_tools:
+            raise PolicyViolationError(f"tool is not allowed for skill: {tool_id}")
+        self._emit_event(tool_id, "start")
+        try:
+            result = await super().invoke_tool(tool_id, payload)
+        except Exception:
+            self._emit_event(tool_id, "error")
+            raise
+        self._emit_event(tool_id, "end")
+        return result
+
+    def _emit_event(self, tool_id: str, phase: str) -> None:
+        """通过回调上报工具调用事件（无回调时忽略）。"""
+        if self._event_emitter is not None:
+            self._event_emitter(tool_id, phase)

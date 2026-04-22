@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.dynamic_os.policy.engine import PolicyEngine
+from src.dynamic_os.policy.engine import PolicyEngine, PolicyViolationError
 from src.dynamic_os.tools.gateway.mcp import McpGateway
 from src.dynamic_os.tools.registry import ToolCapability
 
@@ -78,14 +78,17 @@ class SearchGateway:
                 None,
             )
             if unified is not None:
+                call_params: dict[str, Any] = {
+                    "query": query,
+                    "max_results_per_source": max(2, max_results // 5),
+                }
+                if academic_sources:
+                    call_params["sources"] = ",".join(academic_sources)
                 try:
-                    call_params: dict[str, Any] = {
-                        "query": query,
-                        "max_results_per_source": max(2, max_results // 5),
-                    }
-                    if academic_sources:
-                        call_params["sources"] = ",".join(academic_sources)
                     result = await self._mcp.invoke_tool(unified.tool_id, call_params)
+                except PolicyViolationError:
+                    # 白名单拒绝必须向上抛出，不能被当作可忽略的警告
+                    raise
                 except Exception as exc:
                     all_warnings.append(f"{unified.tool_id}: {exc}")
                     result = None
@@ -107,6 +110,9 @@ class SearchGateway:
                         tool.tool_id,
                         {"query": query, "source": source, "max_results": max_results},
                     )
+                except PolicyViolationError:
+                    # 白名单拒绝必须向上抛出，不能被当作可忽略的警告
+                    raise
                 except Exception as exc:
                     all_warnings.append(f"{tool.tool_id}: {exc}")
                     continue
