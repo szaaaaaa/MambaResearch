@@ -108,36 +108,41 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     // 不含 ToolResultBlock（那是 UserMessage 的事）
     // CLI 视觉语言：整个 assistant 轮次左侧挂一个蓝色 `●` 标记，不是每个 block 一个
     const content = Array.isArray(payload.content) ? payload.content : [];
+    const rendered: React.ReactNode[] = [];
+    content.forEach((block, idx) => {
+      if (!block || typeof block !== 'object') return;
+      const b = block as Record<string, unknown>;
+      const btype = typeof b.type === 'string' ? b.type : '';
+      if (btype === 'text' && typeof b.text === 'string') {
+        rendered.push(<MarkdownBlock key={idx}>{b.text}</MarkdownBlock>);
+        return;
+      }
+      if (btype === 'thinking' && typeof b.thinking === 'string') {
+        const durationMs =
+          typeof b.duration_ms === 'number' ? (b.duration_ms as number) : null;
+        rendered.push(<ThinkingBlock key={idx} content={b.thinking} durationMs={durationMs} />);
+        return;
+      }
+      if (btype === 'tool_use') {
+        const name = typeof b.name === 'string' ? b.name : '(unknown)';
+        const toolUseId = typeof b.id === 'string' ? b.id : '';
+        if (toolUseId && suppressedToolUseIds?.has(toolUseId)) return;
+        rendered.push(
+          <React.Fragment key={idx}>{dispatchToolView({ name, input: b.input })}</React.Fragment>,
+        );
+        return;
+      }
+      if (rawEventsVisible) {
+        rendered.push(<RawEventFold key={idx} label={`block:${btype || 'unknown'}`} payload={b} />);
+      }
+    });
+    // 所有 block 都被 suppress（典型场景：一整条 assistant 消息只包含被去重的 TodoWrite
+    // tool_use）时返回 null，避免留下空 `●` 气泡
+    if (rendered.length === 0) return null;
     return (
       <div className="my-2 flex items-start gap-2">
         <span className="mt-[6px] font-mono text-[10px] leading-none text-sky-600">●</span>
-        <div className="min-w-0 flex-1">
-          {content.map((block, idx) => {
-            if (!block || typeof block !== 'object') return null;
-            const b = block as Record<string, unknown>;
-            const btype = typeof b.type === 'string' ? b.type : '';
-            if (btype === 'text' && typeof b.text === 'string') {
-              return <MarkdownBlock key={idx}>{b.text}</MarkdownBlock>;
-            }
-            if (btype === 'thinking' && typeof b.thinking === 'string') {
-              const durationMs =
-                typeof b.duration_ms === 'number' ? (b.duration_ms as number) : null;
-              return <ThinkingBlock key={idx} content={b.thinking} durationMs={durationMs} />;
-            }
-            if (btype === 'tool_use') {
-              const name = typeof b.name === 'string' ? b.name : '(unknown)';
-              const toolUseId = typeof b.id === 'string' ? b.id : '';
-              if (toolUseId && suppressedToolUseIds?.has(toolUseId)) {
-                return null;
-              }
-              return <React.Fragment key={idx}>{dispatchToolView({ name, input: b.input })}</React.Fragment>;
-            }
-            if (rawEventsVisible) {
-              return <RawEventFold key={idx} label={`block:${btype || 'unknown'}`} payload={b} />;
-            }
-            return null;
-          })}
-        </div>
+        <div className="min-w-0 flex-1">{rendered}</div>
       </div>
     );
   }
