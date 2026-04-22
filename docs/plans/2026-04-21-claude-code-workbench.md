@@ -238,7 +238,9 @@
   - `/resume` 触发 `store.openActivity('sessions')`，依赖 Task 9 的 Sessions Panel；Task 9 未完成时显示"依赖 Task 9"提示
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 7. 会话状态提升 + 跨 Tab 切换存活
+### [PENDING-VERIFY] 7. 会话状态提升 + 跨 Tab 切换存活
+
+> **Notes（2026-04-22）**：代码与后端测试在 commit `6bcbc3c` 已落地——`WorkbenchTab.tsx` 状态全部上浮到 `AppContext.claudeCode`、unmount DELETE/abort 已删除、`SessionManager` 有 60min idle TTL sweeper（`tests/test_claude_code_session.py::test_idle_session_is_evicted` 等 3 条覆盖驱逐 / 刷新续命 / shutdown 取消 sweeper）。剩浏览器手测 2 条：(1) 切 Tab → 切回，消息列表 + Vibing 完整；(2) 切回后发新消息，Claude 能引用切 Tab 前的内容。
 
 - **What**: 把 Workbench 的 `items` / `session` / `isRunning` / `rawEventsVisible` / `elapsedSec` 相关状态从 `WorkbenchTab` 组件内 `useState` 提升到 `store.tsx` 的 `AppContext`（新加 `claudeCode` slice）；WorkbenchTab 改为订阅者组件，卸载不丢状态。**删除组件 unmount 时的 `DELETE /api/claude-code/sessions/{id}` 副作用**——SDK client 回收改由后端 idle TTL（60 分钟无活动）管理，浏览器刷新/切 Tab 不再误杀会话。
 - **Files**:
