@@ -8,6 +8,7 @@ import {
   ClarificationHistoryRound,
   ClarificationQuestion,
   ClarificationState,
+  ClaudeCodePanel,
   ClaudeCodePermissionMode,
   ClaudeCodePermissionRequest,
   ClaudeCodeSessionInfo,
@@ -951,6 +952,10 @@ interface AppContextType {
   ccSetPermissionMode: (mode: ClaudeCodePermissionMode) => void;
   ccEnqueuePermissionRequest: (req: ClaudeCodePermissionRequest) => void;
   ccResolvePermissionRequest: (requestId: string) => void;
+  ccOpenPanel: (panel: ClaudeCodePanel) => void;
+  ccClosePanel: () => void;
+  ccSetMarkdownEnabled: (enabled: boolean) => void;
+  ccSetThinkingDefaultCollapsed: (collapsed: boolean) => void;
   ccReset: () => void;
 }
 
@@ -987,6 +992,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       turnStartAt: null,
       permissionMode: 'default',
       pendingPermissions: [],
+      activePanel: null,
+      markdownEnabled: true,
+      thinkingDefaultCollapsed: true,
     },
   });
   // Workbench 的 AbortController 不进 React state——跟随 AppProvider 的 ref，
@@ -2140,6 +2148,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  const ccOpenPanel = (panel: ClaudeCodePanel) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, activePanel: panel },
+    }));
+  };
+
+  const ccClosePanel = () => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, activePanel: null },
+    }));
+  };
+
+  const ccSetMarkdownEnabled = (enabled: boolean) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, markdownEnabled: enabled },
+    }));
+  };
+
+  const ccSetThinkingDefaultCollapsed = (collapsed: boolean) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, thinkingDefaultCollapsed: collapsed },
+    }));
+  };
+
   const ccReset = () => {
     ccAbortControllerRef.current?.abort();
     ccAbortControllerRef.current = null;
@@ -2153,6 +2189,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         turnStartAt: null,
         permissionMode: prev.claudeCode.permissionMode,
         pendingPermissions: [],
+        activePanel: null,
+        markdownEnabled: prev.claudeCode.markdownEnabled,
+        thinkingDefaultCollapsed: prev.claudeCode.thinkingDefaultCollapsed,
       },
     }));
   };
@@ -2195,6 +2234,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccSetPermissionMode,
         ccEnqueuePermissionRequest,
         ccResolvePermissionRequest,
+        ccOpenPanel,
+        ccClosePanel,
+        ccSetMarkdownEnabled,
+        ccSetThinkingDefaultCollapsed,
         ccReset,
       }}
     >

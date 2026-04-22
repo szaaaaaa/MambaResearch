@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
+import { useAppContext } from '../../store';
 
 interface MarkdownBlockProps {
   children: string;
@@ -57,6 +58,15 @@ const CodeBlockWrapper: React.FC<{ children?: React.ReactNode }> = ({ children }
  * - 代码块 hover 出现复制按钮
  */
 export const MarkdownBlock: React.FC<MarkdownBlockProps> = ({ children }) => {
+  const { state } = useAppContext();
+  if (!state.claudeCode.markdownEnabled) {
+    // /config 里关掉了 Markdown——降级为等宽纯文本，便于拷贝原始 token
+    return (
+      <pre className="my-2 whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-slate-800">
+        {children}
+      </pre>
+    );
+  }
   return (
     <div className="text-[14px] leading-relaxed text-slate-900">
       <ReactMarkdown

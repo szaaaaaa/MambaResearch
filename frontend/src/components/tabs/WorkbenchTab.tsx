@@ -6,6 +6,16 @@ import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
 import { PermissionModal } from '../workbench/PermissionModal';
 import { RawEventsToggle } from '../workbench/RawEventsToggle';
+import { dispatchSlashCommand, matchSlashCommands } from '../workbench/slash/dispatch';
+import type { SlashCommand } from '../workbench/slash/types';
+import { SlashAutocomplete } from '../workbench/slash/SlashAutocomplete';
+import { HelpPanel } from '../workbench/panels/HelpPanel';
+import { StatusPanel } from '../workbench/panels/StatusPanel';
+import { CostPanel } from '../workbench/panels/CostPanel';
+import { ConfigPanel } from '../workbench/panels/ConfigPanel';
+import { InfoPanel } from '../workbench/panels/InfoPanel';
+import { AgentsPanel } from '../workbench/panels/AgentsPanel';
+import { SLASH_COMMANDS } from '../workbench/slash/registry';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -28,6 +38,10 @@ export const WorkbenchTab: React.FC = () => {
     ccSetAbortController,
     ccEnqueuePermissionRequest,
     ccResolvePermissionRequest,
+    ccOpenPanel,
+    ccClosePanel,
+    ccSetMarkdownEnabled,
+    ccSetThinkingDefaultCollapsed,
   } = useAppContext();
   const {
     session,
@@ -37,11 +51,40 @@ export const WorkbenchTab: React.FC = () => {
     turnStartAt,
     permissionMode,
     pendingPermissions,
+    activePanel,
+    markdownEnabled,
+    thinkingDefaultCollapsed,
   } = state.claudeCode;
 
   const [prompt, setPrompt] = React.useState('');
   const [elapsedSec, setElapsedSec] = React.useState(0);
+  const [slashActiveIdx, setSlashActiveIdx] = React.useState(0);
+  const [autocompleteDismissed, setAutocompleteDismissed] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+
+  // 只有当输入以 "/" 开头、用户没按 Esc 关过、且不在运行态时才弹出下拉
+  const slashQueryActive =
+    !isRunning && !autocompleteDismissed && prompt.startsWith('/');
+  const slashMatches = React.useMemo<SlashCommand[]>(() => {
+    if (!slashQueryActive) return [];
+    return matchSlashCommands(prompt.slice(1));
+  }, [slashQueryActive, prompt]);
+
+  // 候选数变化时把高亮索引 clamp 回合法区间
+  React.useEffect(() => {
+    if (slashMatches.length === 0) {
+      if (slashActiveIdx !== 0) setSlashActiveIdx(0);
+      return;
+    }
+    if (slashActiveIdx >= slashMatches.length) {
+      setSlashActiveIdx(slashMatches.length - 1);
+    }
+  }, [slashMatches, slashActiveIdx]);
+
+  // 用户改写输入（或清空）时，取消之前的 Esc dismissed 标记
+  React.useEffect(() => {
+    if (!prompt.startsWith('/')) setAutocompleteDismissed(false);
+  }, [prompt]);
 
   // sessionRef 给 handleSend 闭包用：避免 state 未及时同步时 ensureSession 读到旧值
   const sessionRef = React.useRef<ClaudeCodeSessionInfo | null>(session);
@@ -115,15 +158,11 @@ export const WorkbenchTab: React.FC = () => {
     return info;
   }, [ccSetSession, permissionMode]);
 
-  const handleSend = async () => {
-    const trimmed = prompt.trim();
-    if (!trimmed || isRunning) return;
-
+  const sendToBackend = async (text: string) => {
     const turnStart = Date.now();
     ccSetTurnStartAt(turnStart);
     ccSetRunning(true);
-    ccAppendItem({ type: 'user_local', text: trimmed });
-    setPrompt('');
+    ccAppendItem({ type: 'user_local', text });
 
     const controller = new AbortController();
     ccSetAbortController(controller);
@@ -135,7 +174,7 @@ export const WorkbenchTab: React.FC = () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: trimmed }),
+          body: JSON.stringify({ prompt: text }),
           signal: controller.signal,
         },
       );
@@ -254,6 +293,35 @@ export const WorkbenchTab: React.FC = () => {
     }
   };
 
+  /**
+   * 把一段文本作为 user prompt 发出去——``/init`` / ``/review`` 等 frontend
+   * 命令的 handler 通过 DispatchContext 调到这里。清空输入框、合上下拉。
+   */
+  const submitPrompt = (text: string) => {
+    if (isRunning || !text.trim()) return;
+    setPrompt('');
+    setAutocompleteDismissed(false);
+    void sendToBackend(text);
+  };
+
+  const runSlashCommand = (input: string) => {
+    dispatchSlashCommand(input, { openPanel: ccOpenPanel, submitPrompt });
+    setPrompt('');
+    setAutocompleteDismissed(false);
+    setSlashActiveIdx(0);
+  };
+
+  const handleSend = async () => {
+    const trimmed = prompt.trim();
+    if (!trimmed || isRunning) return;
+    if (trimmed.startsWith('/')) {
+      runSlashCommand(trimmed);
+      return;
+    }
+    setPrompt('');
+    await sendToBackend(trimmed);
+  };
+
   const handleStop = async () => {
     const active = sessionRef.current;
     const controller = ccGetAbortController();
@@ -274,11 +342,57 @@ export const WorkbenchTab: React.FC = () => {
 
   const activePermission = pendingPermissions[0] ?? null;
 
+  const renderActivePanel = () => {
+    if (!activePanel) return null;
+    switch (activePanel.kind) {
+      case 'help':
+        return <HelpPanel commands={SLASH_COMMANDS} onClose={ccClosePanel} />;
+      case 'status':
+        return <StatusPanel session={session} items={items} onClose={ccClosePanel} />;
+      case 'cost':
+        return <CostPanel session={session} items={items} onClose={ccClosePanel} />;
+      case 'memory':
+        return (
+          <InfoPanel
+            title="/memory"
+            body="CLAUDE.md 读写端点将在 Task 6b 接入。届时本面板会替换为可编辑的 MemoryEditor。"
+            onClose={ccClosePanel}
+          />
+        );
+      case 'agents':
+        return <AgentsPanel onClose={ccClosePanel} />;
+      case 'config':
+        return (
+          <ConfigPanel
+            markdownEnabled={markdownEnabled}
+            thinkingDefaultCollapsed={thinkingDefaultCollapsed}
+            rawEventsVisible={rawEventsVisible}
+            onMarkdownChange={ccSetMarkdownEnabled}
+            onThinkingCollapseChange={ccSetThinkingDefaultCollapsed}
+            onRawEventsChange={ccSetRawEventsVisible}
+            onClose={ccClosePanel}
+          />
+        );
+      case 'info':
+        return (
+          <InfoPanel
+            title={activePanel.title}
+            body={activePanel.body}
+            link={activePanel.link}
+            onClose={ccClosePanel}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="flex h-full flex-col bg-[var(--app-bg)]">
       {activePermission ? (
         <PermissionModal request={activePermission} onResolved={ccResolvePermissionRequest} />
       ) : null}
+      {renderActivePanel()}
       <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3">
         <Terminal className="h-5 w-5 text-slate-500" />
         <div className="min-w-0 flex-1">
@@ -325,43 +439,88 @@ export const WorkbenchTab: React.FC = () => {
       )}
 
       <footer className="border-t border-slate-200 bg-white px-6 py-4">
-        <div className="mx-auto flex max-w-3xl items-end gap-3">
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                void handleSend();
-              }
-            }}
-            placeholder="向 Claude Code 提问…（Enter 发送，Shift+Enter 换行）"
-            rows={2}
-            disabled={isRunning}
-            className="min-h-[48px] flex-1 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-          />
-          {isRunning ? (
-            <button
-              type="button"
-              onClick={() => void handleStop()}
-              aria-label="中止当前运行"
-              className="flex h-11 items-center gap-2 rounded-2xl bg-rose-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-rose-500"
-            >
-              <Square className="h-4 w-4" />
-              中止
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void handleSend()}
-              disabled={!prompt.trim()}
-              aria-label="发送消息"
-              className="flex h-11 items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              <Send className="h-4 w-4" />
-              发送
-            </button>
-          )}
+        <div className="mx-auto max-w-3xl">
+          {slashQueryActive && slashMatches.length > 0 ? (
+            <SlashAutocomplete
+              matches={slashMatches}
+              activeIndex={slashActiveIdx}
+              onHover={setSlashActiveIdx}
+              onSelect={(cmd) => runSlashCommand(`/${cmd.id}`)}
+            />
+          ) : null}
+          <div className="flex items-end gap-3">
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (slashQueryActive && slashMatches.length > 0) {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    setSlashActiveIdx((idx) =>
+                      slashMatches.length ? (idx + 1) % slashMatches.length : 0,
+                    );
+                    return;
+                  }
+                  if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    setSlashActiveIdx((idx) =>
+                      slashMatches.length
+                        ? (idx - 1 + slashMatches.length) % slashMatches.length
+                        : 0,
+                    );
+                    return;
+                  }
+                  if (event.key === 'Tab') {
+                    event.preventDefault();
+                    const cmd = slashMatches[slashActiveIdx];
+                    if (cmd) setPrompt(`/${cmd.id}`);
+                    return;
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setAutocompleteDismissed(true);
+                    return;
+                  }
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    const cmd = slashMatches[slashActiveIdx];
+                    if (cmd) runSlashCommand(`/${cmd.id}`);
+                    return;
+                  }
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void handleSend();
+                }
+              }}
+              placeholder="向 Claude Code 提问…（/ 打开命令面板，Enter 发送，Shift+Enter 换行）"
+              rows={2}
+              disabled={isRunning}
+              className="min-h-[48px] flex-1 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+            />
+            {isRunning ? (
+              <button
+                type="button"
+                onClick={() => void handleStop()}
+                aria-label="中止当前运行"
+                className="flex h-11 items-center gap-2 rounded-2xl bg-rose-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-rose-500"
+              >
+                <Square className="h-4 w-4" />
+                中止
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!prompt.trim()}
+                aria-label="发送消息"
+                className="flex h-11 items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                <Send className="h-4 w-4" />
+                发送
+              </button>
+            )}
+          </div>
         </div>
       </footer>
     </div>

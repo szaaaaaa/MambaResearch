@@ -399,6 +399,24 @@ export interface ClaudeCodePermissionRequest {
   input: unknown;
 }
 
+/**
+ * 通用信息面板的 payload：`info` 型由多条命令共用（Info 6 + CLI-only 7 + unknown + deferred）。
+ * 其他 kind 面板字段全在组件内部从 state 取，因此不需要额外 props。
+ */
+export type ClaudeCodePanel =
+  | { kind: 'help' }
+  | { kind: 'status' }
+  | { kind: 'cost' }
+  | { kind: 'memory' }
+  | { kind: 'config' }
+  | { kind: 'agents' }
+  | {
+      kind: 'info';
+      title: string;
+      body: string;
+      link?: { text: string; url: string };
+    };
+
 export interface ClaudeCodeState {
   session: ClaudeCodeSessionInfo | null;
   items: ClaudeCodeStreamItem[];
@@ -407,6 +425,12 @@ export interface ClaudeCodeState {
   turnStartAt: number | null;
   permissionMode: ClaudeCodePermissionMode;
   pendingPermissions: ClaudeCodePermissionRequest[];
+  /** 当前叠加在 WorkbenchTab 上的 slash 命令面板；null 表示无。 */
+  activePanel: ClaudeCodePanel | null;
+  /** /config 开关：assistant 文本是否走 Markdown 渲染。 */
+  markdownEnabled: boolean;
+  /** /config 开关：思考块是否默认折叠。 */
+  thinkingDefaultCollapsed: boolean;
 }
 
 export interface AppState {

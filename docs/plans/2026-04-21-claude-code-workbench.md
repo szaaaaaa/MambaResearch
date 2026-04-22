@@ -151,7 +151,9 @@
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
   - 手测：WebFetch 一个 URL、WebSearch 一个 query → 视觉确认 header/filter chip 正确
 
-### [TODO] 5. HITL 权限请求（can_use_tool 回调）
+### [DONE] 5. HITL 权限请求（can_use_tool 回调）
+
+> **Scope note（2026-04-22 实现时确认）**：`permission_mode='default'` 的 Workbench 会话仅加载 user 层设置（`setting_sources=["user"]`），故意跳过项目 `.claude/settings.json` —— 否则其中 `permissions.allow: ["Bash(*)", "Write", ...]` 会让 CLI 在子进程端预批工具，`can_use_tool` 桥永不触发，Modal 失去存在意义。代价：项目级 hooks（Stop pytest verifier / PostToolUse py_compile / Notification powershell）在 Workbench 会话中不生效；这些 hooks 属于 CLI 场景，Workbench 的 HITL Modal 本身是更强的人类确认机制，可接受。
 
 - **What**: 利用 SDK 的 `can_use_tool` hook，在 Claude 尝试使用敏感工具（Write/Edit/Bash 等）前向前端发 `cc_permission_request` SSE；前端弹 Modal"允许 / 允许（本会话） / 拒绝"；用户点击后后端解锁 Future 放行或阻止。
 - **Files**:
@@ -168,36 +170,73 @@
   - `permission_mode` ∈ {`acceptEdits`, `bypassPermissions`, `dontAsk`, `plan`, `auto`} 时不触发 Modal（行为同原 CLI，后端不注入 `can_use_tool` 桥）
   - SDK `PermissionMode` 字面量合法值：`default | acceptEdits | plan | bypassPermissions | dontAsk | auto`，非法值后端返回 400
 
-### [TODO] 6. Slash 命令（原生语义，全量实现）
+### [PENDING-VERIFY] 6a. Slash 命令骨架 + autocomplete + 纯前端命令
 
-- **What**: 实现 CLI 的 26 个 slash 命令；每个命令在客户端前端拦截后派发到后端或前端等价逻辑；绝不是把 `/xxx` 当 prompt 发。
+> **Notes（2026-04-22）**：代码已落地，`tsc --noEmit` + `npm run build` 通过；待用户逐条手测 Acceptance 后改 `[DONE]`。实现中的偏差：`/memory` 未建 MemoryEditor（前端读文件通道在 6b 之前不存在），当前改为跳转 InfoPanel 提示 6b 接入——见下方 Acceptance。
+
+- **What**: 建 slash 整体骨架（registry + dispatch + autocomplete + unknown handler），实现所有不依赖后端的命令——展示面板、本地配置、发送特殊 prompt。后端动作类命令（clear/exit/model/mcp/permissions/add-dir/compact/resume）在 registry 里占位，实际 handler 由 6b-6d 实现。
 - **Files**:
-  - 前端新增：`frontend/src/components/workbench/slash/registry.ts`（命令定义、autocomplete、handler 分发）、`frontend/src/components/workbench/slash/handlers/*.ts`（每命令一个 handler）
-  - 前端新增：`frontend/src/components/workbench/SlashAutocomplete.tsx`（输入 `/` 时下拉）
-  - 前端新增：`frontend/src/components/workbench/panels/HelpPanel.tsx`、`CostPanel.tsx`、`ModelPicker.tsx`、`McpStatusPanel.tsx`、`PermissionsPanel.tsx`、`StatusPanel.tsx`、`MemoryEditor.tsx`、`ConfigPanel.tsx`、`AgentsPanel.tsx`
-  - 后端新增：`POST /api/claude-code/sessions/{id}/command`（通用端点，dispatch `clear`/`compact`/`model-switch`/`interrupt`/`exit`）
-- **Acceptance**（每个命令均需手动或单元验证）:
-  - `/help` → 前端 Help Panel 列出所有命令 + 说明
-  - `/clear` → 后端销毁并重建 SDK client（同一 session id、不同 SDK 上下文）；前端清空消息列表；前端提示"上下文已清空"
-  - `/compact [instructions]` → 调 SDK 的压缩 API（或 send special message + start new client with summary 作为 system context）；压缩后 token 数显著下降（可由下一条 ResultMessage 验证）
-  - `/cost` → 弹 CostPanel：显示本 session 总输入 tokens、总输出 tokens、总费用 USD、轮数、开始时间
-  - `/model [name]` → 弹 ModelPicker 或直接切换；后端 `command=model-switch` 带新模型名重建 client，保留历史
-  - `/mcp` → 弹 McpStatusPanel：显示当前 SDK 配置里挂载的 MCP server 名单和连接状态
-  - `/init` → 发送 prompt"请分析代码库并在 CLAUDE.md 写入项目概要"，Claude 执行 Write 工具
-  - `/review` → 发送 prompt 让 Claude 审当前未提交 diff
-  - `/permissions` → 弹 PermissionsPanel：显示 `permission_mode`（default/plan/strict），可下拉切换
-  - `/status` → 弹 StatusPanel：session id、cwd、model、已挂载 MCP、已用 tokens、已用费用、开始时间
-  - `/memory` → 弹 MemoryEditor：读 `<cwd>/CLAUDE.md` 到文本框，可编辑保存
-  - `/config` → 弹 ConfigPanel：toggle Markdown、toggle thinking 默认折叠、theme 切换等前端设置
-  - `/agents` → 弹 AgentsPanel：列出 `.claude/skills/` 和全局 skills 下的所有 skill，点击可"选中"（下一条 prompt 加入 skill context hint）
-  - `/exit` → 关闭 session（等价于 Delete session）
-  - `/resume` → 弹侧边会话列表（需 Task 7）
-  - `/bug` `/release-notes` `/upgrade` `/doctor` `/feedback` → 弹通用 InfoPanel 显示对应信息（可打开文档链接）
-  - `/add-dir <path>` → 在 session 里追加一个允许的工作目录（SDK 支持 `additional_directories`）
-  - `/hooks` → 弹 HelpPanel 说明 hooks 概念（web 下不执行 shell hook）
-  - CLI 专属命令 `/ide`、`/vim`、`/terminal-setup`、`/install-github-app`、`/migrate-installer`、`/login`、`/logout`、`/pr-comments` → 显示提示"此命令仅原生 CLI 可用，请在终端运行 `claude` 后使用"
-  - 输入 `/` 触发 autocomplete 下拉，显示所有命令的标题 + 简述；键盘上下选择、Enter 确认
-  - 未知命令（如 `/foobar`）显示"未知命令：/foobar，输入 /help 查看全部"
+  - 前端新增：`frontend/src/components/workbench/slash/registry.ts`（命令表 `{id, aliases, description, scope: 'frontend'|'backend'|'deferred'|'cli-only', handler}`）
+  - 前端新增：`frontend/src/components/workbench/slash/dispatch.ts`（按命令名 resolve handler，执行或返回 unknown / deferred-stub）
+  - 前端新增：`frontend/src/components/workbench/SlashAutocomplete.tsx`（输入以 `/` 开头时前缀过滤下拉、键盘 ↑↓ + Enter 确认、Esc 关闭）
+  - 前端新增 Panel：`panels/HelpPanel.tsx`、`StatusPanel.tsx`、`CostPanel.tsx`、`ConfigPanel.tsx`、`AgentsPanel.tsx`、`InfoPanel.tsx`（通用信息面板，title + body + optional 外链；CLI-only 提示和 /bug /release-notes 等都复用）
+  - 前端改动：`WorkbenchTab.tsx` 输入区挂 autocomplete；提交时拦截 `/` 开头走 dispatch，非斜杠走原 SSE prompt 链路
+- **Acceptance**:
+  - `/help` 弹 HelpPanel 列出全部 26 个命令 + 简介，按 frontend / backend / deferred / cli-only 分组
+  - `/status` 弹 StatusPanel 显示 session id、cwd、model、开始时间、已累计 tokens、已累计 cost（累加所有 ResultMessage 的 usage）
+  - `/cost` 弹 CostPanel：输入/输出 tokens、USD、轮数、开始时间
+  - `/memory` 弹 InfoPanel 显示"CLAUDE.md 读写端点将在 Task 6b 接入"——MemoryEditor 与读文件通道一并推迟到 6b
+  - `/config` 弹 ConfigPanel：Markdown toggle、thinking 默认折叠 toggle、raw events toggle 镜像到 store（与现有 RawEventsToggle 同源）
+  - `/agents` 弹 AgentsPanel：通过已有 `/api/skills` 端点拉 skill 列表，展示 id + 描述
+  - `/init` 直接发 prompt "请分析代码库并在 CLAUDE.md 写入项目概要" 到当前 session（走原 SSE 链路，无需新端点）
+  - `/review` 直接发 prompt "请审当前未提交 diff 并列出问题"
+  - CLI-only 7 条（`/ide`、`/vim`、`/terminal-setup`、`/install-github-app`、`/migrate-installer`、`/login`、`/logout`、`/pr-comments`）弹 InfoPanel 显示"此命令仅原生 CLI 可用，请在终端运行 `claude` 后使用"
+  - Info 类 6 条（`/bug`、`/release-notes`、`/upgrade`、`/doctor`、`/feedback`、`/hooks`）弹 InfoPanel 显示对应说明（可含外链）
+  - 输入 `/` 触发 autocomplete：前缀过滤、键盘 ↑↓ 选、Enter 确认、Esc 关闭；选中后输入框填入命令名
+  - 未知命令（如 `/foobar`）通过 InfoPanel 或行内提示显示"未知命令：/foobar，输入 /help 查看全部"
+  - 后端动作类（`/clear`、`/exit`、`/model`、`/mcp`、`/permissions`、`/add-dir`、`/compact`、`/resume`）在 registry 中标 scope='deferred'，点击后弹 InfoPanel "将在 6b/6c/6d 落地"——不得把它们当普通 prompt 发
+  - `tsc --noEmit && npm run build` 通过；`pytest tests/` 通过（后端未动）
+
+### [TODO] 6b. 后端 command 端点 + 会话生命周期命令（clear / exit / add-dir）
+
+- **What**: 建通用后端 command 端点，实现 SDK client 生命周期类命令——不涉及模型切换与 SDK 内部压缩，只做 client 重建与 session 配置。
+- **Files**:
+  - 后端新增端点：`POST /api/claude-code/sessions/{id}/command`，payload `{command: 'clear'|'exit'|'add-dir', args?: object}`
+  - 后端改动：`src/server/claude_code/session_manager.py` 加 `clear_context(id)`（dispose 旧 SDK client 重建同 id 新 client，保留 session 记录）、`add_directory(id, path)`（SDK `additional_directories`）、`close(id)`（走已有 disconnect 路径）
+  - 前端改动：`slash/registry.ts` 把 `/clear`、`/exit`、`/add-dir` 的 scope 改为 'backend' 并挂真实 handler
+  - 测试新增：`tests/test_claude_code_command.py` 覆盖三个命令 + 未知 command 400
+- **Acceptance**:
+  - `/clear`: 后端销毁并重建 SDK client（同 session id、不同 SDK 上下文）；前端清空 items；下一条消息起 Claude 无前文记忆（手测：先问名字，再 `/clear`，再问"我刚才说的名字是什么"→ Claude 应答不知道）
+  - `/exit`: 后端 SDK client disconnect + session 记录结束（等价 DELETE）；前端回到空态
+  - `/add-dir <path>`: 后端把 path 加入 SDK `additional_directories`；手测 Claude 能 Read 该目录下文件
+  - `POST /command` 未知 command 返回 400
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+
+### [TODO] 6c. `/model` + `/mcp` + `/permissions`
+
+- **What**: 涉及 SDK client 重建（换模型）或配置状态读写的中等复杂度命令。
+- **Files**:
+  - 前端新增 Panel：`panels/ModelPicker.tsx`、`McpStatusPanel.tsx`、`PermissionsPanel.tsx`
+  - 后端改动：`session_manager.py` 加 `switch_model(id, model)`（保留 session id + 历史 items，重建 SDK client 用新 model）、`get_mcp_status(id)`（读 SDK 挂载的 MCP server 名单 + 连接状态）、`switch_permission_mode(id, mode)`
+  - 后端端点：`PATCH /api/claude-code/sessions/{id}`（支持更新 model / permission_mode 字段）、`GET /api/claude-code/sessions/{id}/mcp`
+  - 前端改动：`slash/registry.ts` 挂真实 handler
+- **Acceptance**:
+  - `/model` 弹 ModelPicker 列出可选模型；确认后后端重建 SDK client 保留历史；下一条消息用新 model（session.model 字段更新）
+  - `/mcp` 弹 McpStatusPanel 显示挂载的 MCP server + 连接状态；Task 11 未完成时 server 列表可能为空，正常显示"无挂载"
+  - `/permissions` 弹 PermissionsPanel 显示当前 `permission_mode`，可切换到 `default|acceptEdits|plan|bypassPermissions|dontAsk|auto`；非法值后端返回 400
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
+
+### [TODO] 6d. `/compact` + `/resume`
+
+- **What**: 涉及 SDK 深度特性或跨 Task 依赖。
+- **Files**:
+  - 后端改动：`session_manager.py` `compact(id, instructions?)` 实现（先调研 SDK 是否直接暴露压缩 API，无则 fallback 为 summarize prompt + client 重建并注入 summary 作为 system context）
+  - 前端改动：`slash/registry.ts` 把 `/compact` 挂 backend handler；`/resume` 调 `store.openActivity('sessions')`（Task 9 预留的 action），Task 9 未完成时弹 InfoPanel "依赖 Task 9，尚未就绪"
+- **Acceptance**:
+  - `/compact` 调 SDK 压缩路径；压缩后下一条 ResultMessage 的 total_input_tokens 显著下降（手测对比前后）
+  - `/compact [instructions]` 把 instructions 传给 SDK（或作为 summarize prompt 的 additional context）
+  - `/resume` 触发 `store.openActivity('sessions')`，依赖 Task 9 的 Sessions Panel；Task 9 未完成时显示"依赖 Task 9"提示
+  - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
 ### [TODO] 7. 会话状态提升 + 跨 Tab 切换存活
 
@@ -340,3 +379,4 @@
 - 2026-04-21（Task 4b BashView 边界=Path A）: BashView **只渲染 tool_use 阶段**的 `$ <command>` 终端块头部，**不跨消息类型**抽取 tool_result 的 stdout/exit code。后者继续由已有的 `renderToolResultBlock` `⎿ N 行输出` 折叠承载。原因：跨 assistant→user 消息配对需要在上层维护 tool_use_id→tool_result 映射，改面过大且与现有折叠语义重复。终端块 + `⎿` 折叠组合已经能传达"命令+输出"语义
 - 2026-04-21（Task 4c Read/Grep/Glob 沿用 Path A）: 原 Acceptance 想在 Read 视图内渲染"行号+源码"、Grep 渲染"文件·N matches" 列表——这些数据均在 tool_result 里。沿用 4b 路线：视图只消费 tool_use 入参，结果走已有 `⎿` 折叠。这样与 CLI 原生 `Read(path)\n⎿ Read 149 lines` 视觉一致，且避免跨消息类型配对
 - 2026-04-21（Task 4d TodoWrite 去重语义澄清）: 原 Acceptance 存在内部矛盾——"按 tool_use_id 聚合"与"不同 tool_use_id 独立渲染"不能同时成立（每次 TodoWrite 调用都带独立 id）。按工具语义实际意图是"TodoWrite 本身是全量快照覆盖"，所以**整个 items 列表里只保留最后一次 TodoWrite 的 tool_use**，早期的全部 suppress。实现上 WorkbenchTab 用 useMemo 构造 `Set<suppressedToolUseIds>` 传给 MessageRenderer，命中即 return null——store 保持原样，仅渲染层决策
+- 2026-04-22（Task 6 拆分）: 原 Task 6 "26 条 slash 命令全量实现" 含 ~15+ 新文件 + ~28 条独立验收，单次 /dev 做不完也验不完——按 Task 4 先例拆成 **6a 前端骨架 + 纯前端命令（含 /help /status /cost /memory /config /agents /init /review + Info 类 + CLI-only 提示 + 未知命令）**、**6b 后端 command 端点 + 会话生命周期（clear / exit / add-dir）**、**6c 中等复杂度（model / mcp / permissions）**、**6d 深度 SDK + 跨 Task 依赖（compact / resume）**。每子任务独立 /dev → /review → /ship，前端先跑通再接后端深度特性
