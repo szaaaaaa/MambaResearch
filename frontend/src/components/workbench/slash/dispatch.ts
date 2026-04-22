@@ -7,10 +7,17 @@ import type { SlashCommand } from './types';
  *
  * - ``openPanel`` 打开 modal（对应 store.ccOpenPanel）。
  * - ``submitPrompt`` 像用户手打一条消息一样发给 Claude（/init / /review 用）。
+ * - ``runBackendCommand`` 发起 ``POST /api/claude-code/sessions/{id}/command``，
+ *   供 /clear /exit /add-dir 调用；由 WorkbenchTab 闭包注入当前 session id 与
+ *   本地状态收尾逻辑。``args`` 形如 ``{path: '...'}`` 直接透传为 body.args。
  */
 export interface DispatchContext {
   openPanel: (panel: ClaudeCodePanel) => void;
   submitPrompt: (text: string) => void;
+  runBackendCommand: (
+    command: string,
+    args?: Record<string, unknown>,
+  ) => Promise<void>;
 }
 
 /**
@@ -91,13 +98,58 @@ export function dispatchSlashCommand(
     return { kind: 'consumed' };
   }
 
-  // backend scope 在 6a 阶段还没用到——兜底为 unknown 以便未来正式接入时补上。
+  if (cmd.scope === 'backend') {
+    runBackendHandler(cmd, ctx, args);
+    return { kind: 'consumed' };
+  }
+
+  // 兜底（理论不可达，所有 SlashScope 分支都已覆盖）
   ctx.openPanel({
     kind: 'info',
     title: `/${cmd.id}`,
-    body: '该命令需要后端支持，尚未接入。',
+    body: '该命令尚未绑定处理逻辑。',
   });
   return { kind: 'unknown' };
+}
+
+/**
+ * backend scope 的二级分发（Task 6b：/clear /exit /add-dir）。
+ *
+ * 所有 handler 都把具体 HTTP 通信委托给 ctx.runBackendCommand，由 WorkbenchTab
+ * 闭包注入 session id / API_BASE / 本地状态收尾；本函数只负责按命令拆 args。
+ */
+function runBackendHandler(
+  cmd: SlashCommand,
+  ctx: DispatchContext,
+  args: string,
+): void {
+  switch (cmd.handlerKey) {
+    case 'clear':
+      void ctx.runBackendCommand('clear');
+      return;
+    case 'exit':
+      void ctx.runBackendCommand('exit');
+      return;
+    case 'add-dir': {
+      const path = args.trim();
+      if (!path) {
+        ctx.openPanel({
+          kind: 'info',
+          title: '/add-dir',
+          body: '用法：/add-dir <path>\n\n指定要追加的工作目录，必须位于项目根下。',
+        });
+        return;
+      }
+      void ctx.runBackendCommand('add-dir', { path });
+      return;
+    }
+    default:
+      ctx.openPanel({
+        kind: 'info',
+        title: `/${cmd.id}`,
+        body: `backend 命令已注册但未绑定 handler（handlerKey=${cmd.handlerKey ?? 'none'}）。`,
+      });
+  }
 }
 
 /**

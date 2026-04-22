@@ -42,6 +42,8 @@ export const WorkbenchTab: React.FC = () => {
     ccClosePanel,
     ccSetMarkdownEnabled,
     ccSetThinkingDefaultCollapsed,
+    ccClearItems,
+    ccReset,
   } = useAppContext();
   const {
     session,
@@ -304,8 +306,67 @@ export const WorkbenchTab: React.FC = () => {
     void sendToBackend(text);
   };
 
+  /**
+   * /clear /exit /add-dir 的后端分派——POST 到 /command 端点，并把本地状态
+   * 按命令语义收尾：
+   * - clear: 后端同 id 重建 SDK client → 前端只清 items
+   * - exit: 后端断开 + 移除 session → 前端走 ccReset 回到空态
+   * - add-dir: 后端把 path append 到 add_dirs 并重建 → InfoPanel 告知用户
+   *   本轮 SDK 上下文因 rebuild 已清空（6c 建立 resume 后可保留）
+   */
+  const runBackendCommand = React.useCallback(
+    async (command: string, args?: Record<string, unknown>) => {
+      // /exit 没有 session 时是 no-op；其余命令需要先拿到 session
+      let active = sessionRef.current;
+      if (!active) {
+        if (command === 'exit') return;
+        try {
+          active = await ensureSession();
+        } catch (error) {
+          pushError(`创建会话失败：${String(error)}`);
+          return;
+        }
+      }
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/claude-code/sessions/${active.id}/command`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command, args }),
+          },
+        );
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+          pushError(detail || `HTTP ${response.status}`);
+          return;
+        }
+        if (command === 'clear') {
+          ccClearItems();
+        } else if (command === 'exit') {
+          sessionRef.current = null;
+          ccReset();
+        } else if (command === 'add-dir') {
+          const path = typeof args?.path === 'string' ? args.path : '';
+          ccOpenPanel({
+            kind: 'info',
+            title: '/add-dir',
+            body: `已追加目录${path ? `：${path}` : ''}。\n\n注意：SDK 不支持运行时追加工作目录，因此 client 已被重建，本轮对话上下文已清空（行为等同 /clear）。Task 6c 建立 resume 基础设施后，/add-dir 会保留历史。`,
+          });
+        }
+      } catch (error) {
+        pushError(`命令失败：${String(error)}`);
+      }
+    },
+    [ensureSession, pushError, ccClearItems, ccReset, ccOpenPanel],
+  );
+
   const runSlashCommand = (input: string) => {
-    dispatchSlashCommand(input, { openPanel: ccOpenPanel, submitPrompt });
+    dispatchSlashCommand(input, {
+      openPanel: ccOpenPanel,
+      submitPrompt,
+      runBackendCommand,
+    });
     setPrompt('');
     setAutocompleteDismissed(false);
     setSlashActiveIdx(0);

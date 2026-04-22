@@ -7,6 +7,7 @@
 - ``POST   /api/claude-code/sessions/{id}/messages``    发送一轮消息，SSE 回流 SDK 事件
 - ``POST   /api/claude-code/sessions/{id}/permissions`` HITL 权限请求决策回传
 - ``POST   /api/claude-code/sessions/{id}/interrupt``   打断当前推理
+- ``POST   /api/claude-code/sessions/{id}/command``     会话生命周期命令（clear/exit/add-dir）
 - ``DELETE /api/claude-code/sessions/{id}``            关闭并移除会话
 """
 
@@ -146,6 +147,56 @@ async def interrupt_session(session_id: str):
     if not found:
         raise HTTPException(status_code=404, detail="session not found")
     return {"status": "interrupted", "id": session_id}
+
+
+@router.post("/api/claude-code/sessions/{session_id}/command")
+async def session_command(session_id: str, request: Request):
+    """会话生命周期命令分派端点（Task 6b）。
+
+    Body: ``{"command": "clear"|"exit"|"add-dir", "args"?: object}``
+
+    - ``clear``: 销毁旧 SDK client 同 id 重建，清空上下文
+    - ``exit``: disconnect + 从注册表移除（等价 DELETE）
+    - ``add-dir``: ``args.path`` 必填，校验路径在项目根下后追加到 SDK add_dirs 并重建
+
+    unknown command → 400；unknown session → 404。
+    """
+    payload = await _parse_json_body(request)
+    command = str(payload.get("command", "") or "").strip().lower()
+    if not command:
+        raise HTTPException(status_code=400, detail="command is required")
+    args_raw = payload.get("args")
+    args: dict[str, Any] = args_raw if isinstance(args_raw, dict) else {}
+
+    if command == "clear":
+        session = await session_manager.clear_context(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"status": "cleared", "session": session.to_dict()}
+
+    if command == "exit":
+        deleted = await session_manager.delete(session_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"status": "exited", "id": session_id}
+
+    if command == "add-dir":
+        path_raw = args.get("path")
+        if not isinstance(path_raw, str) or not path_raw.strip():
+            raise HTTPException(
+                status_code=400, detail="args.path is required for add-dir"
+            )
+        # 复用 create 路由的路径校验：存在 + 在项目根下
+        resolved = _resolve_cwd(path_raw.strip())
+        session = await session_manager.add_directory(session_id, resolved)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"status": "added", "session": session.to_dict()}
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"unknown command: {command!r} (must be one of: clear, exit, add-dir)",
+    )
 
 
 @router.post("/api/claude-code/sessions/{session_id}/messages")

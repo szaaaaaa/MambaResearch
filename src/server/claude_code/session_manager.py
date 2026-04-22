@@ -125,6 +125,8 @@ class ClaudeSession:
         最近一次活动（send_message / interrupt）时间戳，驱动 idle TTL 回收。
     client : ClaudeSDKClient
         已 ``connect`` 的 SDK 客户端。
+    add_dirs : list[str]
+        ``/add-dir`` 命令累计追加的额外工作目录，rebuild 时再次透传给 SDK。
     lock : asyncio.Lock
         会话级互斥锁，保证 query/receive_response 串行。
     permission_state : PermissionState
@@ -139,6 +141,7 @@ class ClaudeSession:
     created_at: float
     last_activity_at: float
     client: ClaudeSDKClient
+    add_dirs: list[str] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     permission_state: PermissionState = field(default_factory=PermissionState)
 
@@ -149,6 +152,7 @@ class ClaudeSession:
             "model": self.model,
             "permission_mode": self.permission_mode,
             "created_at": self.created_at,
+            "add_dirs": list(self.add_dirs),
         }
 
 
@@ -209,26 +213,15 @@ class SessionManager:
         session_id = uuid.uuid4().hex
         permission_state = PermissionState()
 
-        options_kwargs: dict[str, Any] = {
-            "cwd": str(cwd),
-            "permission_mode": permission_mode,
-        }
-        if model:
-            options_kwargs["model"] = model
-        if permission_mode in _INTERACTIVE_PERMISSION_MODES:
-            options_kwargs["can_use_tool"] = _build_permission_bridge(
-                session_id, permission_state
-            )
-            # 仅加载 user 层设置；跳过项目 .claude/settings.json 的 allow-list，
-            # 否则 Write/Edit/Bash 等被项目预批的工具会直接放行，can_use_tool
-            # 桥永远不被触发，Workbench 的 Modal 就失去存在意义。
-            options_kwargs.setdefault("setting_sources", ["user"])
-        if options_overrides:
-            options_kwargs.update(options_overrides)
-
-        options = ClaudeAgentOptions(**options_kwargs)
-        client = ClaudeSDKClient(options=options)
-        await client.connect()
+        client = await _build_client(
+            session_id=session_id,
+            cwd=cwd,
+            model=model,
+            permission_mode=permission_mode,
+            add_dirs=[],
+            permission_state=permission_state,
+            options_overrides=options_overrides,
+        )
 
         now = time.time()
         session = ClaudeSession(
@@ -239,11 +232,94 @@ class SessionManager:
             created_at=now,
             last_activity_at=now,
             client=client,
+            add_dirs=[],
             permission_state=permission_state,
         )
         async with self._lock:
             self._sessions[session.id] = session
         self._ensure_sweeper()
+        return session
+
+    async def clear_context(self, session_id: str) -> ClaudeSession | None:
+        """清空会话上下文：dispose 旧 SDK client 并重建同 id 新 client。
+
+        - 保留 ``add_dirs`` 累计目录（用户的"工作区"配置不该被 /clear 抹掉）
+        - 保留 ``permission_state.allowed_always``（"允许本会话"属于用户信任选择
+          而非上下文，/clear 只清对话历史不清权限授权，与 CLI 语义一致）
+        - 刷新 ``last_activity_at``，保留原 ``created_at``
+
+        Returns
+        -------
+        ClaudeSession or None
+            重建后的会话；若 id 不存在返回 ``None``。
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        old_client = session.client
+        _cancel_pending_permissions(session)
+        try:
+            await old_client.disconnect()
+        except Exception:
+            logger.exception("disconnect failed during clear_context for %s", session_id)
+
+        new_client = await _build_client(
+            session_id=session_id,
+            cwd=session.cwd,
+            model=session.model,
+            permission_mode=session.permission_mode,
+            add_dirs=list(session.add_dirs),
+            permission_state=session.permission_state,
+            options_overrides=None,
+        )
+        session.client = new_client
+        session.last_activity_at = time.time()
+        return session
+
+    async def add_directory(self, session_id: str, path: str) -> ClaudeSession | None:
+        """把 ``path`` 加入会话的 ``add_dirs`` 并重建 SDK client。
+
+        SDK 的 ``ClaudeAgentOptions.add_dirs`` 只在 client 初始化时生效，没有运行
+        时 mutator——所以追加目录必须重建 client。重建意味着 SDK 内部上下文丢失
+        （与 /clear 副作用相同）；6c 给 /model 建立 resume 基础设施后可回来改造
+        为带 resume 的 rebuild 以保留历史。
+
+        路径校验（存在 + 属于项目根）由路由层完成；SessionManager 只负责 append
+        + rebuild。
+
+        Returns
+        -------
+        ClaudeSession or None
+            重建后的会话；若 id 不存在返回 ``None``。
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        if path in session.add_dirs:
+            # 幂等：目录已在列表中就不重建
+            session.last_activity_at = time.time()
+            return session
+
+        old_client = session.client
+        new_add_dirs = [*session.add_dirs, path]
+        _cancel_pending_permissions(session)
+        try:
+            await old_client.disconnect()
+        except Exception:
+            logger.exception("disconnect failed during add_directory for %s", session_id)
+
+        new_client = await _build_client(
+            session_id=session_id,
+            cwd=session.cwd,
+            model=session.model,
+            permission_mode=session.permission_mode,
+            add_dirs=new_add_dirs,
+            permission_state=session.permission_state,
+            options_overrides=None,
+        )
+        session.client = new_client
+        session.add_dirs = new_add_dirs
+        session.last_activity_at = time.time()
         return session
 
     def get(self, session_id: str) -> ClaudeSession | None:
@@ -352,6 +428,47 @@ class SessionManager:
                 await session.client.disconnect()
             except Exception:
                 logger.exception("disconnect failed for session %s during shutdown", session.id)
+
+
+async def _build_client(
+    *,
+    session_id: str,
+    cwd: str | Path,
+    model: str | None,
+    permission_mode: str,
+    add_dirs: list[str],
+    permission_state: PermissionState,
+    options_overrides: dict[str, Any] | None,
+) -> ClaudeSDKClient:
+    """组装 ``ClaudeAgentOptions`` → 实例化 ``ClaudeSDKClient`` → ``connect``。
+
+    create 与 clear_context / add_directory 的 rebuild 路径共用此工厂，保证
+    options 组装规则（permission bridge 注入、setting_sources 限制、add_dirs 透传）
+    只有一处真相。调用方确保 ``permission_mode`` 合法（create 侧入口已校验）。
+    """
+    options_kwargs: dict[str, Any] = {
+        "cwd": str(cwd),
+        "permission_mode": permission_mode,
+    }
+    if model:
+        options_kwargs["model"] = model
+    if add_dirs:
+        options_kwargs["add_dirs"] = list(add_dirs)
+    if permission_mode in _INTERACTIVE_PERMISSION_MODES:
+        options_kwargs["can_use_tool"] = _build_permission_bridge(
+            session_id, permission_state
+        )
+        # 仅加载 user 层设置；跳过项目 .claude/settings.json 的 allow-list，
+        # 否则 Write/Edit/Bash 等被项目预批的工具会直接放行，can_use_tool
+        # 桥永远不被触发，Workbench 的 Modal 就失去存在意义。
+        options_kwargs.setdefault("setting_sources", ["user"])
+    if options_overrides:
+        options_kwargs.update(options_overrides)
+
+    options = ClaudeAgentOptions(**options_kwargs)
+    client = ClaudeSDKClient(options=options)
+    await client.connect()
+    return client
 
 
 def _cancel_pending_permissions(session: ClaudeSession) -> None:

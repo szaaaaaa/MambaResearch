@@ -13,7 +13,7 @@ import type { SlashCommand } from './types';
 const CLI_ONLY_HINT = '此命令仅原生 CLI 可用，请在终端运行 `claude` 后使用。';
 
 const DEFERRED_HINT =
-  '此命令正在实现中，将在 Task 6b / 6c / 6d 落地——届时会连上真实的后端会话控制。';
+  '此命令正在实现中，将在 Task 6c / 6d 落地——届时会连上真实的后端会话控制。';
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   // ── 展示 / 信息面板 ──────────────────────────────────────────────
@@ -119,22 +119,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       'Hooks 是原生 CLI 的 shell 事件钩子；Web 工作台不执行 shell 钩子，相关集成请在原生 CLI 下配置。',
   },
 
-  // ── 待实现（6b / 6c / 6d） ──────────────────────────────────────
+  // ── 后端会话生命周期（6b） ──────────────────────────────────────
   {
     id: 'clear',
-    description: '清空会话上下文（6b 实现）',
-    scope: 'deferred',
+    description: '清空会话上下文（重建 SDK client，保留会话 id）',
+    scope: 'backend',
+    handlerKey: 'clear',
   },
   {
     id: 'exit',
-    description: '结束当前会话（6b 实现）',
-    scope: 'deferred',
+    description: '结束当前会话（断开 SDK client，前端回到空态）',
+    scope: 'backend',
+    handlerKey: 'exit',
   },
   {
     id: 'add-dir',
-    description: '为会话追加允许的工作目录（6b 实现）',
-    scope: 'deferred',
+    description: '为会话追加工作目录（用法：/add-dir <path>；会导致 SDK 重建，本轮上下文清空）',
+    scope: 'backend',
+    handlerKey: 'add-dir',
   },
+
+  // ── 待实现（6c / 6d） ───────────────────────────────────────────
   {
     id: 'model',
     description: '切换会话使用的模型（6c 实现）',

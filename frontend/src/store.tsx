@@ -956,6 +956,7 @@ interface AppContextType {
   ccClosePanel: () => void;
   ccSetMarkdownEnabled: (enabled: boolean) => void;
   ccSetThinkingDefaultCollapsed: (collapsed: boolean) => void;
+  ccClearItems: () => void;
   ccReset: () => void;
 }
 
@@ -2176,6 +2177,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  /**
+   * 只清空当前对话流水（items 与 turnStartAt），保留 session / config / 权限授权。
+   * 用于 /clear：后端已重建 SDK client，前端只需把已渲染的 CLI 回放清零。
+   */
+  const ccClearItems = () => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: {
+        ...prev.claudeCode,
+        items: [],
+        turnStartAt: null,
+        pendingPermissions: [],
+      },
+    }));
+  };
+
   const ccReset = () => {
     ccAbortControllerRef.current?.abort();
     ccAbortControllerRef.current = null;
@@ -2238,6 +2255,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccClosePanel,
         ccSetMarkdownEnabled,
         ccSetThinkingDefaultCollapsed,
+        ccClearItems,
         ccReset,
       }}
     >
