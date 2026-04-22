@@ -226,16 +226,23 @@
   - `/permissions` 弹 PermissionsPanel 显示当前 `permission_mode`，可切换到 `default|acceptEdits|plan|bypassPermissions|dontAsk|auto`；非法值后端返回 400
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 6d. `/compact` + `/resume`
+### [PENDING-VERIFY] 6d. `/compact` + `/resume`
 
-- **What**: 涉及 SDK 深度特性或跨 Task 依赖。
+> **Notes（2026-04-22）**：代码已落地——`registry.ts` 把 `compact`/`resume` 从 `deferred` 翻到 `frontend`；`dispatch.ts` 新增 `openActivity` 字段与 `compact`/`resume` 两个 case；`WorkbenchTab.tsx` 把 `ccSetActiveActivity` 接进 dispatch ctx。`npx tsc --noEmit` + `npm run build`（2219 modules）+ `pytest tests/`（184 passed）全过。
+>
+> **SDK 调研结果**：`ClaudeSDKClient` 没有 `compact()` 原生方法——方法面仅有 `query/receive_messages/interrupt/set_model/...`。最终采用 **策略 A**：`/compact [instructions]` 走 `submitPrompt` 管道原样发成 `/compact ...` 用户消息，交给上游 CLI 自己解析——这和另写 summarize prompt 的 B 方案同成本，但让 CLI 原生语义优先生效。不引入后端新端点。
+>
+> **待手测**：(1) `/compact` → 下一轮 `ResultMessage.total_input_tokens` 相比压缩前显著下降；(2) `/compact 只保留最近的代码变更` 这种带 instructions 的用法被 CLI 正确理解；(3) `/resume` 命令触发后 Sessions Panel（ActivityBar）被自动打开。
+
+- **What**: 前端拦截 `/compact`、`/resume` 两个 slash 命令；不引入后端新路由。
 - **Files**:
-  - 后端改动：`session_manager.py` `compact(id, instructions?)` 实现（先调研 SDK 是否直接暴露压缩 API，无则 fallback 为 summarize prompt + client 重建并注入 summary 作为 system context）
-  - 前端改动：`slash/registry.ts` 把 `/compact` 挂 backend handler；`/resume` 调 `store.openActivity('sessions')`（Task 9 预留的 action），Task 9 未完成时弹 InfoPanel "依赖 Task 9，尚未就绪"
+  - 前端改动：`slash/registry.ts` 把 `/compact` / `/resume` 从 `scope: 'deferred'` 翻到 `scope: 'frontend'` 并挂对应 `handlerKey`
+  - 前端改动：`slash/dispatch.ts` 在 `DispatchContext` 新增 `openActivity: (id: ClaudeCodeActivityId) => void`；`runFrontendHandler` 新增 `compact`（`ctx.submitPrompt('/compact' + args)`）与 `resume`（`ctx.openActivity('sessions')`）两个 case
+  - 前端改动：`components/tabs/WorkbenchTab.tsx` 把 `ccSetActiveActivity` 注入 `dispatchSlashCommand` 的 ctx
 - **Acceptance**:
-  - `/compact` 调 SDK 压缩路径；压缩后下一条 ResultMessage 的 total_input_tokens 显著下降（手测对比前后）
-  - `/compact [instructions]` 把 instructions 传给 SDK（或作为 summarize prompt 的 additional context）
-  - `/resume` 触发 `store.openActivity('sessions')`，依赖 Task 9 的 Sessions Panel；Task 9 未完成时显示"依赖 Task 9"提示
+  - `/compact` 作为 user message 发给 CLI，压缩后下一条 ResultMessage 的 total_input_tokens 相比压缩前显著下降（手测对比前后）
+  - `/compact [instructions]` 把 instructions 拼在命令尾部一起交给 CLI
+  - `/resume` 触发 `ccSetActiveActivity('sessions')`，ActivityBar 切到 Sessions 面板
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
 ### [PENDING-VERIFY] 7. 会话状态提升 + 跨 Tab 切换存活

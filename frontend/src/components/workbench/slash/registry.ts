@@ -159,16 +159,18 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     handlerKey: 'permissions',
   },
 
-  // ── 待实现（6d） ────────────────────────────────────────────────
+  // ── 会话压缩 / 历史恢复（6d） ───────────────────────────────────
   {
     id: 'compact',
-    description: '压缩会话上下文（6d 实现）',
-    scope: 'deferred',
+    description: '压缩会话上下文（可选 instructions 指定摘要重点）',
+    scope: 'frontend',
+    handlerKey: 'compact',
   },
   {
     id: 'resume',
-    description: '恢复历史会话（依赖 Task 9 Sessions 面板）',
-    scope: 'deferred',
+    description: '聚焦 Sessions 面板以切换或查看历史会话',
+    scope: 'frontend',
+    handlerKey: 'resume',
   },
 
   // ── 仅原生 CLI 可用 ─────────────────────────────────────────────

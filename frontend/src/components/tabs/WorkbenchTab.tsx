@@ -68,6 +68,7 @@ export const WorkbenchTab: React.FC = () => {
     ccClearItems,
     ccHydrateHistory,
     ccReset,
+    ccSetActiveActivity,
   } = useAppContext();
   const {
     session,
@@ -434,6 +435,7 @@ export const WorkbenchTab: React.FC = () => {
       openPanel: ccOpenPanel,
       submitPrompt,
       runBackendCommand,
+      openActivity: ccSetActiveActivity,
     });
     setPrompt('');
     setAutocompleteDismissed(false);

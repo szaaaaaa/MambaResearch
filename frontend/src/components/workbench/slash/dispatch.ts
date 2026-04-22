@@ -1,4 +1,4 @@
-import type { ClaudeCodePanel } from '../../../types';
+import type { ClaudeCodeActivityId, ClaudeCodePanel } from '../../../types';
 import { DEFERRED_MESSAGE, SLASH_COMMANDS, buildCommandIndex } from './registry';
 import type { SlashCommand } from './types';
 
@@ -18,6 +18,11 @@ export interface DispatchContext {
     command: string,
     args?: Record<string, unknown>,
   ) => Promise<void>;
+  /**
+   * 切换 WorkbenchShell 的主边栏（/resume 用来聚焦 Sessions 面板）。
+   * 传入 null 收起面板，传入具体 activity id 打开。
+   */
+  openActivity: (activity: ClaudeCodeActivityId) => void;
 }
 
 /**
@@ -162,7 +167,7 @@ function runBackendHandler(
 function runFrontendHandler(
   cmd: SlashCommand,
   ctx: DispatchContext,
-  _args: string,
+  args: string,
 ): void {
   switch (cmd.handlerKey) {
     case 'help':
@@ -197,6 +202,14 @@ function runFrontendHandler(
       return;
     case 'review':
       ctx.submitPrompt(REVIEW_PROMPT);
+      return;
+    case 'compact': {
+      const suffix = args ? ' ' + args : '';
+      ctx.submitPrompt('/compact' + suffix);
+      return;
+    }
+    case 'resume':
+      ctx.openActivity('sessions');
       return;
     case 'info':
       ctx.openPanel({
