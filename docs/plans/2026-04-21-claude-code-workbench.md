@@ -76,7 +76,7 @@
   - **路径样内联代码染色**：启发式 `/[\\/]/ || /\.[a-z0-9]{1,6}$/` 命中的 inline code 走 `text-sky-700` 区分普通 ``x``
   - **验证截图**：2026-04-21 ziang 提供的截图确认视觉对齐 CLI（助手 `●`、`⎿` 折叠结果、Vibing 栏）
 
-### [TODO] 4a. 工具调用分发器 + Edit / Write diff 视图
+### [DONE] 4a. 工具调用分发器 + Edit / Write diff 视图
 
 - **What**: 建 `tools/` 目录的 dispatcher 骨架与 Generic 兜底，实现 Edit / Write 两类"文件改写"的 diff 视图——为 4b-4e 铺基础设施并交付首两种专属视图。
 - **Files**:
@@ -93,7 +93,7 @@
   - 未注册工具（如 Bash、Read）当前仍走 Generic（待 4b/4c 替换）
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 4b. Bash 终端块视图
+### [DONE] 4b. Bash 终端块视图
 
 - **What**: 为 `Bash` tool 的 `tool_use` 阶段实现终端块样式的 `$ <command>` 头部（Path A）。stdout/exit code 复用已有的 `⎿ N 行输出` 折叠，不跨消息类型取数——保持 tool_use 视图边界。
 - **Files**:
@@ -108,7 +108,7 @@
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
   - 手测：在 Workbench 让 Claude 跑 `find . -name "*.py" | head` → 视觉确认 `$` 终端块 + 下方 `⎿` 折叠
 
-### [TODO] 4c. Read / Grep / Glob 列表视图
+### [DONE] 4c. Read / Grep / Glob 列表视图
 
 - **What**: 为"只读查询类"工具的 `tool_use` 阶段实现结构化单行头部（Path A，沿用 4b 决策）。实际文件内容 / 命中列表由已有的 `⎿ N 行输出` 折叠承载，与 CLI 原生 `Read(path) \n ⎿ Read 149 lines (ctrl+r to expand)` 语义对齐。
 - **Files**:
@@ -122,7 +122,7 @@
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
   - 手测：让 Claude `Read app.py`、`Grep "FastAPI"`、`Glob "src/**/*.py"` → 视觉确认单行 header + `⎿` 折叠
 
-### [TODO] 4d. TodoWrite 替换式刷新
+### [DONE] 4d. TodoWrite 替换式刷新
 
 - **What**: 全会话内多次 TodoWrite 调用**渲染层去重**——每次 TodoWrite 都带独立 `tool_use_id`，TodoWrite 本身的设计就是"全量快照替换"，所以只保留整个 items 列表里**最后一次**调用的 tool_use 块，其余 tool_use_id 在渲染层 suppress。store 保持原样（不污染持久化数据）。
 - **Files**:
@@ -137,7 +137,7 @@
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
   - 手测：让 Claude"给我写 3 个子任务的 TodoWrite 并依次推进完成"→ 观察 UI 只保留最新一张，实时刷新
 
-### [TODO] 4e. WebFetch / WebSearch / Task + 收口
+### [DONE] 4e. WebFetch / WebSearch / Task + 收口
 
 - **What**: 收齐剩余 3 类工具视图（Path A：只消费 tool_use.input），Task 4 全部落地。
 - **Files**:
