@@ -19,6 +19,7 @@ import { ModelPicker } from '../workbench/panels/ModelPicker';
 import { PermissionsPanel } from '../workbench/panels/PermissionsPanel';
 import { McpStatusPanel } from '../workbench/panels/McpStatusPanel';
 import { SLASH_COMMANDS } from '../workbench/slash/registry';
+import { WorkbenchShell } from '../workbench/shell/WorkbenchShell';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -184,9 +185,38 @@ export const WorkbenchTab: React.FC = () => {
     return info;
   }, [ccSetSession, permissionMode]);
 
-  // 刷新恢复：挂载时若 state 无 session 且 localStorage 记着上次 id，
-  // 拉 DB 历史回灌到 UI。Tab 切换路径不触发——state.session 已在 AppProvider
-  // 上下文里保留。DB 侧找不到（404）就清 localStorage 回到空态。
+  /**
+   * 加载指定 session：拉 DB 历史 + ccHydrateHistory。
+   * 供挂载恢复、用户点击侧栏切换两条入口复用。成功返回 true，失败（不存在 / 网络错误）false。
+   */
+  const loadSessionById = React.useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/claude-code/sessions/${sessionId}/messages`,
+        );
+        if (response.status === 404) {
+          writeLastSessionId(null);
+          return false;
+        }
+        if (!response.ok) return false;
+        const data = (await response.json()) as {
+          session: ClaudeCodeSessionInfo;
+          messages: Array<{ sequence: number; event_type: string; payload: unknown }>;
+        };
+        sessionRef.current = data.session;
+        ccHydrateHistory(data.session, data.messages);
+        writeLastSessionId(sessionId);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [ccHydrateHistory],
+  );
+
+  // 刷新恢复：挂载时若 state 无 session 且 localStorage 记着上次 id 就回灌一次。
+  // Tab 切换路径不触发——state.session 在 AppProvider 上下文里保留。
   const hydrateAttemptedRef = React.useRef(false);
   React.useEffect(() => {
     if (hydrateAttemptedRef.current) return;
@@ -194,33 +224,8 @@ export const WorkbenchTab: React.FC = () => {
     const lastId = readLastSessionId();
     if (!lastId) return;
     hydrateAttemptedRef.current = true;
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch(
-          `${API_BASE}/api/claude-code/sessions/${lastId}/messages`,
-        );
-        if (cancelled) return;
-        if (response.status === 404) {
-          writeLastSessionId(null);
-          return;
-        }
-        if (!response.ok) return;
-        const data = (await response.json()) as {
-          session: ClaudeCodeSessionInfo;
-          messages: Array<{ sequence: number; event_type: string; payload: unknown }>;
-        };
-        if (cancelled) return;
-        sessionRef.current = data.session;
-        ccHydrateHistory(data.session, data.messages);
-      } catch {
-        /* 网络问题等——下次进入 Workbench 再试即可 */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [state.claudeCode.session, ccHydrateHistory]);
+    void loadSessionById(lastId);
+  }, [state.claudeCode.session, loadSessionById]);
 
   const sendToBackend = async (text: string) => {
     const turnStart = Date.now();
@@ -483,6 +488,67 @@ export const WorkbenchTab: React.FC = () => {
     ccReset();
   }, [isRunning, pushError, ccReset]);
 
+  /**
+   * 侧栏点击切换会话：未发送输入用 confirm 挡一下，in-flight 请求先 abort，
+   * 然后走 loadSessionById 拉历史 + ccHydrateHistory。
+   */
+  const handleSwitchSession = React.useCallback(
+    async (sessionId: string) => {
+      if (sessionRef.current?.id === sessionId) return;
+      if (prompt.trim()) {
+        if (!window.confirm('当前输入框有未发送的内容，切换会话将丢弃。确定？')) return;
+      }
+      const controller = ccGetAbortController();
+      controller?.abort();
+      setPrompt('');
+      setAutocompleteDismissed(false);
+      const ok = await loadSessionById(sessionId);
+      if (!ok) pushError(`切换会话失败：${sessionId.slice(0, 8)} 不存在或已被删除`);
+    },
+    [prompt, ccGetAbortController, loadSessionById, pushError],
+  );
+
+  /**
+   * 侧栏 + 按钮新建会话：POST /sessions 用当前默认 permissionMode，
+   * 成功后把新 session 设为 active + 清 items + 写 localStorage。
+   * 不调 ensureSession，因为 ensureSession 在已有 sessionRef 时会复用旧的。
+   */
+  const handleCreateSession = React.useCallback(async () => {
+    ccGetAbortController()?.abort();
+    try {
+      const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permission_mode: permissionMode }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        pushError(detail || `HTTP ${response.status}`);
+        return;
+      }
+      const info = (await response.json()) as ClaudeCodeSessionInfo;
+      sessionRef.current = info;
+      ccSetSession(info);
+      ccClearItems();
+      writeLastSessionId(info.id);
+      setPrompt('');
+      setAutocompleteDismissed(false);
+    } catch (error) {
+      pushError(`创建会话失败：${String(error)}`);
+    }
+  }, [permissionMode, ccGetAbortController, ccSetSession, ccClearItems, pushError]);
+
+  /**
+   * 侧栏删除当前激活会话时回调：清空前端 session + items + localStorage。
+   * 后端 DELETE 已由 SessionsPanel 发起，这里只负责 UI 清理。
+   */
+  const handleActiveSessionDeleted = React.useCallback(() => {
+    ccGetAbortController()?.abort();
+    sessionRef.current = null;
+    writeLastSessionId(null);
+    ccReset();
+  }, [ccGetAbortController, ccReset]);
+
   // 全局 Esc 键绑定：运行中触发中断本轮；非运行态 no-op，不干扰 slash autocomplete
   // 的 Esc（autocomplete 只在 !isRunning 时可见，时机不冲突）。
   React.useEffect(() => {
@@ -558,7 +624,12 @@ export const WorkbenchTab: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[var(--app-bg)]">
+    <WorkbenchShell
+      onSwitchSession={handleSwitchSession}
+      onCreateSession={handleCreateSession}
+      onActiveSessionDeleted={handleActiveSessionDeleted}
+    >
+    <div className="flex h-full flex-col">
       {activePermission ? (
         <PermissionModal request={activePermission} onResolved={ccResolvePermissionRequest} />
       ) : null}
@@ -707,5 +778,6 @@ export const WorkbenchTab: React.FC = () => {
         </div>
       </footer>
     </div>
+    </WorkbenchShell>
   );
 };

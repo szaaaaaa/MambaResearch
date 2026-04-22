@@ -150,10 +150,14 @@ async def patch_session(session_id: str, request: Request):
     payload = await _parse_json_body(request)
     has_model = "model" in payload
     has_mode = "permission_mode" in payload
-    if not has_model and not has_mode:
+    has_title = "title" in payload
+    if not has_model and not has_mode and not has_title:
         raise HTTPException(
             status_code=400,
-            detail="request body must include at least one of: model, permission_mode",
+            detail=(
+                "request body must include at least one of: "
+                "model, permission_mode, title"
+            ),
         )
 
     # 预校验所有字段再下发，避免模型切成功后 mode 再 400 导致状态不一致
@@ -194,6 +198,42 @@ async def patch_session(session_id: str, request: Request):
                     f"(must be one of {sorted(VALID_PERMISSION_MODES)})"
                 ),
             )
+
+    # title 更新走 DB 直写——不需要 SDK client 活着，冷 session 也能改名。
+    # 对应地前置处理；后续 model/permission_mode 仍需热 session。
+    title: str | None = None
+    has_valid_title = False
+    if has_title:
+        title_raw = payload.get("title")
+        if title_raw is None:
+            title = None
+            has_valid_title = True
+        elif isinstance(title_raw, str):
+            stripped = title_raw.strip()
+            title = stripped or None
+            has_valid_title = True
+        else:
+            raise HTTPException(
+                status_code=400, detail="title must be a string or null"
+            )
+
+    if has_valid_title:
+        store = session_manager.store
+        if store is None or not store.update_title(session_id, title):
+            # store 缺席或 row 不存在 → 404（冷 session 也必须在 DB 里）
+            raise HTTPException(status_code=404, detail="session not found")
+
+    # 没有 model / mode 更新就到此为止——避免因冷 session 白白触发 get_or_restore
+    if not has_model and not has_mode:
+        store = session_manager.store
+        if store is not None:
+            stored = store.get_session(session_id)
+            if stored is not None:
+                return {"status": "updated", "session": stored.to_dict()}
+        session = session_manager.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"status": "updated", "session": session.to_dict()}
 
     session = session_manager.get(session_id)
     if session is None:

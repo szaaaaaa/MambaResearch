@@ -278,7 +278,9 @@
   - round-trip 测试：序列化一条 AssistantMessage（含 ToolUseBlock + ThinkingBlock）到 DB 再读回，MessageRenderer 渲染结果与原 SSE 推送一致
   - `pytest tests/test_claude_code_storage.py` 覆盖 sessions CRUD、messages append、累计更新、懒重建路径
 
-### [TODO] 9. Workbench Shell 框架 + 多会话侧栏 + resume/rename/delete
+### [PENDING-VERIFY] 9. Workbench Shell 框架 + 多会话侧栏 + resume/rename/delete
+
+> **Notes（2026-04-22）**：代码已落地，`tsc --noEmit` + `npm run build` + `pytest tests/`（184 通过）全过。新增 `workbench/shell/{WorkbenchShell,ActivityBar,SessionListItem}.tsx` + `shell/activities/SessionsPanel.tsx`；`WorkbenchTab.tsx` 外层包 `<WorkbenchShell>` 并补三个回调（switch/create/delete-active）；store 新增 `activeActivity` / `sessionList` state + `ccSetActiveActivity` / `ccSetSessionList` / `ccHydrateHistory` actions。后端 `GET /sessions`（合并 DB + memory + running 标记）已在 Task 8 落地，本 Task 补 `PATCH /sessions/{id}` 支持 `title` 字段（冷 session 也能改）。**浏览器手测项**：(1) ActivityBar + 面板显/隐切换；(2) 新建 → 发消息 → 刷新 → 恢复历史；(3) 双击 title 重命名 PATCH；(4) 右键菜单删除 + confirm；(5) 删除 active session 后前端回到空态；(6) 小屏 <1024px 首次挂载面板自动收起。
 
 - **What**: 把 Workbench tab 的内部布局改造为 **"Activity Bar（窄图标列） + Primary Panel（可折叠主边栏） + Main Content"** 的 VS Code 派 shell，把当前全宽对话区降级为 Main Content 区域；Task 9 本体只实现 Activity Bar 的第一个项目（Sessions）+ 对应 Primary Panel（`SessionSidebar`），**但架构必须为未来 Files / Artifacts 等 activity 项无痛接入**。同时实现 multi-session 的列表、切换、重命名、删除、新建；`/resume` slash 命令（Task 6 的）把 Sessions 面板聚焦/展开。
 - **Files**:

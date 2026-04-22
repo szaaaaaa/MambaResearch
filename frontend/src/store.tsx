@@ -8,10 +8,12 @@ import {
   ClarificationHistoryRound,
   ClarificationQuestion,
   ClarificationState,
+  ClaudeCodeActivityId,
   ClaudeCodePanel,
   ClaudeCodePermissionMode,
   ClaudeCodePermissionRequest,
   ClaudeCodeSessionInfo,
+  ClaudeCodeSessionRow,
   ClaudeCodeStreamItem,
   Credentials,
   CredentialStatusMap,
@@ -962,6 +964,8 @@ interface AppContextType {
     items: Array<{ sequence: number; event_type: string; payload: unknown }>,
   ) => void;
   ccReset: () => void;
+  ccSetActiveActivity: (activity: ClaudeCodeActivityId) => void;
+  ccSetSessionList: (rows: ClaudeCodeSessionRow[]) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -1000,6 +1004,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       activePanel: null,
       markdownEnabled: true,
       thinkingDefaultCollapsed: true,
+      activeActivity: null,
+      sessionList: [],
     },
   });
   // Workbench 的 AbortController 不进 React state——跟随 AppProvider 的 ref，
@@ -2260,7 +2266,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activePanel: null,
         markdownEnabled: prev.claudeCode.markdownEnabled,
         thinkingDefaultCollapsed: prev.claudeCode.thinkingDefaultCollapsed,
+        activeActivity: prev.claudeCode.activeActivity,
+        sessionList: prev.claudeCode.sessionList,
       },
+    }));
+  };
+
+  const ccSetActiveActivity = (activity: ClaudeCodeActivityId) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, activeActivity: activity },
+    }));
+  };
+
+  const ccSetSessionList = (rows: ClaudeCodeSessionRow[]) => {
+    setState((prev) => ({
+      ...prev,
+      claudeCode: { ...prev.claudeCode, sessionList: rows },
     }));
   };
 
@@ -2309,6 +2331,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccClearItems,
         ccHydrateHistory,
         ccReset,
+        ccSetActiveActivity,
+        ccSetSessionList,
       }}
     >
       {children}
