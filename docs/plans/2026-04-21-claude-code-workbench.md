@@ -197,7 +197,7 @@
   - 后端动作类（`/clear`、`/exit`、`/model`、`/mcp`、`/permissions`、`/add-dir`、`/compact`、`/resume`）在 registry 中标 scope='deferred'，点击后弹 InfoPanel "将在 6b/6c/6d 落地"——不得把它们当普通 prompt 发
   - `tsc --noEmit && npm run build` 通过；`pytest tests/` 通过（后端未动）
 
-### [TODO] 6b. 后端 command 端点 + 会话生命周期命令（clear / exit / add-dir）
+### [DONE] 6b. 后端 command 端点 + 会话生命周期命令（clear / exit / add-dir）
 
 - **What**: 建通用后端 command 端点，实现 SDK client 生命周期类命令——不涉及模型切换与 SDK 内部压缩，只做 client 重建与 session 配置。
 - **Files**:
@@ -212,7 +212,7 @@
   - `POST /command` 未知 command 返回 400
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 6c. `/model` + `/mcp` + `/permissions`
+### [DONE] 6c. `/model` + `/mcp` + `/permissions`
 
 - **What**: 涉及 SDK client 重建（换模型）或配置状态读写的中等复杂度命令。
 - **Files**:
@@ -300,7 +300,9 @@
   - **`/resume` 钩子预留**：store 暴露 `openActivity('sessions')` action，Task 6 的 `/resume` handler 只需调它即可聚焦面板（Task 9 内不实现 Task 6 本身，仅留接口）
   - `pytest tests/` 通过；`tsc --noEmit && npm run build` 通过
 
-### [TODO] 10. 中断（Esc）+ 会话控制
+### [PENDING-VERIFY] 10. 中断（Esc）+ 会话控制
+
+> **Notes（2026-04-22）**：代码已落地，`tsc --noEmit` + `npm run build` + `pytest tests/` 全过。后端 `interrupt()` / `POST /interrupt` / `DELETE /sessions/{id}` 早在 Task 2/7 已就绪；本任务仅前端补全 Esc keybind + 按钮语义分离。浏览器手测项：(1) 运行中按 Esc 是否实时中止；(2) "结束会话"按钮在有 session + 非运行态时显示 + confirm 弹窗；(3) 中断后部分 assistant 内容保留；(4) Esc 在 isRunning=false 时无副作用。
 
 - **What**: 用 SDK 的 `interrupt()` 让当前生成停止但 session 保留；Esc 键绑定；按钮语义区分"中断本轮"与"结束会话"。
 - **Files**:

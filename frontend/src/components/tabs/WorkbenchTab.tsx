@@ -1,5 +1,5 @@
 import React from 'react';
-import { Send, Square, Terminal } from 'lucide-react';
+import { LogOut, Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
 import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
 import { parseSseFrames } from '../../utils/sse';
@@ -386,7 +386,7 @@ export const WorkbenchTab: React.FC = () => {
     await sendToBackend(trimmed);
   };
 
-  const handleStop = async () => {
+  const handleStop = React.useCallback(async () => {
     const active = sessionRef.current;
     const controller = ccGetAbortController();
     if (!active) {
@@ -402,7 +402,38 @@ export const WorkbenchTab: React.FC = () => {
     } finally {
       controller?.abort();
     }
-  };
+  }, [ccGetAbortController, pushError]);
+
+  /**
+   * 结束当前会话：DELETE 后端 session → ccReset 前端状态（清 items/session/panel）。
+   * 破坏性，点击前 confirm；运行中不提供此入口（要先中断本轮）。
+   */
+  const handleEndSession = React.useCallback(async () => {
+    const active = sessionRef.current;
+    if (!active || isRunning) return;
+    if (!window.confirm('结束当前会话？此操作将断开 SDK client 并清空对话记录。')) return;
+    try {
+      await fetch(`${API_BASE}/api/claude-code/sessions/${active.id}`, { method: 'DELETE' });
+    } catch (error) {
+      pushError(`结束会话失败：${String(error)}`);
+      return;
+    }
+    sessionRef.current = null;
+    ccReset();
+  }, [isRunning, pushError, ccReset]);
+
+  // 全局 Esc 键绑定：运行中触发中断本轮；非运行态 no-op，不干扰 slash autocomplete
+  // 的 Esc（autocomplete 只在 !isRunning 时可见，时机不冲突）。
+  React.useEffect(() => {
+    if (!isRunning) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      void handleStop();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isRunning, handleStop]);
 
   const activePermission = pendingPermissions[0] ?? null;
 
@@ -486,6 +517,18 @@ export const WorkbenchTab: React.FC = () => {
           </p>
         </div>
         <RawEventsToggle value={rawEventsVisible} onChange={ccSetRawEventsVisible} />
+        {session && !isRunning ? (
+          <button
+            type="button"
+            onClick={() => void handleEndSession()}
+            aria-label="结束会话"
+            title="结束会话（销毁 SDK client + 清空对话）"
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-[12px] text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            结束会话
+          </button>
+        ) : null}
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
@@ -580,11 +623,12 @@ export const WorkbenchTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void handleStop()}
-                aria-label="中止当前运行"
+                aria-label="中断本轮（Esc）"
+                title="中断本轮推理（Esc）"
                 className="flex h-11 items-center gap-2 rounded-2xl bg-rose-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-rose-500"
               >
                 <Square className="h-4 w-4" />
-                中止
+                中断本轮
               </button>
             ) : (
               <button
