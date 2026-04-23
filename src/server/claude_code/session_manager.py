@@ -29,6 +29,11 @@ from claude_agent_sdk import (
 
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.mcp_bridge import default_mcp_config
+from src.server.claude_code.providers import (
+    ProviderConfig,
+    build_env_for_provider,
+    get_provider_registry,
+)
 from src.server.claude_code.results_hook import finalize_workbench_session
 from src.server.claude_code.storage import ClaudeCodeStore
 from src.server.settings import CONFIG_PATH, ROOT
@@ -152,6 +157,9 @@ class ClaudeSession:
     add_dirs: list[str] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     permission_state: PermissionState = field(default_factory=PermissionState)
+    # 多 provider 支持（Task 1b）——None 表示"未选择 provider，走 Anthropic 默认零变更"。
+    # 字符串为 registry 里的 provider 名（如 "anthropic" / "deepseek"），仅此外不回传 api_key。
+    provider: str | None = None
     # Task 12 — Workbench 实验联动：当会话由 ExperimentPlan "在工作台运行"按钮创建时，
     # 这三个字段被填充；会话收尾（delete / idle evict）时调 results_hook 把
     # workspace/results.json 封装为 ExperimentResults 挂回原 run 的 artifact 列表。
@@ -168,6 +176,7 @@ class ClaudeSession:
             "permission_mode": self.permission_mode,
             "created_at": self.created_at,
             "add_dirs": list(self.add_dirs),
+            "provider": self.provider,
             "bound_artifact_id": self.bound_artifact_id,
             "original_run_id": self.original_run_id,
         }
@@ -214,6 +223,7 @@ class SessionManager:
         model: str | None = None,
         permission_mode: str = "default",
         options_overrides: dict[str, Any] | None = None,
+        provider: str | None = None,
         bound_artifact_id: str | None = None,
         original_run_id: str | None = None,
         plan_goal: str | None = None,
@@ -234,6 +244,10 @@ class SessionManager:
             非法值会 raise ValueError。仅 ``"default"`` 模式注入 can_use_tool 桥。
         options_overrides : dict or None
             透传给 ``ClaudeAgentOptions`` 的额外字段（未来支持 system_prompt、mcp_servers 等)。
+        provider : str or None
+            registry 里的 provider 名；``None`` 表示不走 registry，沿用 Anthropic 默认
+            env（零变更路径）。非 ``None`` 时查 ``get_provider_registry()`` 决议 env 注入；
+            未知名 raise ValueError。``api_key_env`` 对应的 env 未设置也 raise。
         bound_artifact_id / original_run_id / plan_goal : str or None
             Task 12 Workbench 实验联动元数据——见 ``ClaudeSession`` 字段注释。
             ``cwd`` 为 ``None`` 时 ``bound_artifact_id`` 必须给，否则 raise ValueError。
@@ -243,6 +257,8 @@ class SessionManager:
                 f"invalid permission_mode: {permission_mode!r} "
                 f"(must be one of {sorted(VALID_PERMISSION_MODES)})"
             )
+
+        provider_config = _resolve_provider_or_raise(provider)
 
         session_id = uuid.uuid4().hex
         permission_state = PermissionState()
@@ -269,6 +285,7 @@ class SessionManager:
             permission_state=permission_state,
             options_overrides=options_overrides,
             sdk_resume=False,
+            provider_config=provider_config,
         )
 
         now = time.time()
@@ -282,6 +299,7 @@ class SessionManager:
             client=client,
             add_dirs=[],
             permission_state=permission_state,
+            provider=provider,
             bound_artifact_id=bound_artifact_id,
             original_run_id=original_run_id,
             plan_goal=plan_goal,
@@ -297,6 +315,7 @@ class SessionManager:
                 model=model,
                 permission_mode=permission_mode,
                 add_dirs=[],
+                provider=provider,
             )
         self._ensure_sweeper()
         return session
@@ -335,6 +354,7 @@ class SessionManager:
             permission_state=session.permission_state,
             options_overrides=None,
             sdk_resume=False,
+            provider_config=_resolve_provider_or_raise(session.provider),
         )
         session.client = new_client
         session.last_activity_at = time.time()
@@ -382,6 +402,7 @@ class SessionManager:
             permission_state=session.permission_state,
             options_overrides=None,
             sdk_resume=True,
+            provider_config=_resolve_provider_or_raise(session.provider),
         )
         session.client = new_client
         session.add_dirs = new_add_dirs
@@ -555,6 +576,7 @@ class SessionManager:
             permission_state=permission_state,
             options_overrides=None,
             sdk_resume=True,
+            provider_config=_resolve_provider_or_raise(stored.provider),
         )
         now = time.time()
         session = ClaudeSession(
@@ -567,6 +589,7 @@ class SessionManager:
             client=client,
             add_dirs=list(stored.add_dirs),
             permission_state=permission_state,
+            provider=stored.provider,
         )
         async with self._lock:
             # 在 await connect 期间若并发请求已恢复过，让那次的 session 胜出，把
@@ -703,6 +726,7 @@ async def _build_client(
     permission_state: PermissionState,
     options_overrides: dict[str, Any] | None,
     sdk_resume: bool,
+    provider_config: ProviderConfig | None = None,
 ) -> ClaudeSDKClient:
     """组装 ``ClaudeAgentOptions`` → 实例化 ``ClaudeSDKClient`` → ``connect``。
 
@@ -743,6 +767,10 @@ async def _build_client(
         session_id, permission_state
     )
     options_kwargs.setdefault("setting_sources", ["user"])
+    # 多 provider 支持（Task 1b）——传入 provider_config 时按其 base_url + api_key_env
+    # 解析值写入 SDK 子进程 env。未传则 options_kwargs 不带 env，走 Anthropic 默认。
+    if provider_config is not None:
+        options_kwargs["env"] = build_env_for_provider(provider_config)
     # 默认挂载 ResearchAgent MCP 桥；overrides 里的 mcp_servers 与之合并，
     # 同名键由 overrides 胜出，便于测试关闭或替换桥。
     bridge_config = default_mcp_config(_REPO_ROOT)
@@ -764,6 +792,23 @@ async def _build_client(
     client = ClaudeSDKClient(options=options)
     await client.connect()
     return client
+
+
+def _resolve_provider_or_raise(provider: str | None) -> ProviderConfig | None:
+    """按名查 registry。``None`` → ``None``（零变更路径）；未知名 raise ValueError。
+
+    集中化解析逻辑——create / clear_context / add_directory / get_or_restore 都
+    经同一入口，防止 rebuild 路径漏传 provider 导致 env override 静默丢失。
+    """
+    if provider is None:
+        return None
+    registry = get_provider_registry()
+    if provider not in registry:
+        raise ValueError(
+            f"unknown provider {provider!r} "
+            f"(must be one of {sorted(registry.keys())})"
+        )
+    return registry[provider]
 
 
 def _cancel_pending_permissions(session: ClaudeSession) -> None:

@@ -12,13 +12,19 @@ provider（Anthropic 原生 / claude-code-router 反代 / OpenRouter 等）。�
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
+
+import yaml
 
 __all__ = [
     "ProviderConfig",
     "ProviderRegistryError",
+    "build_env_for_provider",
+    "get_provider_registry",
     "load_provider_registry",
+    "reset_provider_registry_cache",
 ]
 
 
@@ -113,3 +119,72 @@ def load_provider_registry(cfg: dict[str, Any]) -> dict[str, ProviderConfig]:
             kwargs[field] = value
         registry[name] = ProviderConfig(name=name, **kwargs)
     return registry
+
+
+# ---------------------------------------------------------------------------
+# Runtime helpers — cached registry access & env resolution
+# ---------------------------------------------------------------------------
+
+
+_cached_registry: dict[str, ProviderConfig] | None = None
+
+
+def get_provider_registry() -> dict[str, ProviderConfig]:
+    """进程内单例 registry——按需加载 ``configs/agent.yaml``。
+
+    首次调用读文件 + 解析；之后返回缓存。配置格式错误在首次调用抛
+    ``ProviderRegistryError``。需要刷新（测试替换配置）调
+    ``reset_provider_registry_cache``。
+    """
+    global _cached_registry
+    if _cached_registry is not None:
+        return _cached_registry
+    from src.server.settings import CONFIG_PATH
+
+    if not CONFIG_PATH.exists():
+        _cached_registry = {}
+        return _cached_registry
+    with CONFIG_PATH.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    _cached_registry = load_provider_registry(cfg)
+    return _cached_registry
+
+
+def reset_provider_registry_cache() -> None:
+    """清掉单例缓存——测试场景替换配置后调用。"""
+    global _cached_registry
+    _cached_registry = None
+
+
+def build_env_for_provider(
+    provider: ProviderConfig, os_env: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """把 ``ProviderConfig`` 翻译成 SDK 子进程 env override。
+
+    查询 ``os_env[provider.api_key_env]`` 作为实际 key 值，组装：
+    ``{"ANTHROPIC_API_KEY": <key>, "ANTHROPIC_BASE_URL": provider.base_url}``。
+
+    Parameters
+    ----------
+    provider : ProviderConfig
+        已解析的 provider 条目。
+    os_env : Mapping[str, str] or None
+        环境变量源；默认 ``os.environ``。测试可注入受控字典。
+
+    Raises
+    ------
+    ProviderRegistryError
+        ``api_key_env`` 指向的环境变量未设置或为空——缺 key 不是可恢复状态，
+        不提供默认，按 CLAUDE.md"不加 workaround 掩盖根因"直接抛。
+    """
+    env_src = os_env if os_env is not None else os.environ
+    api_key = env_src.get(provider.api_key_env, "")
+    if not api_key:
+        raise ProviderRegistryError(
+            f"provider {provider.name!r}: env {provider.api_key_env!r} "
+            f"is unset or empty"
+        )
+    return {
+        "ANTHROPIC_API_KEY": api_key,
+        "ANTHROPIC_BASE_URL": provider.base_url,
+    }

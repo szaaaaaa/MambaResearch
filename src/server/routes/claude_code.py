@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from src.server.claude_code import serialize_message
+from src.server.claude_code.providers import get_provider_registry
 from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
 from src.server.settings import ROOT
 
@@ -137,11 +138,30 @@ async def create_session(request: Request):
             ),
         )
 
+    provider_raw = payload.get("provider")
+    provider: str | None = None
+    if provider_raw is not None:
+        if not isinstance(provider_raw, str) or not provider_raw.strip():
+            raise HTTPException(
+                status_code=400, detail="provider must be a non-empty string"
+            )
+        provider = provider_raw.strip()
+        registry = get_provider_registry()
+        if provider not in registry:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"unknown provider: {provider!r} "
+                    f"(must be one of {sorted(registry.keys())})"
+                ),
+            )
+
     try:
         session = await session_manager.create(
             cwd=cwd,
             model=model,
             permission_mode=permission_mode,
+            provider=provider,
             bound_artifact_id=bound_artifact_id,
             original_run_id=original_run_id,
             plan_goal=plan_goal,

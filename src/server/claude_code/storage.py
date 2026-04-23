@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     model TEXT,
     permission_mode TEXT NOT NULL,
     add_dirs_json TEXT NOT NULL DEFAULT '[]',
+    provider TEXT,
     created_at REAL NOT NULL,
     last_message_at REAL NOT NULL,
     message_count INTEGER NOT NULL DEFAULT 0,
@@ -63,6 +64,7 @@ class StoredSession:
     model: str | None
     permission_mode: str
     add_dirs: list[str] = field(default_factory=list)
+    provider: str | None = None
     created_at: float = 0.0
     last_message_at: float = 0.0
     message_count: int = 0
@@ -78,6 +80,7 @@ class StoredSession:
             "model": self.model,
             "permission_mode": self.permission_mode,
             "add_dirs": list(self.add_dirs),
+            "provider": self.provider,
             "created_at": self.created_at,
             "last_message_at": self.last_message_at,
             "message_count": self.message_count,
@@ -127,6 +130,13 @@ class ClaudeCodeStore:
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            # 已存在表的旧 DB 升级——provider 列是 Task 1b 新增的。ALTER TABLE 失败只可能
+            # 是列已存在（"duplicate column"），其它 OperationalError 不吞。
+            try:
+                self._conn.execute("ALTER TABLE sessions ADD COLUMN provider TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
     def close(self) -> None:
         with self._lock:
@@ -145,6 +155,7 @@ class ClaudeCodeStore:
         permission_mode: str,
         add_dirs: list[str] | None = None,
         title: str | None = None,
+        provider: str | None = None,
     ) -> None:
         now = time.time()
         with self._lock:
@@ -152,8 +163,8 @@ class ClaudeCodeStore:
                 """
                 INSERT INTO sessions (
                     id, title, cwd, model, permission_mode, add_dirs_json,
-                    created_at, last_message_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    provider, created_at, last_message_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -162,6 +173,7 @@ class ClaudeCodeStore:
                     model,
                     permission_mode,
                     json.dumps(list(add_dirs or []), ensure_ascii=False),
+                    provider,
                     now,
                     now,
                 ),
@@ -348,6 +360,7 @@ def _row_to_session(row: sqlite3.Row) -> StoredSession:
         model=row["model"],
         permission_mode=row["permission_mode"],
         add_dirs=list(add_dirs),
+        provider=row["provider"],
         created_at=float(row["created_at"]),
         last_message_at=float(row["last_message_at"]),
         message_count=int(row["message_count"]),
