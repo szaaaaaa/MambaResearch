@@ -3,6 +3,7 @@ import { Plus, RefreshCw } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../../../store';
 import type { ClaudeCodeSessionRow } from '../../../../types';
 import { SessionListItem } from '../SessionListItem';
+import { NewSessionModal } from '../NewSessionModal';
 
 interface Props {
   /**
@@ -10,8 +11,11 @@ interface Props {
    * Panel 自身不持有 hydration 逻辑——避免和 WorkbenchTab 的挂载恢复路径重复。
    */
   onSwitchSession: (sessionId: string) => Promise<void> | void;
-  /** 创建新会话；父组件用默认 permissionMode POST 并立即激活。 */
-  onCreateSession: () => Promise<void> | void;
+  /**
+   * 创建新会话；provider 为 ``null`` 表示走后端 Anthropic 默认零变更路径，
+   * 非 null 时后端查 registry 注入 env。
+   */
+  onCreateSession: (provider: string | null) => Promise<void> | void;
   /** 结束当前 session（供 active session 被删后清理 UI）。 */
   onActiveSessionDeleted: () => void;
 }
@@ -33,6 +37,7 @@ export const SessionsPanel: React.FC<Props> = ({
   const [pendingDelete, setPendingDelete] = React.useState<ClaudeCodeSessionRow | null>(
     null,
   );
+  const [showNewModal, setShowNewModal] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
@@ -120,7 +125,7 @@ export const SessionsPanel: React.FC<Props> = ({
           </button>
           <button
             type="button"
-            onClick={() => void onCreateSession()}
+            onClick={() => setShowNewModal(true)}
             aria-label="新建会话"
             title="新建会话"
             className="flex h-6 w-6 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
@@ -161,6 +166,18 @@ export const SessionsPanel: React.FC<Props> = ({
           </div>
         )}
       </div>
+
+      {showNewModal ? (
+        <NewSessionModal
+          onCancel={() => setShowNewModal(false)}
+          onConfirm={async (provider) => {
+            setShowNewModal(false);
+            await onCreateSession(provider);
+            // 创建后刷新列表，让新 session 立刻出现
+            void refresh();
+          }}
+        />
+      ) : null}
 
       {pendingDelete ? (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 px-4">

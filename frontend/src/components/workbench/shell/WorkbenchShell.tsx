@@ -8,8 +8,8 @@ interface Props {
   children: React.ReactNode;
   /** Sessions Panel 切换会话时调用：父组件拉历史 + ccHydrateHistory。 */
   onSwitchSession: (sessionId: string) => Promise<void> | void;
-  /** + 按钮触发：父组件 POST /sessions 并激活。 */
-  onCreateSession: () => Promise<void> | void;
+  /** + 按钮触发：父组件 POST /sessions 并激活（provider 由 Modal 传入）。 */
+  onCreateSession: (provider: string | null) => Promise<void> | void;
   /** 活跃会话被删除时通知父组件清理 UI state。 */
   onActiveSessionDeleted: () => void;
 }

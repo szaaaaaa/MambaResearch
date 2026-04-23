@@ -23,7 +23,7 @@
 
 
 
-### [WIP] 1c. Providers 列表端点
+### [DONE] 1c. Providers 列表端点
 - **What**: 新增 `GET /api/claude-code/providers` 端点，返回 registry 中注册的 provider 列表，去除 secret 字段（不含 api_key 明文）。
 - **Acceptance**:
   - `GET /api/claude-code/providers` 返回注册的 provider 列表（去 secret 字段）
@@ -41,7 +41,7 @@
   - `configs/agent.yaml` 包含 `claude_code.providers` 段，结构为 name → {base_url, api_key_env, default_model}
   - 后端能加载 registry 并在内存中按 name 索引
   - registry 加载失败（字段缺失/类型错误）应在启动时显式报错，不静默忽略
-### [TODO] 2. 前端 provider UI（L2-b）
+### [WIP] 2. 前端 provider UI（L2-b）
 
 - **What**: 新建会话 Modal 加 provider 下拉（默认 `anthropic`）；会话列表 / 设置面板展示当前 provider；现有 ModelPicker 按 provider 过滤可选 model。
 - **Files**:

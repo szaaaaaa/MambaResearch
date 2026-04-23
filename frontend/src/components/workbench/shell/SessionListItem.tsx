@@ -131,7 +131,21 @@ export const SessionListItem: React.FC<Props> = ({
             isActive ? 'text-slate-300' : 'text-slate-500'
           }`}
         >
-          <span>{formatRelative(row.last_message_at)}</span>
+          <span className="flex items-center gap-1.5">
+            {formatRelative(row.last_message_at)}
+            {row.provider ? (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-medium ${
+                  isActive
+                    ? 'bg-slate-700 text-slate-100'
+                    : 'bg-slate-100 text-slate-700'
+                }`}
+                title={`provider: ${row.provider}`}
+              >
+                {row.provider}
+              </span>
+            ) : null}
+          </span>
           <span className="font-mono">{cost}</span>
         </div>
       </button>

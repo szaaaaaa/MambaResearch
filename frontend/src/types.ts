@@ -382,6 +382,18 @@ export interface ClaudeCodeSessionInfo {
   permission_mode?: ClaudeCodePermissionMode;
   created_at: number;
   title?: string | null;
+  /**
+   * 会话创建时选定的 LLM provider 名（registry 里的键）。``null`` 表示未选，
+   * 走 Anthropic 默认。后端从不回传 api_key，只回传 provider 名做 UI 展示。
+   */
+  provider?: string | null;
+}
+
+/** GET /api/claude-code/providers 的单条条目（无 secret 字段）。 */
+export interface ClaudeCodeProviderInfo {
+  name: string;
+  base_url: string;
+  default_model: string;
 }
 
 /**

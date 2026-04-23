@@ -567,13 +567,16 @@ export const WorkbenchTab: React.FC = () => {
    * 成功后把新 session 设为 active + 清 items + 写 localStorage。
    * 不调 ensureSession，因为 ensureSession 在已有 sessionRef 时会复用旧的。
    */
-  const handleCreateSession = React.useCallback(async () => {
+  const handleCreateSession = React.useCallback(
+    async (provider: string | null) => {
     ccGetAbortController()?.abort();
     try {
+      const body: Record<string, unknown> = { permission_mode: permissionMode };
+      if (provider) body.provider = provider;
       const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permission_mode: permissionMode }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
@@ -590,7 +593,9 @@ export const WorkbenchTab: React.FC = () => {
     } catch (error) {
       pushError(`创建会话失败：${String(error)}`);
     }
-  }, [permissionMode, ccGetAbortController, ccSetSession, ccClearItems, pushError]);
+    },
+    [permissionMode, ccGetAbortController, ccSetSession, ccClearItems, pushError],
+  );
 
   /**
    * 侧栏删除当前激活会话时回调：清空前端 session + items + localStorage。
