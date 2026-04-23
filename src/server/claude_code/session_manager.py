@@ -27,7 +27,11 @@ from claude_agent_sdk import (
     PermissionResultDeny,
 )
 
+from src.mcp_bridge import default_mcp_config
 from src.server.claude_code.storage import ClaudeCodeStore
+
+# 仓库根——用于给 MCP bridge 子进程传 --root / cwd
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 logger = logging.getLogger(__name__)
 
@@ -698,8 +702,22 @@ async def _build_client(
         session_id, permission_state
     )
     options_kwargs.setdefault("setting_sources", ["user"])
+    # 默认挂载 ResearchAgent MCP 桥；overrides 里的 mcp_servers 与之合并，
+    # 同名键由 overrides 胜出，便于测试关闭或替换桥。
+    bridge_config = default_mcp_config(_REPO_ROOT)
+    if bridge_config:
+        options_kwargs["mcp_servers"] = dict(bridge_config)
     if options_overrides:
-        options_kwargs.update(options_overrides)
+        override_mcp = options_overrides.get("mcp_servers")
+        if isinstance(override_mcp, dict) and isinstance(
+            options_kwargs.get("mcp_servers"), dict,
+        ):
+            merged = dict(options_kwargs["mcp_servers"])
+            merged.update(override_mcp)
+            options_kwargs.update(options_overrides)
+            options_kwargs["mcp_servers"] = merged
+        else:
+            options_kwargs.update(options_overrides)
 
     options = ClaudeAgentOptions(**options_kwargs)
     client = ClaudeSDKClient(options=options)

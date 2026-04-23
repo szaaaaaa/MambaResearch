@@ -326,7 +326,14 @@
   - 中断后已收到的部分消息保留（不被清空）
   - Esc 在 `isRunning=false` 时无副作用
 
-### [TODO] 11. ResearchAgent MCP 桥
+### [PENDING-VERIFY] 11. ResearchAgent MCP 桥
+
+> **Notes (2026-04-23)**: 后端代码、默认 mcp_servers 注入、三个测试文件均已就位；`pytest tests/mcp_bridge/` 13 passed，`pytest tests/` 197 passed 无回归；`tsc --noEmit` 通过。
+> - AC1（`python -m src.mcp_bridge.server` 独立启动 + `tools/list` 返回 ≥5 工具）已通过 **子进程 smoke 脚本** 端到端验证：`subprocess.Popen` 启动 + newline-delimited JSON 发送 `initialize`/`tools/list` → 收到 8 个 `research_agent.*` 工具；`tests/mcp_bridge/test_framing.py` 锁死帧格式（MCP 规范是 newline-delimited，不是 LSP Content-Length；initial implementation wrong, fixed before ship）。
+> - AC3: `tests/mcp_bridge/test_skill_invocation.py` 使用 `_FakeGateway` 替代真实 `ToolGateway`，屏蔽 paper_search MCP 网络链路——skill 本体（SearchPlan 解析 / 多查询聚合 / SourceSet 合成）照常执行。
+> - AC4（Workbench 输入"搜索 Mamba 架构的综述论文"，观察 SSE `tool_use name='mcp__research_agent__search_papers'`）需**手动浏览器验证**：启动后端 + 前端，新建 session，发送该提示，展开右侧 SSE 详情核对 `tool_use` 事件的 `name` 字段。
+> - AC5（bridge 挂载失败时 session 不崩）**未加自动化测试，依赖 SDK 契约**：bridge 子进程异常退出只影响该 MCP server 条目状态（McpStatusPanel 显示 `failed`），其他 `mcp_servers` 条目正常挂载，session 可正常创建。若要自动化，需 mock SDK 的 MCP 连接失败路径，成本过高，暂不做。
+
 
 - **What**: 写 stdio MCP server，把 ResearchAgent builtin skills 按 `research_agent.<skill_id>` 暴露为 MCP 工具；SDK session 启动时通过 `mcp_servers` 配置挂载，实现 Claude Code 里直接调 skill。
 - **Files**:
