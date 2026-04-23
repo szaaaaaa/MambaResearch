@@ -74,7 +74,7 @@
   - Workbench 新建会话后，`/agents` slash 命令能列出全部 5 个 subagent
   - 主 agent 在真实对话里至少成功委派一次 `paper-searcher` 完成简单搜索任务（手测，保留 transcript）
 
-### [WIP] 4. 废弃 role_models（L4）
+### [DONE] 4. 废弃 role_models（L4）
 
 - **What**: 清理 v1.0 "角色-模型静态映射" 遗产。`mcp.llm.chat` 网关忽略 `role_id` 参数（保留签名向后兼容）；`configs/agent.yaml` 的 `llm.role_models` 段删除。
 - **Files**:
@@ -87,7 +87,7 @@
   - 跑一次完整流程 `plan_research → search_papers → draft_report`，日志里所有 LLM 调用走同一 provider（日志字段 `llm.provider/model` 一致）
   - `pytest tests/` 全绿
 
-### [TODO] 5. 非 Claude provider 兼容性验证
+### [WIP] 5. 非 Claude provider 兼容性验证
 
 - **What**: 本地启 claude-code-router 指向 DeepSeek（或 GPT-4o-mini），跑完整会话验证 MCP 桥和 subagent 在非 Claude 模型下的兼容性。
 - **Files**:
