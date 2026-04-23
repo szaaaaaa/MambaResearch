@@ -365,6 +365,12 @@ MambaResearch/
 └── tests/                          # 测试套件
 ```
 
+## 🔁 自动化开发流程（/pipeline）
+
+用户级 Claude Code skill `/pipeline` 把规划阶段决策集中、执行阶段无人介入地跑完一个多任务 plan。配合升级过的 `/plan` template（新增 Decision points / External preconditions / Failure policy / Subtask split policy 四段），一次规划定案后，`/dev → /review → /fix` 自动循环跑每个 task，失败立即 STOP 暴露根因（不兜底）。
+
+详见 [docs/pipeline-usage.md](docs/pipeline-usage.md)。
+
 ## 💡 常见问题
 
 <details>
