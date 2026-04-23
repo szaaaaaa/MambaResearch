@@ -19,6 +19,7 @@ import {
   CredentialStatusMap,
   HitlRequest,
   NodeStatusMap,
+  PendingWorkbenchLaunch,
   ProjectConfig,
   RunArtifact,
   RoutePlan,
@@ -966,6 +967,8 @@ interface AppContextType {
   ccReset: () => void;
   ccSetActiveActivity: (activity: ClaudeCodeActivityId) => void;
   ccSetSessionList: (rows: ClaudeCodeSessionRow[]) => void;
+  launchWorkbenchExperiment: (launch: PendingWorkbenchLaunch) => void;
+  consumePendingWorkbenchLaunch: () => PendingWorkbenchLaunch | null;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -1007,6 +1010,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       activeActivity: null,
       sessionList: [],
     },
+    pendingWorkbenchLaunch: null,
   });
   // Workbench 的 AbortController 不进 React state——跟随 AppProvider 的 ref，
   // tab 切换不销毁；用户显式"结束会话"或浏览器卸载时才 abort
@@ -2286,6 +2290,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  // Task 12 实验联动：RunTab 的 "在工作台运行" 按钮 → 这里登记 → App.tsx 监听切 Tab
+  // → WorkbenchTab 消费并创建绑定 session。
+  const launchWorkbenchExperiment = (launch: PendingWorkbenchLaunch) => {
+    setState((prev) => ({ ...prev, pendingWorkbenchLaunch: launch }));
+  };
+
+  // 消费侧：WorkbenchTab 读一次清一次——ref guard 保证 StrictMode 下不重复建 session
+  const consumePendingWorkbenchLaunch = (): PendingWorkbenchLaunch | null => {
+    const pending = state.pendingWorkbenchLaunch;
+    if (pending !== null) {
+      setState((prev) => ({ ...prev, pendingWorkbenchLaunch: null }));
+    }
+    return pending;
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -2333,6 +2352,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccReset,
         ccSetActiveActivity,
         ccSetSessionList,
+        launchWorkbenchExperiment,
+        consumePendingWorkbenchLaunch,
       }}
     >
       {children}

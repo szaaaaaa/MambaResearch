@@ -348,8 +348,9 @@
   - 在 Workbench 输入"搜索 Mamba 架构的综述论文"：SSE 流里观察到 `tool_use` 事件 `name='mcp__research_agent__search_papers'`（或类似 SDK 命名）
   - MCP server 启动失败时，session init 不崩溃；前端显示"MCP bridge failed"但其他工具可用
 
-### [TODO] 12. 实验联动
+### [PENDING-VERIFY] 12. 实验联动
 
+- **Notes (2026-04-23)**: 采用策略 B（会话结束时读 `workspace/results.json`），非 Strategy A 的持续轮询。Schema 未迁移 — `bound_artifact_id` / `original_run_id` / `plan_goal` 仅存 `ClaudeSession` 内存字段（重启丢失绑定，但会话本身仍可继续）。AC1（按钮）与 AC4（results.json 端到端）待用户手动在浏览器验证。
 - **What**: ExperimentPlan artifact 渲染出"在工作台运行"按钮；点击后跨 Tab 跳转、创建 session（cwd=workspace、首条 prompt=plan.goal、绑定 bound_artifact_id）；运行中持续监听 workspace/results.json 变化，自动封装为 ExperimentResults artifact 挂到原 run。
 - **Files**:
   - 前端改动：`RunTab.tsx` / `ArtifactDetailModal.tsx` 在 ExperimentPlan 渲染处加按钮；`store.tsx` 加跨 Tab action；`WorkbenchTab.tsx` 接收带参入口

@@ -27,8 +27,11 @@ from claude_agent_sdk import (
     PermissionResultDeny,
 )
 
+from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.mcp_bridge import default_mcp_config
+from src.server.claude_code.results_hook import finalize_workbench_session
 from src.server.claude_code.storage import ClaudeCodeStore
+from src.server.settings import CONFIG_PATH, ROOT
 
 # 仓库根——用于给 MCP bridge 子进程传 --root / cwd
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -149,6 +152,13 @@ class ClaudeSession:
     add_dirs: list[str] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     permission_state: PermissionState = field(default_factory=PermissionState)
+    # Task 12 — Workbench 实验联动：当会话由 ExperimentPlan "在工作台运行"按钮创建时，
+    # 这三个字段被填充；会话收尾（delete / idle evict）时调 results_hook 把
+    # workspace/results.json 封装为 ExperimentResults 挂回原 run 的 artifact 列表。
+    # 非 Workbench 会话全部为 None——hook 分支直接跳过。
+    bound_artifact_id: str | None = None  # ExperimentPlan.artifact_id (血缘)
+    original_run_id: str | None = None  # 承载 ExperimentPlan 的原 run id
+    plan_goal: str | None = None  # ExperimentPlan.payload.goal (写回 ExperimentResults)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -158,6 +168,8 @@ class ClaudeSession:
             "permission_mode": self.permission_mode,
             "created_at": self.created_at,
             "add_dirs": list(self.add_dirs),
+            "bound_artifact_id": self.bound_artifact_id,
+            "original_run_id": self.original_run_id,
         }
 
 
@@ -197,25 +209,34 @@ class SessionManager:
 
     async def create(
         self,
-        cwd: str | Path,
+        cwd: str | Path | None = None,
         *,
         model: str | None = None,
         permission_mode: str = "default",
         options_overrides: dict[str, Any] | None = None,
+        bound_artifact_id: str | None = None,
+        original_run_id: str | None = None,
+        plan_goal: str | None = None,
     ) -> ClaudeSession:
         """新建并 ``connect`` 一个 SDK 会话。
 
         Parameters
         ----------
-        cwd : str or Path
-            子进程工作目录，必须存在且由调用方校验合法性。
+        cwd : str, Path, or None
+            子进程工作目录。普通会话必须显式传入；路由层负责合法性校验。
+            Workbench 实验联动路径可传 ``None``——本方法会按 ``session_id`` 在
+            ``data/experiments/workbench/<session_id>/workspace`` 下分配独立工作区，
+            保证目录名与 SDK 会话 id 一一对应便于排障与清理。
         model : str or None
             可选模型覆盖。
         permission_mode : str
             SDK PermissionMode 字面量，默认 ``"default"``（每次弹 Modal）。传入
             非法值会 raise ValueError。仅 ``"default"`` 模式注入 can_use_tool 桥。
         options_overrides : dict or None
-            透传给 ``ClaudeAgentOptions`` 的额外字段（未来支持 system_prompt、mcp_servers 等）。
+            透传给 ``ClaudeAgentOptions`` 的额外字段（未来支持 system_prompt、mcp_servers 等)。
+        bound_artifact_id / original_run_id / plan_goal : str or None
+            Task 12 Workbench 实验联动元数据——见 ``ClaudeSession`` 字段注释。
+            ``cwd`` 为 ``None`` 时 ``bound_artifact_id`` 必须给，否则 raise ValueError。
         """
         if permission_mode not in VALID_PERMISSION_MODES:
             raise ValueError(
@@ -225,6 +246,19 @@ class SessionManager:
 
         session_id = uuid.uuid4().hex
         permission_state = PermissionState()
+
+        if cwd is None:
+            # Workbench 实验联动路径——按 session_id 分配独立工作区
+            if bound_artifact_id is None:
+                raise ValueError(
+                    "cwd is required unless bound_artifact_id is provided "
+                    "(workbench experiment path)"
+                )
+            workspace = (
+                _REPO_ROOT / "data" / "experiments" / "workbench" / session_id / "workspace"
+            )
+            workspace.mkdir(parents=True, exist_ok=True)
+            cwd = str(workspace.resolve())
 
         client = await _build_client(
             session_id=session_id,
@@ -248,6 +282,9 @@ class SessionManager:
             client=client,
             add_dirs=[],
             permission_state=permission_state,
+            bound_artifact_id=bound_artifact_id,
+            original_run_id=original_run_id,
+            plan_goal=plan_goal,
         )
         async with self._lock:
             self._sessions[session.id] = session
@@ -470,6 +507,8 @@ class SessionManager:
             # 已崩溃/已断开的会话 disconnect 可能再次抛错——注册表必须清理成功，
             # 不 raise 让路由能返回成功，但留日志便于事后排查
             logger.exception("disconnect failed for session %s", session.id)
+        # Task 12: Workbench 绑定会话收尾时读 results.json，回挂 ExperimentResults
+        _run_workbench_finalize_hook(session)
         return True
 
     async def interrupt(self, session_id: str) -> bool:
@@ -625,6 +664,8 @@ class SessionManager:
                 await session.client.disconnect()
             except Exception:
                 logger.exception("disconnect failed during idle eviction for %s", session.id)
+            # Task 12: Workbench 绑定会话收尾时读 results.json，回挂 ExperimentResults
+            _run_workbench_finalize_hook(session)
 
     async def shutdown(self) -> None:
         """进程关停时取消 sweeper 并统一断开所有会话。"""
@@ -736,6 +777,48 @@ def _cancel_pending_permissions(session: ClaudeSession) -> None:
     for fut in pending:
         if not fut.done():
             fut.set_result({"decision": "deny", "message": "session closed"})
+
+
+def _run_workbench_finalize_hook(session: ClaudeSession) -> None:
+    """Task 12 会话收尾钩子——仅对绑定了 Workbench 元数据的会话执行。
+
+    非 Workbench 会话（``original_run_id is None``）直接跳过；任何异常只记录日志，
+    不冒泡——session delete / idle evict 路径必须保证干净退出。
+
+    outputs_dir 的解析：从 ``configs/agent.yaml`` 的 ``paths.outputs_dir`` 字段读，
+    未配置或读失败时回落到 ``<ROOT>/outputs``，绝不因 config 异常把整条 finalize
+    路径吞掉（否则所有实验的 results.json 都会永久丢失）。解析内联在这里而不是复用
+    ``routes.runs._get_outputs_dir``——避免 session_manager ↔ routes.runs 循环依赖。
+    """
+    if session.original_run_id is None:
+        return
+    default_outputs = (Path(ROOT) / "outputs").resolve()
+    try:
+        config = load_yaml(CONFIG_PATH) if CONFIG_PATH.exists() else {}
+        raw = get_by_dotted(config if isinstance(config, dict) else {}, "paths.outputs_dir")
+        if raw:
+            outputs_dir = resolve_path(ROOT, str(raw), config if isinstance(config, dict) else {})
+        else:
+            outputs_dir = default_outputs
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "workbench finalize hook: outputs_dir resolution failed for %s; "
+            "falling back to %s",
+            session.id,
+            default_outputs,
+        )
+        outputs_dir = default_outputs
+    try:
+        finalize_workbench_session(
+            session_id=session.id,
+            workspace_path=session.cwd,
+            original_run_id=session.original_run_id,
+            bound_artifact_id=session.bound_artifact_id,
+            plan_goal=session.plan_goal or "",
+            outputs_dir=outputs_dir,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("workbench finalize hook failed for session %s", session.id)
 
 
 _DEFAULT_DB_PATH = Path(".tmp") / "claude_code" / "sessions.db"

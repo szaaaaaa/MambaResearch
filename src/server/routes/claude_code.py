@@ -74,8 +74,54 @@ async def _parse_json_body(request: Request) -> dict[str, Any]:
 
 @router.post("/api/claude-code/sessions")
 async def create_session(request: Request):
+    """新建会话。普通会话：``{cwd?, model?, permission_mode?}``。
+
+    Workbench 实验联动（Task 12）路径额外接收：
+    - ``bound_artifact_id`` (str): ExperimentPlan.artifact_id，session 收尾时做血缘
+    - ``original_run_id`` (str): ExperimentPlan 所属 run 的 id，artifact 回挂目标
+    - ``plan_goal`` (str): ExperimentPlan.payload.goal，写进 ExperimentResults
+    - 传入 ``bound_artifact_id + original_run_id`` 且 ``cwd`` 未提供时，路由层传
+      ``cwd=None``——``session_manager.create`` 自行按 ``session_id`` 在
+      ``data/experiments/workbench/<session_id>/workspace`` 下分配独立工作区，
+      保证目录名与 SDK 会话 id 一一对应。三字段全 None 走普通路径，cwd 默认项目根。
+    """
     payload = await _parse_json_body(request)
-    cwd = _resolve_cwd(payload.get("cwd"))
+
+    bound_artifact_id_raw = payload.get("bound_artifact_id")
+    original_run_id_raw = payload.get("original_run_id")
+    plan_goal_raw = payload.get("plan_goal")
+
+    bound_artifact_id = (
+        str(bound_artifact_id_raw).strip()
+        if isinstance(bound_artifact_id_raw, str) and bound_artifact_id_raw.strip()
+        else None
+    )
+    original_run_id = (
+        str(original_run_id_raw).strip()
+        if isinstance(original_run_id_raw, str) and original_run_id_raw.strip()
+        else None
+    )
+    plan_goal = (
+        str(plan_goal_raw).strip()
+        if isinstance(plan_goal_raw, str) and plan_goal_raw.strip()
+        else None
+    )
+
+    is_workbench = bound_artifact_id is not None and original_run_id is not None
+    if (bound_artifact_id is None) != (original_run_id is None):
+        raise HTTPException(
+            status_code=400,
+            detail="bound_artifact_id and original_run_id must be provided together",
+        )
+
+    cwd_raw = payload.get("cwd")
+    cwd: str | None
+    if is_workbench and not cwd_raw:
+        # Workbench 路径——让 session_manager 按 session_id 自行分配工作区
+        cwd = None
+    else:
+        cwd = _resolve_cwd(cwd_raw)
+
     model_raw = payload.get("model")
     model = str(model_raw).strip() if isinstance(model_raw, str) and model_raw.strip() else None
     mode_raw = payload.get("permission_mode")
@@ -93,7 +139,12 @@ async def create_session(request: Request):
 
     try:
         session = await session_manager.create(
-            cwd=cwd, model=model, permission_mode=permission_mode
+            cwd=cwd,
+            model=model,
+            permission_mode=permission_mode,
+            bound_artifact_id=bound_artifact_id,
+            original_run_id=original_run_id,
+            plan_goal=plan_goal,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

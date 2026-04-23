@@ -203,6 +203,7 @@ function ArtifactDetailModal({
   detail: ArtifactDetailState;
   onClose: () => void;
 }) {
+  const { launchWorkbenchExperiment } = useAppContext();
   const [payload, setPayload] = React.useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -225,6 +226,27 @@ function ArtifactDetailModal({
       });
   }, [detail.runId, detail.artifactId]);
 
+  // Task 12: ExperimentPlan → Workbench 按钮——按下把跨 Tab 启动参数塞进 store，
+  // App.tsx 监听到非 null 值自动切 Tab，WorkbenchTab 消费后建 session 并发首条消息。
+  const handleLaunchWorkbench = () => {
+    if (payload === null) return;
+    const goal = typeof payload.goal === 'string' ? payload.goal.trim() : '';
+    if (!goal) return;
+    launchWorkbenchExperiment({
+      boundArtifactId: detail.artifactId,
+      originalRunId: detail.runId,
+      planGoal: goal,
+      title: goal.length > 40 ? `${goal.slice(0, 40)}…` : goal,
+    });
+    onClose();
+  };
+
+  const canLaunchWorkbench =
+    detail.artifactType === 'ExperimentPlan' &&
+    payload !== null &&
+    typeof payload.goal === 'string' &&
+    payload.goal.trim().length > 0;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/35 px-4 py-8 backdrop-blur-sm"
@@ -241,13 +263,25 @@ function ArtifactDetailModal({
             </span>
             <p className="mt-2 font-mono text-xs text-slate-500">{detail.artifactId}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {canLaunchWorkbench ? (
+              <button
+                type="button"
+                onClick={handleLaunchWorkbench}
+                className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-800"
+                title="在 Claude Code 工作台中按本实验计划开一个新会话，首条消息即 goal"
+              >
+                在工作台运行
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
         {loading ? (
           <div className="flex items-center justify-center py-10">

@@ -458,6 +458,23 @@ export interface ClaudeCodeState {
   sessionList: ClaudeCodeSessionRow[];
 }
 
+/** Task 12 实验联动：ExperimentPlan "在工作台运行"按钮触发的跨 Tab 启动请求。
+ *
+ * 由 ``store.launchWorkbenchExperiment`` 写入；``App.tsx`` 的 effect 监听切 Tab；
+ * ``WorkbenchTab`` 通过 ``consumePendingWorkbenchLaunch`` 读一次即清——ref guard
+ * 保证只消费一次（React 18 StrictMode 会连跑两次 effect，无守护会重复建 session）。
+ */
+export interface PendingWorkbenchLaunch {
+  /** ExperimentPlan 的 artifact_id，后端用于 ExperimentResults 血缘 */
+  boundArtifactId: string;
+  /** ExperimentPlan 所属 run 的 id，后端用于回挂 ExperimentResults */
+  originalRunId: string;
+  /** ExperimentPlan.payload.goal——新会话首条用户消息文本 */
+  planGoal: string;
+  /** 可选：展示给用户的标题；不给则用 goal 截取前 40 字 */
+  title?: string;
+}
+
 export interface AppState {
   credentials: Credentials;
   credentialStatus: CredentialStatusMap;
@@ -476,6 +493,7 @@ export interface AppState {
   siliconflowCatalog: ProviderModelCatalog;
   isAdvancedMode: boolean;
   claudeCode: ClaudeCodeState;
+  pendingWorkbenchLaunch: PendingWorkbenchLaunch | null;
 }
 
 export interface SkillMetricsData {

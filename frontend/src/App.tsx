@@ -70,6 +70,18 @@ const AppContent: React.FC = () => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
   }, [uiPreferences]);
 
+  // Task 12: ExperimentPlan "在工作台运行"按钮 → store.launchWorkbenchExperiment 写入
+  // pendingWorkbenchLaunch → 这里监听到非 null 值就切到 workbench tab。
+  // 不消费 pending——WorkbenchTab 挂载后自己读一次清一次（ref guard），保证 SDK 侧
+  // session 创建只发一次 POST /sessions。
+  React.useEffect(() => {
+    if (state.pendingWorkbenchLaunch !== null && activeTab !== 'workbench') {
+      setActiveTab('workbench');
+      setToolPanelTab(null);
+      toolsPanelRef.current?.collapse();
+    }
+  }, [state.pendingWorkbenchLaunch, activeTab]);
+
   const handleTabChange = (tab: 'run' | 'history' | 'skills' | 'workbench') => {
     setActiveTab(tab);
     if (tab === 'run' || tab === 'workbench') {
