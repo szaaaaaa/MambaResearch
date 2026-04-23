@@ -344,6 +344,26 @@ async def list_models():
     return {"models": list(AVAILABLE_MODELS)}
 
 
+@router.get("/api/claude-code/providers")
+async def list_providers():
+    """列出注册的 LLM provider——供前端新建会话 Modal 下拉渲染。
+
+    只暴露非敏感字段：name / base_url / default_model。``api_key_env`` 也不回传——
+    它是查询 key 的索引，虽非 key 本身但会泄漏服务端 env 布局，同样应屏蔽。
+    """
+    registry = get_provider_registry()
+    return {
+        "providers": [
+            {
+                "name": cfg.name,
+                "base_url": cfg.base_url,
+                "default_model": cfg.default_model,
+            }
+            for cfg in registry.values()
+        ]
+    }
+
+
 @router.post("/api/claude-code/sessions/{session_id}/permissions")
 async def resolve_permission(session_id: str, request: Request):
     """前端 Modal 决策回传端点。

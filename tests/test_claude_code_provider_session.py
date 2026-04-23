@@ -196,6 +196,54 @@ def test_session_response_never_contains_api_key(fake_sdk):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# 1c: GET /api/claude-code/providers 列表端点
+# ---------------------------------------------------------------------------
+
+
+def test_list_providers_returns_registry_entries(fake_sdk):
+    """端点返回 registry 里所有 provider，每条含 name / base_url / default_model。"""
+    client = TestClient(app_module.app)
+    resp = client.get("/api/claude-code/providers")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "providers" in body
+    names = {p["name"] for p in body["providers"]}
+    assert names == {"anthropic", "deepseek"}
+
+    # 结构检查
+    for p in body["providers"]:
+        assert set(p.keys()) == {"name", "base_url", "default_model"}
+    deepseek = next(p for p in body["providers"] if p["name"] == "deepseek")
+    assert deepseek["base_url"] == "http://localhost:3456"
+    assert deepseek["default_model"] == "deepseek-chat"
+
+
+def test_list_providers_never_leaks_api_key_fields(fake_sdk):
+    """响应不应出现 api_key / api_key_env / secret 等敏感字段。"""
+    client = TestClient(app_module.app)
+    resp = client.get("/api/claude-code/providers")
+    flat = str(resp.json()).lower()
+    assert "api_key" not in flat
+    assert "secret" not in flat
+    # 也不漏 api_key_env 字段名本身
+    assert "api_key_env" not in flat
+
+
+def test_list_providers_empty_registry_returns_empty_list(fake_sdk, monkeypatch):
+    """registry 为空时返回 ``{"providers": []}``，不 500。"""
+    monkeypatch.setattr(providers_mod, "_cached_registry", {})
+    client = TestClient(app_module.app)
+    resp = client.get("/api/claude-code/providers")
+    assert resp.status_code == 200
+    assert resp.json() == {"providers": []}
+
+
+# ---------------------------------------------------------------------------
+# 其他负面测试
+# ---------------------------------------------------------------------------
+
+
 def test_missing_api_key_env_errors_explicitly(fake_sdk, monkeypatch):
     """provider 的 api_key_env 对应 env 未设置 → 显式报错（不静默走 default）。
 

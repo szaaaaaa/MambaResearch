@@ -23,12 +23,12 @@
 
 
 
-### [TODO] 1c. Providers 列表端点
+### [WIP] 1c. Providers 列表端点
 - **What**: 新增 `GET /api/claude-code/providers` 端点，返回 registry 中注册的 provider 列表，去除 secret 字段（不含 api_key 明文）。
 - **Acceptance**:
   - `GET /api/claude-code/providers` 返回注册的 provider 列表（去 secret 字段）
   - 响应中仅包含 name / base_url / default_model 等非敏感字段
-### [WIP] 1b. Session API 接收 provider 并注入 env
+### [DONE] 1b. Session API 接收 provider 并注入 env
 - **What**: session 创建/补丁 API 接收 `provider` 字段；`_build_client` 把 provider 对应的 env（含 `ANTHROPIC_BASE_URL` 与 api_key_env 解析值）注入 `ClaudeAgentOptions.env`；`GET /api/claude-code/sessions/{id}` 返回 provider 名但不回传 api_key。
 - **Acceptance**:
   - `POST /api/claude-code/sessions` 接受 `{provider: "<name>"}` 字段，非空时按 registry 查表注入 env；未传时用 Anthropic 默认行为（零变更）
