@@ -53,7 +53,7 @@
   - 会话列表每条显示当前 provider 标签（简短 pill / chip）
   - `tsc --noEmit` 和 `cd frontend && npm run build` 通过
 
-### [WIP] 3. Subagent 定义（L3 主体）
+### [PENDING-VERIFY] 3. Subagent 定义（L3 主体）
 
 - **What**: 按任务语义（参考 AI-Scientist-v2 分档经验）在 `.claude/agents/` 下创建 5 个 subagent 定义文件；验证 SDK 能正常加载。
 - **Files**（新增）:
@@ -74,7 +74,7 @@
   - Workbench 新建会话后，`/agents` slash 命令能列出全部 5 个 subagent
   - 主 agent 在真实对话里至少成功委派一次 `paper-searcher` 完成简单搜索任务（手测，保留 transcript）
 
-### [TODO] 4. 废弃 role_models（L4）
+### [WIP] 4. 废弃 role_models（L4）
 
 - **What**: 清理 v1.0 "角色-模型静态映射" 遗产。`mcp.llm.chat` 网关忽略 `role_id` 参数（保留签名向后兼容）；`configs/agent.yaml` 的 `llm.role_models` 段删除。
 - **Files**:

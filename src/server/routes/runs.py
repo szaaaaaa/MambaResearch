@@ -25,19 +25,10 @@ _ACTIVE_RUNTIMES_LOCK = asyncio.Lock()
 
 def _configured_llm_providers(config: dict[str, Any]) -> set[str]:
     providers: set[str] = set()
-    for path in ("agent.routing.planner_llm.provider",):
+    for path in ("llm.provider", "agent.routing.planner_llm.provider"):
         provider = _normalize_provider(get_by_dotted(config, path))
         if provider:
             providers.add(provider)
-
-    role_models = get_by_dotted(config, "llm.role_models") or {}
-    if isinstance(role_models, dict):
-        for raw_entry in role_models.values():
-            if not isinstance(raw_entry, dict):
-                continue
-            provider = _normalize_provider(raw_entry.get("provider"))
-            if provider:
-                providers.add(provider)
     return providers
 
 

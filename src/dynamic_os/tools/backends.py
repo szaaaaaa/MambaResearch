@@ -1083,40 +1083,44 @@ class ConfiguredToolBackend:
         raise RuntimeError(f"unsupported MCP tool: {server_id}.{tool_name}")
 
     def _resolve_explicit_llm_provider(self, *, role_id: str, payload_provider: Any) -> str:
-        """解析 LLM provider：优先使用 payload 中的显式值，否则从角色配置中获取。"""
+        """解析 LLM provider：payload 显式 > config ``llm.provider`` 默认 > raise。
+
+        ``role_id`` 参数保留是为了签名向后兼容（LLMGateway 层仍会传），内部忽略——
+        v2.0 废弃了 ``llm.role_models`` 差异化（Task 4），不同角色的差异改由
+        Workbench session-level provider 选择和 ``.claude/agents/`` 的 subagent
+        分档承担。
+        """
+        del role_id  # deprecated, ignored intentionally
         explicit_provider = _normalize_provider(str(payload_provider or "").strip())
         if explicit_provider:
             return explicit_provider
-        if not role_id:
-            raise RuntimeError("llm provider must be explicitly configured")
-        role_provider = _normalize_provider(str(self._get_role_model_value(role_id, "provider") or "").strip())
-        if not role_provider:
-            raise RuntimeError(f"llm provider must be explicitly configured for role: {role_id}")
-        return role_provider
+        default_provider = _normalize_provider(
+            str(get_by_dotted(self._config, "llm.provider") or "").strip()
+        )
+        if not default_provider:
+            raise RuntimeError(
+                "llm provider must be explicitly configured "
+                "(set llm.provider in agent.yaml)"
+            )
+        return default_provider
 
     def _resolve_explicit_llm_model(self, *, role_id: str, payload_model: Any, provider: str) -> str:
-        """解析 LLM model：优先使用 payload 中的显式值，否则从角色配置中获取。"""
+        """解析 LLM model：payload 显式 > config ``llm.model`` 默认 > raise。
+
+        ``role_id`` 参数保留做签名向后兼容，内部忽略（见 ``_resolve_explicit_llm_provider``
+        的 docstring）。
+        """
+        del role_id  # deprecated, ignored intentionally
         explicit_model = str(payload_model or "").strip()
         if explicit_model:
             return explicit_model
-        if not role_id:
-            raise RuntimeError(f"llm model must be explicitly configured for provider: {provider}")
-        role_model = str(self._get_role_model_value(role_id, "model") or "").strip()
-        if not role_model:
-            raise RuntimeError(f"llm model must be explicitly configured for role: {role_id}")
-        return role_model
-
-    def _get_role_model_value(self, role_id: str, field: str) -> Any:
-        """从配置中获取角色的模型配置值。
-
-        特殊处理：reviewer 角色在找不到配置时会回退到 critic 角色的配置。
-        """
-        value = get_by_dotted(self._config, f"llm.role_models.{role_id}.{field}")
-        if value is not None:
-            return value
-        if role_id == "reviewer":
-            return get_by_dotted(self._config, f"llm.role_models.critic.{field}")
-        return None
+        default_model = str(get_by_dotted(self._config, "llm.model") or "").strip()
+        if not default_model:
+            raise RuntimeError(
+                f"llm model must be explicitly configured for provider: {provider} "
+                "(set llm.model in agent.yaml)"
+            )
+        return default_model
 
     def search_sources(self, query: str, max_results: int, *, source: str = "auto") -> dict[str, Any]:
         """执行网页搜索（仅限网页搜索，学术搜索由 paper_search MCP 处理）。

@@ -44,7 +44,10 @@ class LLMGateway:
         model : str, optional
             模型名称。
         role_id : str, optional
-            角色 ID，用于从配置中解析对应的 provider/model。
+            **已废弃（Task 4）**——v2.0 取消了 ``llm.role_models`` 差异化，本参数
+            保留仅为签名向后兼容。后端忽略其值，LLM 调用一律走 ``llm.provider`` /
+            ``llm.model`` 默认；角色间差异改由 Workbench session provider 选择和
+            ``.claude/agents/`` 的 subagent 分档承担。
         temperature : float, optional
             生成温度，默认 0.3。
         max_tokens : int, optional

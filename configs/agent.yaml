@@ -80,25 +80,9 @@ llm:
   openai_codex:
     transport: auto
     model_discovery: account_plus_cached
-  role_models:
-    conductor:
-      provider: openrouter
-      model: openai/gpt-5.4
-    researcher:
-      provider: openrouter
-      model: openai/gpt-5.4
-    experimenter:
-      provider: openrouter
-      model: openai/gpt-5.4
-    analyst:
-      provider: openrouter
-      model: openai/gpt-5.4
-    writer:
-      provider: openrouter
-      model: openai/gpt-5.4
-    reviewer:
-      provider: openrouter
-      model: openai/gpt-5.4
+  # role_models removed in v2.0 (Task 4): skills are opaque, token-saving decisions
+  # belong to (a) user's session-level provider choice, (b) subagent tiering in
+  # .claude/agents/. See docs/releases/v2.x-multi-model.md for rationale.
 auth:
   openai_codex:
     default_profile: default
