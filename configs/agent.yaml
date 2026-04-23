@@ -67,6 +67,12 @@ mcp:
       PAPER_SEARCH_MCP_GOOGLE_SCHOLAR_PROXY_URL: ''
       PAPER_SEARCH_MCP_IEEE_API_KEY: ''
       PAPER_SEARCH_MCP_ACM_API_KEY: ''
+claude_code:
+  providers:
+    anthropic:
+      base_url: https://api.anthropic.com
+      api_key_env: ANTHROPIC_API_KEY
+      default_model: ''
 llm:
   provider: openrouter
   model: google/gemini-2.0-flash-001

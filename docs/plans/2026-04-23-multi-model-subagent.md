@@ -6,7 +6,7 @@
 
 ## Tasks
 
-### [TODO] 1. 后端 provider 层（L2-a）
+### [DONE] 1. 后端 provider 层（L2-a）
 
 - **What**: `configs/agent.yaml` 加 `claude_code.providers` registry（name → base_url / api_key_env / default_model）；session 创建/补丁 API 接收 `provider` 字段；`_build_client` 把 provider env 注入 `ClaudeAgentOptions.env`；新增 `GET /api/claude-code/providers` 端点列可用 provider。
 - **Files**:
@@ -20,6 +20,27 @@
   - `GET /api/claude-code/providers` 返回注册的 provider 列表（去 secret 字段）
   - 现有 HITL / MCP 桥 / slash / 持久化相关 pytest 全部通过
 
+
+
+
+### [TODO] 1c. Providers 列表端点
+- **What**: 新增 `GET /api/claude-code/providers` 端点，返回 registry 中注册的 provider 列表，去除 secret 字段（不含 api_key 明文）。
+- **Acceptance**:
+  - `GET /api/claude-code/providers` 返回注册的 provider 列表（去 secret 字段）
+  - 响应中仅包含 name / base_url / default_model 等非敏感字段
+### [TODO] 1b. Session API 接收 provider 并注入 env
+- **What**: session 创建/补丁 API 接收 `provider` 字段；`_build_client` 把 provider 对应的 env（含 `ANTHROPIC_BASE_URL` 与 api_key_env 解析值）注入 `ClaudeAgentOptions.env`；`GET /api/claude-code/sessions/{id}` 返回 provider 名但不回传 api_key。
+- **Acceptance**:
+  - `POST /api/claude-code/sessions` 接受 `{provider: "<name>"}` 字段，非空时按 registry 查表注入 env；未传时用 Anthropic 默认行为（零变更）
+  - SDK 子进程 env 里 `ANTHROPIC_BASE_URL` 指向 registry 的 base_url（用 logging 或测试 fixture 验证）
+  - `GET /api/claude-code/sessions/{id}` 返回当前 session 的 provider 名，不回传 api_key
+  - 现有 HITL / MCP 桥 / slash / 持久化相关 pytest 全部通过
+### [WIP] 1a. Provider registry 配置与加载
+- **What**: `configs/agent.yaml` 新增 `claude_code.providers` registry（name → base_url / api_key_env / default_model），后端加载并暴露只读访问接口（不含 secret）。
+- **Acceptance**:
+  - `configs/agent.yaml` 包含 `claude_code.providers` 段，结构为 name → {base_url, api_key_env, default_model}
+  - 后端能加载 registry 并在内存中按 name 索引
+  - registry 加载失败（字段缺失/类型错误）应在启动时显式报错，不静默忽略
 ### [TODO] 2. 前端 provider UI（L2-b）
 
 - **What**: 新建会话 Modal 加 provider 下拉（默认 `anthropic`）；会话列表 / 设置面板展示当前 provider；现有 ModelPicker 按 provider 过滤可选 model。
