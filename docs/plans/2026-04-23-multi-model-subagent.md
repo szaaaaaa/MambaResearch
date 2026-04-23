@@ -41,7 +41,7 @@
   - `configs/agent.yaml` 包含 `claude_code.providers` 段，结构为 name → {base_url, api_key_env, default_model}
   - 后端能加载 registry 并在内存中按 name 索引
   - registry 加载失败（字段缺失/类型错误）应在启动时显式报错，不静默忽略
-### [WIP] 2. 前端 provider UI（L2-b）
+### [DONE] 2. 前端 provider UI（L2-b）
 
 - **What**: 新建会话 Modal 加 provider 下拉（默认 `anthropic`）；会话列表 / 设置面板展示当前 provider；现有 ModelPicker 按 provider 过滤可选 model。
 - **Files**:
@@ -53,7 +53,7 @@
   - 会话列表每条显示当前 provider 标签（简短 pill / chip）
   - `tsc --noEmit` 和 `cd frontend && npm run build` 通过
 
-### [TODO] 3. Subagent 定义（L3 主体）
+### [WIP] 3. Subagent 定义（L3 主体）
 
 - **What**: 按任务语义（参考 AI-Scientist-v2 分档经验）在 `.claude/agents/` 下创建 5 个 subagent 定义文件；验证 SDK 能正常加载。
 - **Files**（新增）:

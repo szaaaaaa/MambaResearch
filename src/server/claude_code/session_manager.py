@@ -29,6 +29,7 @@ from claude_agent_sdk import (
 
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.mcp_bridge import default_mcp_config
+from src.server.claude_code.agents import load_subagents_from_directory
 from src.server.claude_code.providers import (
     ProviderConfig,
     build_env_for_provider,
@@ -767,6 +768,12 @@ async def _build_client(
         session_id, permission_state
     )
     options_kwargs.setdefault("setting_sources", ["user"])
+    # Task 3 — subagent 程序化注入（DP1 fallback）：
+    # setting_sources=["user"] 排除 project 层，CLI 不会自动发现 .claude/agents/*.md；
+    # 显式把定义读进来塞进 ``options.agents``，效果等价于项目级 subagent。
+    subagents = _load_subagents_cached()
+    if subagents:
+        options_kwargs["agents"] = dict(subagents)
     # 多 provider 支持（Task 1b）——传入 provider_config 时按其 base_url + api_key_env
     # 解析值写入 SDK 子进程 env。未传则 options_kwargs 不带 env，走 Anthropic 默认。
     if provider_config is not None:
@@ -792,6 +799,24 @@ async def _build_client(
     client = ClaudeSDKClient(options=options)
     await client.connect()
     return client
+
+
+_cached_subagents: dict[str, Any] | None = None
+
+
+def _load_subagents_cached() -> dict[str, Any]:
+    """进程内单例 subagent registry——从 ``<repo>/.claude/agents/*.md`` 加载一次。
+
+    解析失败直接抛 ``AgentDefinitionError``——启动期失败比运行时 SDK 崩溃可读得多。
+    测试场景要刷新缓存时通过 monkeypatch ``_cached_subagents = None`` 或用
+    ``load_subagents_from_directory`` 拿新值。
+    """
+    global _cached_subagents
+    if _cached_subagents is None:
+        _cached_subagents = load_subagents_from_directory(
+            _REPO_ROOT / ".claude" / "agents"
+        )
+    return _cached_subagents
 
 
 def _resolve_provider_or_raise(provider: str | None) -> ProviderConfig | None:
