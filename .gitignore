@@ -54,3 +54,6 @@ frontend/dist/
 
 # Self-improvement — project-local Claude learnings, personal dev memory
 .learnings/
+
+# continues (cli-continues) cross-tool handoff file — regenerated per resume
+.continues-handoff.md

@@ -53,26 +53,30 @@
   - 会话列表每条显示当前 provider 标签（简短 pill / chip）
   - `tsc --noEmit` 和 `cd frontend && npm run build` 通过
 
-### [PENDING-VERIFY] 3. Subagent 定义（L3 主体）
+### [DONE] 3. Subagent 定义（L3 主体）
 
-- **What**: 按任务语义（参考 AI-Scientist-v2 分档经验）在 `.claude/agents/` 下创建 5 个 subagent 定义文件；验证 SDK 能正常加载。
+> **AC 改写记录 (2026-04-24)**：原 AC 含"Workbench `/agents` 列 5 个 subagent"与"真实对话手测委派 paper-searcher"两条手测项。F 方案下转由单测硬性覆盖注入机制，手测降级为 supplementary（见 Decisions log 2026-04-24 第 4 条）。
+
+- **What**: 按任务语义（参考 AI-Scientist-v2 分档经验）在 `.claude/agents/` 下创建 5 个 subagent 定义文件；通过单测硬性验证 SDK 程序化注入机制（DP1 fallback 路径）。
 - **Files**（新增）:
   - `.claude/agents/paper-searcher.md`
   - `.claude/agents/evidence-extractor.md`
   - `.claude/agents/analyzer.md`
   - `.claude/agents/writer.md`
   - `.claude/agents/critic.md`
+  - `src/server/claude_code/agents.py`（加载器）
+  - `tests/test_claude_code_agents.py`（16 单测）
 - **Acceptance**:
-  - 5 个文件各有完整 YAML 前言：`name / description / model / tools / mcpServers`
+  - 5 个文件各有完整 YAML 前言：`name / description / model / tools / mcpServers` —— `test_every_agent_has_required_frontmatter_fields` 覆盖
   - 模型分配（使用别名不写死具体 ID）：
     - `paper-searcher` + `evidence-extractor` → `haiku`
     - `analyzer` + `writer` → `sonnet`
     - `critic` → `opus`
-  - **关键探索**：任务一开始先实测 `setting_sources=["user"]` 是否阻止加载项目 `.claude/agents/` 目录——
-    - 如加载成功：直接用 Markdown 路径
-    - 如被阻止：改走 SDK `ClaudeAgentOptions.agents` 程序化注入（回落路径 B）
-  - Workbench 新建会话后，`/agents` slash 命令能列出全部 5 个 subagent
-  - 主 agent 在真实对话里至少成功委派一次 `paper-searcher` 完成简单搜索任务（手测，保留 transcript）
+    —— `test_model_assignment_uses_aliases[*]` 5 个 parametrize 覆盖
+  - **DP1 探针结论**：SDK 源码确认 `setting_sources=["user"]` 排除 project 层，CLI 不自动发现项目 `.claude/agents/`。已走 fallback 路径 B：程序化注入 `ClaudeAgentOptions.agents`，落地在 `src/server/claude_code/session_manager.py:_build_client`
+  - `test_build_client_injects_agents_into_options` 单测通过：5 subagent 正确注入到 SDK options.agents，`setting_sources` 保持 `["user"]`
+  - `pytest tests/test_claude_code_agents.py` 全绿（16 tests pass）
+- **Supplementary manual（非 AC，不阻塞）**：Workbench 前端手测 `/agents` 命令列 5 subagent + 主 agent 真实委派 paper-searcher（ziang 自行跑 `python app.py` + 前端后验证；若发现问题另开 issue）
 
 ### [DONE] 4. 废弃 role_models（L4）
 
@@ -87,60 +91,109 @@
   - 跑一次完整流程 `plan_research → search_papers → draft_report`，日志里所有 LLM 调用走同一 provider（日志字段 `llm.provider/model` 一致）
   - `pytest tests/` 全绿
 
-### [WIP] 5. 非 Claude provider 兼容性验证
+### [TODO] 5. Codex Workbench 集成 + MCP 兼容性验证（F 方案）
 
-- **What**: 本地启 claude-code-router 指向 DeepSeek（或 GPT-4o-mini），跑完整会话验证 MCP 桥和 subagent 在非 Claude 模型下的兼容性。
+> **AC 重写记录 (2026-04-24)**：原 Task 5 基于 CCR + DeepSeek 路径已全部失效（CCR 退休，方向切为 F 方案——见 `docs/releases/v2.x-multi-subscription.md` 与 Decisions log 2026-04-24）。重写为 Workbench 后端原生集成官方 `codex app-server` + subagent 单一源 converter + 完整 MCP 兼容性验证。
+
+- **What**: 扩展 Workbench 后端原生支持 Codex session（通过 spawn 官方 `codex app-server` + 自写 JSON-RPC 2.0 客户端，走 ChatGPT Plus/Pro 订阅 OAuth），并以 `.claude/agents/*.md` 为单一源生成 `.codex/agents/*.toml` 让 Codex 识别 subagent；端到端验证 Codex session 能调 ResearchAgent MCP skill + 委派 paper-searcher。
 - **Files**:
-  - `docs/releases/v2.x-multi-model.md`（发现记录）
-  - 可选：`tests/integration/test_non_anthropic_provider.py`
+  - `scripts/sync_subagents.py`（新增：`.md → .toml` converter，全部 model 映射为 `gpt-5.5`）
+  - `.pre-commit-config.yaml` 或 `.git/hooks/pre-commit`（新增：提交 `.claude/agents/*.md` 时自动跑 sync）
+  - `.gitignore`（追加 `!.codex/agents/**` 例外）
+  - `src/server/codex/__init__.py`（新增）
+  - `src/server/codex/session_manager.py`（新增：对偶 `src/server/claude_code/session_manager.py`）
+  - `src/server/codex/app_server_client.py`（新增：JSON-RPC 客户端）
+  - `src/server/routes/codex.py`（新增：对偶 `src/server/routes/claude_code.py`）
+  - `app.py`（修改：`include_router(codex_route.router)`）
+  - `frontend/src/components/workbench/shell/NewSessionModal.tsx`（修改：provider 下拉新增 `codex`）
+  - `frontend/src/components/tabs/WorkbenchTab.tsx`（修改：按 `session.provider` 分派到 `/api/claude-code/` vs `/api/codex/`）
+  - `frontend/src/components/workbench/shell/SessionListItem.tsx`（修改：pill 按 provider 区分色）
+  - `.codex/agents/*.toml`（5 份，converter 生成 + commit）
+  - `.codex/config.toml`（项目级 MCP 配置，指向 `scripts/dynamic_os_mcp_server.py`）
+  - `tests/test_sync_subagents.py`（新增）
+  - `tests/test_codex_session.py`（新增：fake subprocess fixture）
+  - `docs/releases/v2.x-multi-model.md`（发现记录章节）
 - **Acceptance**:
-  - 本地启 claude-code-router，registry 里配 DeepSeek provider，Workbench 创建对应 session
-  - 主 agent 成功调用至少 **3 个** MCP skill（`plan_research / search_papers / clarify_intent`），返回的 `structuredContent` 合法可解析
-  - 成功委派一次 `paper-searcher` subagent（依赖 Task 3 走通）
-  - 记录发现的问题（tool_use schema 跑偏、JSON 格式错、指令遵守度等）到文档，标明"可接受" / "需修复"
-  - 如果 DeepSeek 不能通过，回落验证 GPT-4o-mini（至少一个非 Anthropic provider 跑通是硬性 acceptance）
 
-### [TODO] 6. 使用手册 + 决策 log 落地
+  **T5-A（Subagent converter）**
+  - `scripts/sync_subagents.py` 读 `.claude/agents/*.md` → 生成 `.codex/agents/*.toml`；字段映射：`name → name`、`description → description`、`model → model=gpt-5.5`（统一映射，不分档）、markdown body → `developer_instructions`、`tools → tools`、`mcpServers` 语义映射
+  - Pre-commit hook 在提交 `.claude/agents/*.md` 时自动触发 sync，`.codex/agents/*.toml` 进入 repo
+  - `tests/test_sync_subagents.py` 覆盖：5 输入 → 5 输出、字段映射正确、空目录处理、frontmatter 格式错误显式抛 error
 
-- **What**: 写清"怎么用多 provider" + "为什么废弃 role_models" + "v1.0 role vs v2.0 subagent"。
+  **T5-B（Codex session manager）**
+  - `src/server/codex/session_manager.py` 与 `src/server/claude_code/session_manager.py` 对偶：`create` / `delete` / `get_or_restore` / idle TTL sweeper / `PermissionState` HITL bridge
+  - spawn `codex app-server --listen stdio://` 子进程，JSON-RPC 2.0 协议通信；运行时通过 `codex app-server generate-json-schema` 拿 schema 并校验客户端请求/响应结构
+  - OAuth 透明：SDK 自动读 `~/.codex/auth.json`
+  - `tests/test_codex_session.py` 覆盖：fake `codex app-server` subprocess fixture、create/delete/message 三路基础烟测
+  - 现有 HITL / MCP 桥 / slash / 持久化相关 pytest（Claude Code 侧）全部通过不回归
+
+  **T5-C（API + 前端）**
+  - `POST /api/codex/sessions` / `GET /api/codex/sessions` / `POST /api/codex/sessions/{id}/messages`（SSE）接口形状跟 `claude_code.py` 对齐
+  - 前端 `NewSessionModal` 下拉新增 `codex` 选项（通过 provider registry 预置条目，session 创建时按 provider 分派到对应后端 endpoint）
+  - `SessionListItem` pill 区分显示 `claude` / `codex`
+  - `tsc --noEmit` + `cd frontend && npm run build` 通过
+
+  **T5-D（端到端 MCP 兼容性验证）**
+  - Workbench 新建 Codex session 成功进入对话界面
+  - 主 agent 成功调用 3 个 MCP skill（`clarify_intent` / `plan_research` / `search_papers`），每个返回合法 `structuredContent` 可解析
+  - 成功委派 `paper-searcher` subagent 一次（依赖 T5-A 生成的 `.codex/agents/paper-searcher.toml` 被 Codex 正确加载）
+  - 所有发现（tool_use schema 跑偏 / JSON 格式错 / 指令遵守度差异）按"可接受 / 需修复"分类记录到 `docs/releases/v2.x-multi-model.md` 的"Codex 兼容性发现"章节
+  - DP8 兜底：如果 paper-searcher 委派机制在 Codex 侧不完全等价于 Claude Task tool，记录为已知限制不阻塞 Task 5 DONE（Codex 侧退化为"手动 `/agent` 切换"）
+
+### [TODO] 6. 架构文档 + README + 决策 log 落地
+
+> **AC 重写记录 (2026-04-24)**：原 AC 含"三组 provider 配置样例"、"claude-code-router 命令清单"均为 CCR 方案产物，已失效。新 AC 拆分 release notes 为架构文档（`v2.x-multi-model.md`）+ 工作流文档（`v2.x-multi-subscription.md`，已存在）两份。
+
+- **What**: 新建架构 release notes 讲清 v2.x multi-model 架构全貌（provider registry / subagent 分档 / Codex 集成 / role_models 废弃），更新 README 加 1 行特性描述，补录本 plan 的 Decisions log。工作流相关的"怎么用双订阅"已由 `v2.x-multi-subscription.md` 覆盖。
 - **Files**:
-  - `docs/releases/v2.x-multi-model.md`
-  - 本 plan 的 Decisions log（已预写）
-  - `README.md`（多模型段落）
+  - `docs/releases/v2.x-multi-model.md`（新增：架构文档）
+  - `docs/releases/v2.x-multi-subscription.md`（已存在，修改：加 cross-reference 并补 Task 3/5/6 落地状态）
+  - `README.md`（修改：+1 行特性 + 链接）
+  - `docs/plans/2026-04-23-multi-model-subagent.md`（本文件，Decisions log 补录）
 - **Acceptance**:
-  - 文档包含：Anthropic / DeepSeek / OpenRouter 三组 provider 配置样例
-  - 启 claude-code-router 的命令清单（安装 / 启 / healthcheck）
-  - 新建多模型会话的 UI 操作流程截图或文字描述
-  - "v1.0 role vs v2.0 subagent" 对比表（形似神异）写进 release notes
-  - README 对应段落更新为 v2.0 多模型支持
+  - `docs/releases/v2.x-multi-model.md` 新建且包含以下章节：
+    1. Provider registry 架构（Task 1b）：`claude_code.providers` schema + anthropic 默认条目 + 未来扩 provider 样板
+    2. Subagent 分档机制（Task 3）：5 个 subagent 定义索引 + 模型别名分配 + DP1 fallback 实际路径
+    3. role_models 废弃（Task 4）：原因链条 + 迁移路径
+    4. Codex Workbench 集成（Task 5）：`codex app-server` JSON-RPC 协议要点 + 跨 provider 路由
+    5. **v1.0 role vs v2.0 subagent 对比表**（4 维度：LLM 意图驱动 vs 规则路由、独立 context 线程 vs 共享、原生载体 vs 自建运行时、stateless 按需 vs 永久身份）
+    6. **Codex 兼容性发现**章节（由 T5-D.4 填充）
+  - `docs/releases/v2.x-multi-subscription.md` 加 cross-reference 指向 `v2.x-multi-model.md` 的"架构层面"章节；底部补 Task 3/5/6 落地状态表
+  - `README.md` 特性列表加 1 行：简述双订阅 + 多 provider 能力 + 链接到两份 release notes；不新增大段 section
+  - 本 plan 的 Decisions log 追加 2026-04-24 的 4 条新决策
 
 ## Out of scope
 
-- claude-code-router 的安装、日常维护、fallback 策略（用户自管，Workbench 不感知）
+- claude-code-router 相关一切（2026-04-24 退休，见 Decisions log）
+- 第三方 `openai-codex-sdk` Python 包——本 plan Task 5 走官方 `codex app-server` + 自写 JSON-RPC 客户端，不引入非官方依赖
 - 动态语义路由（RouteLLM / OpenRouter Auto 风格）——本 plan 明确走静态分档
-- Workbench 内嵌代理进程 / 代理生命周期管理——未来单独 plan
+- `continues` session bridge 的 Workbench UI 集成——跨 CLI handoff 仍在 terminal 层操作，见 `docs/releases/v2.x-multi-subscription.md`
 - subagent 跨 session 复用 / 模板市场 / 社区共享
 - 主 agent 动态调 `effort` 级别（`low/medium/high/max`）——subagent 先写死默认档，后续再议
 - skill 内部 LLM 差异化（已决策：不做，参见 Decisions log）
+- Codex subagent 的 haiku/sonnet/opus 分档映射——统一用 `gpt-5.5`（2026-04-24 决策）
 
 ## Decision points
 
 Anticipated execution-time forks with pre-defined strategies.
 
-- **DP1**: If `setting_sources=["user"]` blocks loading project `.claude/agents/` → fall back to programmatic injection via `ClaudeAgentOptions.agents` passed at session build time.
-- **DP2**: If DeepSeek provider unreachable in Task 5 → fall back to GPT-4o-mini. If both unreachable → STOP with reason `no non-Anthropic provider available for compatibility verification`.
-- **DP3**: If `/agents` slash command does not list the 5 defined subagents in Task 3 after fallback path DP1 → STOP with reason `subagent loading mechanism failure`.
+- **DP1**: If `setting_sources=["user"]` blocks loading project `.claude/agents/` → fall back to programmatic injection via `ClaudeAgentOptions.agents` passed at session build time. **（已触发并落地，Task 3 DONE）**
+- **DP2**: ~~CCR + DeepSeek fallback~~ **已删除 (2026-04-24)**——CCR 退休，此 DP 不再适用
+- **DP3**: ~~`/agents` 列 subagent 失败 STOP~~ **已删除 (2026-04-24)**——Task 3 AC 改为单测覆盖，手测 `/agents` 降为 supplementary，不再是硬性 AC
 - **DP4**: If subagent evaluator in `/pipeline` returns invalid JSON for any task in this plan → STOP per `/pipeline` SKILL.md Phase 2.2 rule (FP triggered).
-- **DP5**: If Task 4 (drop `role_models`) causes any existing skill to fail at import because it passed `role_id` as a required kwarg → STOP. Fix the caller to use the network's default provider routing instead of adding a compat shim.
+- **DP5**: If Task 4 (drop `role_models`) causes any existing skill to fail at import because it passed `role_id` as a required kwarg → STOP. Fix the caller to use the network's default provider routing instead of adding a compat shim. **（已通过，Task 4 DONE）**
+- **DP7** (新增 2026-04-24): If `codex app-server generate-json-schema` output shape diverges from the JSON-RPC client we implement (missing required fields / renamed types) → STOP with reason `codex app-server schema drift — pin codex version or regenerate client types`.
+- **DP8** (新增 2026-04-24): If Task 5 T5-D.3 fails (paper-searcher subagent cannot be spawned/delegated on Codex side because Codex's `/agent` semantics differ from Claude Task tool) → **do NOT stop**; record as known limitation in `docs/releases/v2.x-multi-model.md` "Codex 兼容性发现" 章节, downgrade Codex subagent usage to "user-initiated `/agent` switching" only, then mark Task 5 DONE.
 
 ## External preconditions
 
 Physical prerequisites the user must satisfy before `/pipeline` starts processing this plan.
 
 - **EP1**: Environment variable `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` set — verify: `echo $CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` returns `70` — on-failure: STOP.
-- **EP2**: For Task 5 only — claude-code-router running locally — verify: `curl -fsS http://localhost:3456/health` returns 200 within 5s — on-failure: STOP (cannot proceed to Task 5 without a reverse-proxy endpoint).
+- **EP2** (重写 2026-04-24): For Task 5 — Codex CLI installed (≥ 0.124.0) + ChatGPT Plus/Pro OAuth logged in — verify: `codex --version` 返回 ≥ 0.124.0 且 `~/.codex/auth.json` 存在——on-failure: STOP (cannot spawn `codex app-server` without auth).
 - **EP3**: Git working tree clean on `development` branch before kickoff — verify: `git status --porcelain` empty — on-failure: STOP (pipeline produces one commit per task; dirty state pollutes commits).
-- **EP4**: `ANTHROPIC_API_KEY` present (either original or router-scoped) — verify: `[[ -n "$ANTHROPIC_API_KEY" ]]` — on-failure: STOP.
+- **EP4**: `ANTHROPIC_API_KEY` present — verify: `[[ -n "$ANTHROPIC_API_KEY" ]]` — on-failure: STOP.
+- **EP5** (新增 2026-04-24): For Task 5 — Python environment has PyYAML + toml packages (for converter) — verify: `python -c "import yaml, tomli_w"` (or `tomllib` + `tomli_w` depending on Python version) — on-failure: STOP, prompt to install.
 
 ## Failure policy
 
@@ -152,6 +205,8 @@ STOP conditions halting execution and surfacing the failure. **Not fallbacks** �
 - **FP4**: If subagent evaluator for SSP returns non-JSON or missing keys → STOP with stage `evaluate`, reason `subagent evaluation returned invalid JSON for task <id>`.
 - **FP5**: If `frontend/` build (`tsc --noEmit` then `npm run build`) fails on any frontend task → STOP with stage `test`, reason `frontend build failed for task <id>`; attach tsc/build error.
 - **FP6**: If Phase 0 `check-sections` against this plan file fails → STOP at pre-flight (means DP/EP/FP/SSP missing or malformed).
+- **FP7** (新增 2026-04-24): If `sync_subagents.py` output TOML files cause `codex app-server` to report agent parse errors on startup → STOP with stage `test`, reason `subagent TOML schema mismatch — fix converter field mapping`; attach codex stderr log.
+- **FP8** (新增 2026-04-24): If Task 5 T5-D.2 (3 MCP skill 调用) has any skill returning non-parseable structuredContent after 2 fix attempts → STOP with stage `test`, reason `codex MCP structuredContent parse failure for <skill_name>`; attach response sample.
 
 ## Subtask split policy
 
@@ -162,12 +217,12 @@ When a task should be auto-split at execution time, and how the split is labeled
 - **Labeling**: append lowercase letters `a`, `b`, `c`, ... to the parent task id in declaration order (`1` → `1a`, `1b`, `1c`). The parent task transitions to `[DONE]` once split (container role); each sub-task is processed as a fresh leaf.
 
 **Per-task split prediction** (informational — evaluator decides at runtime):
-- Task 1 (backend provider): likely split (3 files, 3 concerns).
-- Task 2 (frontend UI): likely split (multiple components, 2+ concerns).
-- Task 3 (subagent definitions): may split (5 MD files — one concern per file).
-- Task 4 (drop `role_models`): single-unit likely.
-- Task 5 (non-Claude verification): single-unit (manual driven).
-- Task 6 (docs): single-unit likely.
+- Task 1 (backend provider): already split into 1a/1b/1c, all DONE.
+- Task 2 (frontend UI): DONE（single-unit 实际足够）.
+- Task 3 (subagent definitions): DONE（single-unit）.
+- Task 4 (drop `role_models`): DONE（single-unit）.
+- Task 5 (Codex Workbench 集成 + MCP 兼容性): **likely split into 5a-5d** — T5-A converter (scripts + tests)、T5-B session manager (server/codex/ module + fake fixture tests)、T5-C API + frontend (routes + UI)、T5-D E2E 验证 + 发现记录。4 个关注点、>5 文件跨 >2 模块，触发 SSP 拆分。
+- Task 6 (文档): single-unit likely（架构 release notes + README + plan Decisions log）.
 
 ## Decisions log
 
@@ -176,6 +231,10 @@ When a task should be auto-split at execution time, and how the split is labeled
 - **2026-04-23**：**废弃 `llm.role_models`**。Skill 是黑盒，内部 LLM 调用不做差异化；省 token 的决策权交给（a）用户的 session provider 选择、（b）subagent 分档。理由：v1.0 的角色-模型映射是静态硬编码，违背 v2.0 "LLM 决策权"精神；skill 内部差异化会导致"DeepSeek session 里偷偷调 Claude"的账单 surprise。
 - **2026-04-23**：**v2.0 subagent 形似 v1.0 role 但本质不同**——LLM 意图驱动路由（非规则）、独立 context 线程（非共享）、Claude Code 原生载体（非自建运行时）、stateless 按需调用（非永久身份）。这是对"v2.0 砍老架构"的真正兑现，不是回到 v1.0。
 - **2026-04-23**：v2.0 继续在 `development` 分支累积，不开新分支。整个 v2.0 里程碑稳定后一次性 merge 到 main + 打 tag。
+- **2026-04-24**：**CCR 退休，方向切为 F 方案**（双官方 CLI + `continues` handoff）。理由：Anthropic 2026-01-09 封锁第三方工具消费 Claude 订阅 OAuth；OpenAI 明确允许 ChatGPT Plus/Pro OAuth 给第三方；原 Task 5 的 "CCR + DeepSeek" 路径不再有价值。完整决策记录见 `docs/releases/v2.x-multi-subscription.md`。副作用：Task 5/6 AC 重写，原 CCR / DeepSeek / GPT-4o-mini fallback 相关 DP/EP/FP 删除（DP2 / DP3 / 旧 EP2 / 旧 FP2），新增 DP7/DP8/新 EP2/EP5/FP7/FP8。
+- **2026-04-24**：**Workbench 后端原生集成 Codex session**，走官方 `codex app-server --listen stdio://` + 自写 JSON-RPC 2.0 客户端。理由：不引入第三方 `openai-codex-sdk`（非官方 maintainer）依赖；`codex app-server` 是官方 `[experimental]` 入口，schema 可通过 `generate-json-schema` 自描述；工作量 1-2 天，比 PTY 驱动 / SDK 风险低。
+- **2026-04-24**：**subagent 单一源 (.claude/agents/*.md) + converter**。`scripts/sync_subagents.py` + pre-commit hook 自动生成 `.codex/agents/*.toml`；**Codex 侧统一 `model=gpt-5.5` 不做 haiku/sonnet/opus 分档映射**。理由：Codex 无对等分档模型，统一用当前最强避免选择困惑；分档在 Claude 侧仍保留。
+- **2026-04-24**：**Task 3 手测 AC 改写为单测覆盖**。原"Workbench `/agents` 列 5 subagent"+"真实对话委派 paper-searcher"改为 `pytest tests/test_claude_code_agents.py` 覆盖（16 tests），手测降为 supplementary 不阻塞 pipeline。理由：pipeline 要全自动跑；真实对话委派的"Claude 模型行为"不在我们架构验证边界内。
 
 ## Reference
 
