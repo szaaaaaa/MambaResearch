@@ -1,7 +1,14 @@
 # Plan: Claude Code Multi-Auth (Anthropic + Codex OAuth + Multi-Provider Fork)
 
+> **Status note (2026-04-24)**: 此 plan 的 fork 方向（**方案 A**）**暂不执行**。
+> 当前采用**方案 F**（双官方 CLI + `continues` session bridge + NTFS junction 共享 skill），
+> 详见 [`docs/releases/v2.x-multi-subscription.md`](../releases/v2.x-multi-subscription.md)。
+> 本 plan 保留为 **archived blueprint**——未来若 F 方案遇到不可接受的限制（如无法无损
+> 延续 tool 调用历史 / 需要同 session 秒切 provider / OpenAI 改变 OAuth 政策等），
+> 可从此 plan 回到 A 方案执行。
+
 **Created**: 2026-04-24
-**Status**: in-progress
+**Status**: archived (plan not executed; see release note above)
 **Scope**: Fork `anthropics/claude-code` 为独立 GitHub 项目 `szaaaaaa/claude-code-multi-auth`，在保留官方 harness（`.claude/agents` / `SKILL.md` / slash 命令 / permission modes / hooks / `CLAUDE.md` / `Task` 委派）的前提下，新增 Codex OAuth（ChatGPT Plus/Pro 订阅）登录与多 LLM provider 切换。Anthropic 通路字节级保留官方行为以规避指纹识别；Codex / 其他 provider 通路作为增量新增，互不影响。
 
 ## Background
