@@ -202,14 +202,19 @@ def test_session_response_never_contains_api_key(fake_sdk):
 
 
 def test_list_providers_returns_registry_entries(fake_sdk):
-    """端点返回 registry 里所有 provider，每条含 name / base_url / default_model。"""
+    """端点返回 registry 里所有 provider + 合成的 codex 虚拟条目。
+
+    每条含 name / base_url / default_model。Codex 条目（Task 5c）是端点层合成
+    的，不走 provider registry——因为 codex 用 ChatGPT OAuth，不走 Claude 侧的
+    env 注入。前端凭此单一 Modal 入口分派到不同后端命名空间。
+    """
     client = TestClient(app_module.app)
     resp = client.get("/api/claude-code/providers")
     assert resp.status_code == 200
     body = resp.json()
     assert "providers" in body
     names = {p["name"] for p in body["providers"]}
-    assert names == {"anthropic", "deepseek"}
+    assert names == {"anthropic", "deepseek", "codex"}
 
     # 结构检查
     for p in body["providers"]:
@@ -217,6 +222,11 @@ def test_list_providers_returns_registry_entries(fake_sdk):
     deepseek = next(p for p in body["providers"] if p["name"] == "deepseek")
     assert deepseek["base_url"] == "http://localhost:3456"
     assert deepseek["default_model"] == "deepseek-chat"
+
+    # Task 5c — codex 虚拟条目
+    codex = next(p for p in body["providers"] if p["name"] == "codex")
+    assert codex["base_url"] == "internal://codex-app-server"
+    assert codex["default_model"] == "gpt-5.5"
 
 
 def test_list_providers_never_leaks_api_key_fields(fake_sdk):
@@ -230,13 +240,26 @@ def test_list_providers_never_leaks_api_key_fields(fake_sdk):
     assert "api_key_env" not in flat
 
 
-def test_list_providers_empty_registry_returns_empty_list(fake_sdk, monkeypatch):
-    """registry 为空时返回 ``{"providers": []}``，不 500。"""
+def test_list_providers_empty_registry_returns_codex_only(fake_sdk, monkeypatch):
+    """registry 为空时仍返回合成的 codex 虚拟条目（Task 5c），不 500。
+
+    codex 不依赖 claude_code.providers 段——configs 缺失或空时它也该可用，
+    因为它走 ChatGPT OAuth 而不是 provider registry 的 env 注入。
+    """
     monkeypatch.setattr(providers_mod, "_cached_registry", {})
     client = TestClient(app_module.app)
     resp = client.get("/api/claude-code/providers")
     assert resp.status_code == 200
-    assert resp.json() == {"providers": []}
+    body = resp.json()
+    assert body == {
+        "providers": [
+            {
+                "name": "codex",
+                "base_url": "internal://codex-app-server",
+                "default_model": "gpt-5.5",
+            }
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------

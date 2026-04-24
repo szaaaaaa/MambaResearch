@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.server.claude_code.session_manager import session_manager as cc_session_manager
+from src.server.codex.session_manager import codex_session_manager
 from src.server.routes.claude_code import router as claude_code_router
+from src.server.routes.codex import router as codex_router
 from src.server.routes.config import router as config_router
 from src.server.routes.models import router as model_router
 from src.server.routes.runs import router as runs_router
@@ -34,12 +36,19 @@ app.include_router(config_router)
 app.include_router(runs_router)
 app.include_router(skills_router)
 app.include_router(claude_code_router)
+app.include_router(codex_router)
 
 
 @app.on_event("shutdown")
 async def _shutdown_claude_code_sessions() -> None:
     """进程关停时关闭所有 Claude Code SDK 会话，避免孤儿 CLI 子进程。"""
     await cc_session_manager.shutdown()
+
+
+@app.on_event("shutdown")
+async def _shutdown_codex_sessions() -> None:
+    """进程关停时关闭所有 Codex app-server 会话，避免孤儿子进程。"""
+    await codex_session_manager.shutdown()
 
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="static")

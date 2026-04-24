@@ -32,6 +32,15 @@ import { WorkbenchShell } from '../workbench/shell/WorkbenchShell';
  */
 const CC_LAST_SESSION_KEY = 'cc_last_session_id';
 
+/**
+ * Task 5c — 按 session.provider 分派 REST 端点前缀。
+ * codex session 走 ``/api/codex/*``；其余走 ``/api/claude-code/*``。
+ * 未知或 null provider 视为默认 Claude 路径（向后兼容 Task 2 之前创建的旧
+ * session，这些 session 的 provider 字段可能为 null）。
+ */
+const sessionEndpointPrefix = (provider: string | null | undefined): string =>
+  provider === 'codex' ? '/api/codex' : '/api/claude-code';
+
 const readLastSessionId = (): string | null => {
   try {
     return window.localStorage.getItem(CC_LAST_SESSION_KEY);
@@ -291,8 +300,9 @@ export const WorkbenchTab: React.FC = () => {
 
     try {
       const active = await ensureSession();
+      const prefix = sessionEndpointPrefix(active.provider);
       const response = await fetch(
-        `${API_BASE}/api/claude-code/sessions/${active.id}/messages`,
+        `${API_BASE}${prefix}/sessions/${active.id}/messages`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -322,12 +332,16 @@ export const WorkbenchTab: React.FC = () => {
         } catch {
           /* keep raw */
         }
-        if (frame.event === 'cc_finished') {
+        // Task 5c — Codex session 走 ``codex_*`` 命名空间事件；cc_* 是 Claude 侧，
+        // 两边语义对齐：finished/error/permission_request 直接复用同一处理路径。
+        // codex_message 是原始 JSON-RPC notification（``item/agentMessage/delta`` 等），
+        // 先整帧 append 让用户能看到发生了什么，deep rendering 留给 Task 5d 的 E2E 后补。
+        if (frame.event === 'cc_finished' || frame.event === 'codex_finished') {
           ccSetRunning(false);
           ccSetTurnStartAt(null);
           return;
         }
-        if (frame.event === 'cc_error') {
+        if (frame.event === 'cc_error' || frame.event === 'codex_error') {
           const text =
             parsed && typeof parsed === 'object' && 'message' in (parsed as object)
               ? String((parsed as { message?: unknown }).message ?? '')
@@ -337,19 +351,39 @@ export const WorkbenchTab: React.FC = () => {
           ccSetTurnStartAt(null);
           return;
         }
-        if (frame.event === 'cc_permission_request') {
-          // 形状契约：{ request_id, session_id, tool_name, input }
+        if (frame.event === 'codex_message') {
+          // 原始 JSON-RPC 通知帧——5c 阶段整帧塞进 items 做基本可见性，
+          // 5d 会根据实测发现决定是否做精细化拆分
+          ccAppendItem({ type: 'codex_raw', payload: parsed });
+          return;
+        }
+        if (
+          frame.event === 'cc_permission_request' ||
+          frame.event === 'codex_permission_request'
+        ) {
+          // 形状契约：
+          //   Claude  (cc_permission_request): { request_id, session_id, tool_name, input }
+          //   Codex   (codex_permission_request): { request_id, session_id, action_key, payload }
+          // 把两种形状归一化：Codex 的 action_key 作为 tool_name 展示，payload 作为 input。
           if (parsed && typeof parsed === 'object') {
             const rec = parsed as Record<string, unknown>;
             const requestId = typeof rec.request_id === 'string' ? rec.request_id : '';
             const sessionId = typeof rec.session_id === 'string' ? rec.session_id : '';
-            const toolName = typeof rec.tool_name === 'string' ? rec.tool_name : '';
+            const toolName =
+              typeof rec.tool_name === 'string'
+                ? rec.tool_name
+                : typeof rec.action_key === 'string'
+                ? rec.action_key
+                : '';
+            const input = rec.input !== undefined ? rec.input : rec.payload;
             if (requestId && sessionId && toolName) {
               const req: ClaudeCodePermissionRequest = {
                 request_id: requestId,
                 session_id: sessionId,
                 tool_name: toolName,
-                input: rec.input,
+                input,
+                // 保留 provider 供 Modal 分派决策 POST 到正确端点
+                provider: active.provider,
               };
               ccEnqueuePermissionRequest(req);
             }
@@ -513,7 +547,8 @@ export const WorkbenchTab: React.FC = () => {
       return;
     }
     try {
-      await fetch(`${API_BASE}/api/claude-code/sessions/${active.id}/interrupt`, {
+      const prefix = sessionEndpointPrefix(active.provider);
+      await fetch(`${API_BASE}${prefix}/sessions/${active.id}/interrupt`, {
         method: 'POST',
       });
     } catch (error) {
@@ -532,7 +567,8 @@ export const WorkbenchTab: React.FC = () => {
     if (!active || isRunning) return;
     if (!window.confirm('结束当前会话？此操作将断开 SDK client 并清空对话记录。')) return;
     try {
-      await fetch(`${API_BASE}/api/claude-code/sessions/${active.id}`, { method: 'DELETE' });
+      const prefix = sessionEndpointPrefix(active.provider);
+      await fetch(`${API_BASE}${prefix}/sessions/${active.id}`, { method: 'DELETE' });
     } catch (error) {
       pushError(`结束会话失败：${String(error)}`);
       return;
@@ -571,9 +607,14 @@ export const WorkbenchTab: React.FC = () => {
     async (provider: string | null) => {
     ccGetAbortController()?.abort();
     try {
-      const body: Record<string, unknown> = { permission_mode: permissionMode };
-      if (provider) body.provider = provider;
-      const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
+      const prefix = sessionEndpointPrefix(provider);
+      // codex 的 create body 不接受 permission_mode（它用 sandbox_mode 作替代），
+      // 且不走 provider registry 的 env 注入——按 prefix 分支组装 body。
+      const body: Record<string, unknown> =
+        provider === 'codex'
+          ? { sandbox_mode: 'read-only' }
+          : { permission_mode: permissionMode, ...(provider ? { provider } : {}) };
+      const response = await fetch(`${API_BASE}${prefix}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

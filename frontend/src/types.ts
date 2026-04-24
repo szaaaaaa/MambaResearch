@@ -427,6 +427,12 @@ export interface ClaudeCodePermissionRequest {
   session_id: string;
   tool_name: string;
   input: unknown;
+  /**
+   * Task 5c — 决策 POST 目标 provider。``codex`` 时 Modal 走
+   * ``/api/codex/sessions/{id}/permissions``；其余（anthropic / 其它 registry 条目
+   * / 旧 session 的 undefined）走 ``/api/claude-code/sessions/{id}/permissions``。
+   */
+  provider?: string | null;
 }
 
 /**

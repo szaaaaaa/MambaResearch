@@ -36,8 +36,11 @@ async function postDecision(
   sessionId: string,
   requestId: string,
   decision: 'allow' | 'allow_session' | 'deny',
+  provider: string | null | undefined,
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/claude-code/sessions/${sessionId}/permissions`, {
+  // Task 5c — codex session 的决策走 ``/api/codex/*``；其它走 ``/api/claude-code/*``
+  const prefix = provider === 'codex' ? '/api/codex' : '/api/claude-code';
+  const response = await fetch(`${API_BASE}${prefix}/sessions/${sessionId}/permissions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ request_id: requestId, decision }),
@@ -72,7 +75,7 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({ request, onRes
     setSubmitting(true);
     setError(null);
     try {
-      await postDecision(request.session_id, request.request_id, decision);
+      await postDecision(request.session_id, request.request_id, decision, request.provider);
       onResolved(request.request_id);
     } catch (e) {
       setError(String(e));

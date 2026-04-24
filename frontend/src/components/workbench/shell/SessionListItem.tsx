@@ -136,7 +136,12 @@ export const SessionListItem: React.FC<Props> = ({
             {row.provider ? (
               <span
                 className={`inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-medium ${
-                  isActive
+                  // Task 5c — provider 分色：codex 用 emerald（区别于 Claude 家族）
+                  row.provider === 'codex'
+                    ? isActive
+                      ? 'bg-emerald-700 text-emerald-50'
+                      : 'bg-emerald-100 text-emerald-800'
+                    : isActive
                     ? 'bg-slate-700 text-slate-100'
                     : 'bg-slate-100 text-slate-700'
                 }`}

@@ -346,22 +346,37 @@ async def list_models():
 
 @router.get("/api/claude-code/providers")
 async def list_providers():
-    """列出注册的 LLM provider——供前端新建会话 Modal 下拉渲染。
+    """列出前端新建会话 Modal 下拉渲染的 provider 清单。
+
+    端点语义虽然挂在 ``/api/claude-code`` 命名空间下，但返回**所有** Workbench
+    可用的 provider，因为前端只有一个 Modal 入口——列表里的每一项由前端按
+    ``name`` 分派到具体的后端 API（``anthropic`` / 其它 registry 条目走
+    ``/api/claude-code/*``，``codex`` 走 ``/api/codex/*``）。
 
     只暴露非敏感字段：name / base_url / default_model。``api_key_env`` 也不回传——
     它是查询 key 的索引，虽非 key 本身但会泄漏服务端 env 布局，同样应屏蔽。
+
+    Codex 的"虚拟条目"：不走 provider registry（它是 Claude-native env 注入路径，
+    Codex 用 ChatGPT OAuth 不经手 env），直接在这里合成一个 ``base_url=
+    internal://codex-app-server`` 的条目，让前端能看到且统一分派。
     """
     registry = get_provider_registry()
-    return {
-        "providers": [
-            {
-                "name": cfg.name,
-                "base_url": cfg.base_url,
-                "default_model": cfg.default_model,
-            }
-            for cfg in registry.values()
-        ]
-    }
+    providers: list[dict[str, str]] = [
+        {
+            "name": cfg.name,
+            "base_url": cfg.base_url,
+            "default_model": cfg.default_model,
+        }
+        for cfg in registry.values()
+    ]
+    providers.append(
+        {
+            "name": "codex",
+            "base_url": "internal://codex-app-server",
+            "default_model": "gpt-5.5",
+        }
+    )
+    return {"providers": providers}
 
 
 @router.post("/api/claude-code/sessions/{session_id}/permissions")
