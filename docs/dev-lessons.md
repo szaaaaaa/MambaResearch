@@ -612,6 +612,67 @@ sources.pdf_download:
 
 ---
 
+### 问题 27：一次性 bool ref guard 静默吞掉第二次触发
+
+**发生时间**：2026-04-23
+
+**现象**：Task 12 Workbench 实验联动 /review 时发现：`WorkbenchTab.tsx` 用 `useRef<boolean>(false)` 做 `pendingWorkbenchLaunch` 的消费 guard，首次 launch 处理完把 ref 置 `true` 后**永不复位**。同一组件 mount 内用户第二次点击另一个 ExperimentPlan 的"在工作台运行"按钮时，effect 在 `if (ref.current) return` 处直接 bail，pending 不被消费、session 不建、消息不发——第二次 launch 被静默吞掉。
+
+**根因**：guard 的意图是防 React 18 StrictMode 对同一 effect firing 的双跑，但写成了"一次性 latch"。StrictMode 双跑和"逻辑上的第二次触发"是两件事——前者针对"同一 launch 对象被消费了没"，后者针对"这是不是一个新 launch"。用 bool 无法区分二者。
+
+**解决**：
+- `WorkbenchTab.tsx`：`useRef<boolean>(false)` → `useRef<PendingWorkbenchLaunch | null>(null)`，guard 条件改为 `processedLaunchRef.current === pending`（对象身份比较）
+- 同一 launch 对象重复进 effect（StrictMode 双跑）→ 引用相等 bail；新 launch 对象 → 引用不等通过
+
+**教训**：
+- **一次性 bool ref 不适合"防 StrictMode 双跑 + 允许多次真实触发"的场景**——必须用对象身份（`useRef<T | null>`）区分"已处理过这一次"和"已永久禁用"
+- guard 的语义应该写成「已处理过哪个 launch」而不是「是否处理过 launch」，前者可区分多次真实触发，后者会误杀
+- StrictMode 防抖的正确模式：`if (lastProcessedRef.current === currentInput) return`；错误模式：`if (alreadyRan) return`
+
+---
+
+### 问题 28：hook 收尾代码 except 分支 return 吞掉全部 artifact
+
+**发生时间**：2026-04-23
+
+**现象**：Task 12 Workbench 实验联动 /review 时发现：`session_manager._run_workbench_finalize_hook` 在解析 `outputs_dir` 时，如果 `load_yaml` / `resolve_path` 任何一步抛异常，`except` 分支直接 `return`——整条 finalize 路径被吞掉，workspace 里的 `results.json` 永远不会被封装成 ExperimentResults 回挂到原 run。只要 `configs/agent.yaml` 的 `paths.outputs_dir` 字段有任何读取问题（文件权限、格式错误、变量未定义），所有 Workbench 实验的结果都会永久丢失，且用户看不到任何报错。
+
+**根因**：写 hook 类代码时把"异常处理"和"跳过本次执行"等同起来了。但 `outputs_dir` 解析失败有明确的 fallback（`ROOT/outputs` 是历史默认值），应该回退到它继续执行，而不是放弃整条路径。`return` 在这里是"回避问题"——不诚实地把异常吞掉还让调用方以为成功（没抛错）。
+
+**解决**：
+- `session_manager.py:_run_workbench_finalize_hook`：把 `default_outputs = (Path(ROOT) / "outputs").resolve()` 提到 try 之前；except 分支改为 `outputs_dir = default_outputs`（继续执行）而不是 `return`（放弃）
+- logger.exception 保留诊断信息，但不阻断主流程
+
+**教训**：
+- **hook / cleanup / 收尾类代码的 except 分支应 fallback 到默认值继续执行，绝不 `return` 放弃整条路径**——这类代码只跑一次，错过就永远错过
+- `except: return` 是 solution-standards Rule 1 ban list 里"null-guard fallback 代替修根因"的变体——它让异常被吞、用户看不到、问题反复发生
+- 判别标准：如果此处跳过会让调用方永久失去产出（而不只是延迟），就必须有 fallback 不能 return
+
+---
+
+### 问题 29：reader loop EOF 不唤醒 send_message 的 turn queue
+
+**发生时间**：2026-04-24
+
+**现象**：Task 5bb 开发 codex app-server JSON-RPC 客户端时，/review 发现 `_reader_loop` 检测到 stdout EOF（codex 子进程挂掉或被 kill）时，只唤醒 `_pending` 字典里的 RPC Future，**不处理** `_current_turn_queue`。若 codex 在 turn 进行中 crash：`send_message` 这个 async generator 正 `await queue.get()`，但没人再往队列放东西——协程永久挂起，调用方 SSE 流也永远结束不了，前端看不到任何错误提示。
+
+**根因**：reader 只把自己看作"三类消息的 demux 路由"，从没想过自己**也是生产者**——当真正的数据源（codex）没了，reader 有义务合成一个终止帧来通知正在消费的 generator。错把"没有新消息可推"等同于"什么都不做"，忽略了 `asyncio.Queue` 的"get 阻塞等 put"语义要求必须有人解封。
+
+**解决**：
+- `src/server/codex/app_server_client.py`：`_reader_loop` 整条 while 循环包进 `try/finally`——cleanup 块进 `finally:` 覆盖三条退出路径（EOF / CancelledError / 读异常），之前放 while 之后只覆盖了前两条，CancelledError 从 `raise` 跳过 cleanup 导致同样的 deadlock
+- cleanup 块：若 `_current_turn_queue is not None`，用 `put_nowait` 推入合成帧 `{"jsonrpc": "2.0", "method": "connection/lost", "params": {"reason": "codex app-server stdout closed"}}`——`put_nowait` 而不是 `await queue.put` 是因为被取消的上下文里再 await 会被二次取消；默认 Queue 无界不会 QueueFull
+- `_TURN_TERMINAL_METHODS` 加入 `"connection/lost"`，`send_message` 的 while 循环碰到即 break 正常退出；上层路由能把"连接丢了"封装成 SSE 错误帧
+- 作为"pending RPC future 置 ConnectionError"的对偶——两路悬挂的消费者（await Future / await Queue.get）都在同一个 `finally` 块里解封
+
+**教训**：
+- **Reader / demux 协程退出时必须解封所有活跃消费者**——pending Futures 要 `set_exception`，带队列的 generator 要推入终止哨兵；只处理其中一类就是 deadlock
+- **cleanup 必须放 `try/finally` 的 finally 块**——不能只放 while 循环后的 fall-through 分支。后者漏掉 `CancelledError` 重抛路径；前者三条退出路径（正常 break / EOF / cancel）都会跑。"EOF 清理"和"cancel 清理"看似不同，本质都是"reader 不再产 消息了，下游消费者等死"
+- **cleanup 块里只能用 sync 原语（`put_nowait` / `set_result`），不能再 `await`**——被 cancel 的上下文里 await 会被二次取消，哨兵可能推不进去；asyncio.Queue 默认无界 `put_nowait` 不抛异常是这个模式能成立的前提
+- 合成终止帧比 `raise CancelledError` 更友好——generator 能完整 `yield` 最后一帧通知上层"连接丢了，原因是 X"，前端能展示具体错误而不是无提示挂掉
+- 判别标准：只要某个协程有 `await queue.get()` 且队列由另一个协程单向喂，那个喂的协程退出时就**必须**主动喂一个终止信号——否则 `get()` 就是永久死等
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -697,5 +758,5 @@ sources.pdf_download:
 
 ---
 
-*最后更新：2026-04-19*
+*最后更新：2026-04-24*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*

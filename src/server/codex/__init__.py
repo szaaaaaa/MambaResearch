@@ -17,10 +17,15 @@ from __future__ import annotations
 
 from src.server.codex.app_server_client import (
     AppServerClient,
+    CodexAppServerClient,
+    CodexRpcError,
     CodexSchemaError,
     StubAppServerClient,
+    check_schema_compatibility,
+    reset_schema_cache,
 )
 from src.server.codex.session_manager import (
+    CodexAuthError,
     CodexSession,
     CodexSessionManager,
     PermissionState,
@@ -29,10 +34,15 @@ from src.server.codex.session_manager import (
 
 __all__ = [
     "AppServerClient",
+    "CodexAppServerClient",
+    "CodexAuthError",
+    "CodexRpcError",
     "CodexSchemaError",
     "CodexSession",
     "CodexSessionManager",
     "PermissionState",
     "StubAppServerClient",
+    "check_schema_compatibility",
     "codex_session_manager",
+    "reset_schema_cache",
 ]

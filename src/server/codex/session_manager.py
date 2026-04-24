@@ -35,7 +35,7 @@ from typing import Any, Awaitable, Callable
 
 from src.server.codex.app_server_client import (
     AppServerClient,
-    StubAppServerClient,
+    CodexAppServerClient,
 )
 
 logger = logging.getLogger(__name__)
@@ -225,26 +225,36 @@ async def _default_build_client(
     sandbox_mode: str,
     permission_state: PermissionState,
 ) -> AppServerClient:
-    """5ba 默认工厂：返回 ``StubAppServerClient`` 并 ``connect``。
+    """生产工厂：构造 ``CodexAppServerClient`` 并 ``connect``（5bb）。
 
-    5bb 会把此函数替换为真实实现——spawn ``codex app-server --listen stdio://``、
-    JSON-RPC schema 校验、SSE 流适配等全部在那边落地。工厂签名保持不变。
+    与 Claude 侧 ``_build_client`` 对偶——把传输层实现的具体类型与 session manager
+    解耦；测试通过 ``CodexSessionManager(client_factory=...)`` 注入替代品。
 
     Parameters
     ----------
     session_id : str
-        后端 UUID，同时作为 app-server sessionId 和 permission bridge 凭据。
+        后端 UUID，同时作为 permission bridge 的凭据用于填充 SSE 帧。
     cwd, model, sandbox_mode : str
-        透传给 client 构造器。
+        透传给 client 构造器——cwd 是 codex 子进程工作目录，sandbox_mode 映射
+        到 codex 的 sandbox 参数（read-only / workspace-write / danger-full-access）。
     permission_state : PermissionState
-        5bb 的实现里会构造 bridge 注入到 client；5ba 的 stub 不需要。
+        session 自身的 HITL 状态机——本工厂构造 ``_build_permission_bridge`` 包
+        装后注入 client，client 侧 reader loop 碰到服务端 approval 请求时会回调
+        bridge 走"命中缓存直接放行 / 否则推 SSE 等 Future"流程。
 
     Returns
     -------
     AppServerClient
-        已 ``connect`` 的客户端（stub 阶段仅标记 connected=True）。
+        已 ``connect`` 的客户端——``connect`` 内部跑完 schema 校验、spawn、
+        initialize、thread/start 一整套握手。
     """
-    client = StubAppServerClient(cwd=cwd, model=model, sandbox_mode=sandbox_mode)
+    bridge = _build_permission_bridge(session_id, permission_state)
+    client = CodexAppServerClient(
+        cwd=cwd,
+        model=model,
+        sandbox_mode=sandbox_mode,
+        permission_bridge=bridge,
+    )
     await client.connect()
     return client
 
