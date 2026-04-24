@@ -52,6 +52,14 @@ frontend/dist/
 !.claude/agents/
 !.claude/agents/**
 
+# Codex — exclude .codex/ children (local state, history, cache) but keep
+# .codex/agents/ (auto-generated from .claude/agents/ via scripts/sync_subagents.py)
+# and .codex/config.toml (project-level MCP for codex app-server; Task 5).
+.codex/*
+!.codex/agents/
+!.codex/agents/**
+!.codex/config.toml
+
 # Self-improvement — project-local Claude learnings, personal dev memory
 .learnings/
 
