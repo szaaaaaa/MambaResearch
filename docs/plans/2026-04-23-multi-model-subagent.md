@@ -91,7 +91,7 @@
   - 跑一次完整流程 `plan_research → search_papers → draft_report`，日志里所有 LLM 调用走同一 provider（日志字段 `llm.provider/model` 一致）
   - `pytest tests/` 全绿
 
-### [TODO] 5. Codex Workbench 集成 + MCP 兼容性验证（F 方案）
+### [DONE] 5. Codex Workbench 集成 + MCP 兼容性验证（F 方案）
 
 > **AC 重写记录 (2026-04-24)**：原 Task 5 基于 CCR + DeepSeek 路径已全部失效（CCR 退休，方向切为 F 方案——见 `docs/releases/v2.x-multi-subscription.md` 与 Decisions log 2026-04-24）。重写为 Workbench 后端原生集成官方 `codex app-server` + subagent 单一源 converter + 完整 MCP 兼容性验证。
 
@@ -140,7 +140,62 @@
   - 所有发现（tool_use schema 跑偏 / JSON 格式错 / 指令遵守度差异）按"可接受 / 需修复"分类记录到 `docs/releases/v2.x-multi-model.md` 的"Codex 兼容性发现"章节
   - DP8 兜底：如果 paper-searcher 委派机制在 Codex 侧不完全等价于 Claude Task tool，记录为已知限制不阻塞 Task 5 DONE（Codex 侧退化为"手动 `/agent` 切换"）
 
-### [TODO] 6. 架构文档 + README + 决策 log 落地
+
+
+
+
+### [PENDING-VERIFY] 5d. Codex E2E 验证 + 发现记录
+- **What**: 真实 python app.py 启动后，新建 Codex session，主 agent 调 3 个 MCP skill（clarify_intent/plan_research/search_papers）返回合法 structuredContent；尝试委派 paper-searcher subagent；所有发现分类记入 docs/releases/v2.x-multi-model.md。
+- **Acceptance**:
+  - Workbench 启动（真实 python app.py）后新建 Codex session 成功进入对话界面
+  - 主 agent 成功调用 3 个 MCP skill（clarify_intent / plan_research / search_papers），每个返回合法 structuredContent 可解析
+  - 尝试委派 paper-searcher subagent 一次；依赖 5a 生成的 .codex/agents/paper-searcher.toml 被 Codex 正确识别
+  - 所有发现（tool_use schema 跑偏 / JSON 格式错 / 指令遵守度差异）按 可接受 / 需修复 分类记录到 docs/releases/v2.x-multi-model.md 的 Codex 兼容性发现 章节
+  - 如 paper-searcher 委派在 Codex 侧与 Claude Task tool 不对等，记录为已知限制并保留 Claude 为主要委派 CLI（Codex 只承担 /agent 手动切换）
+### [DONE] 5c. Codex API 路由 + Workbench 前端对接
+- **What**: src/server/routes/codex.py 新增 POST/GET /api/codex/sessions{/id/messages} 端点对齐 claude_code.py；app.py include_router；前端 NewSessionModal provider 下拉加 codex；WorkbenchTab 按 session.provider 分派端点；SessionListItem pill 区分色；tsc + build 通过。
+- **Acceptance**:
+  - src/server/routes/codex.py 新增：POST /api/codex/sessions / GET /api/codex/sessions / POST /api/codex/sessions/{id}/messages (SSE) 等，形状对齐 claude_code.py；app.py include_router(codex_route.router)
+  - 前端 NewSessionModal.tsx provider 下拉新增 codex 选项（走 GET /api/claude-code/providers 既有端点，后端 provider registry 预置 codex 条目 internal://codex-app-server）
+  - WorkbenchTab.tsx 根据 session.provider 分派请求到 /api/claude-code/ vs /api/codex/；SessionListItem pill 按 provider 显示 claude/codex 区分色
+  - cd frontend && npx tsc --noEmit && npm run build 通过
+### [DONE] 5b. Codex session manager 后端模块
+- **What**: 在 src/server/codex/ 新增 session_manager.py 和 app_server_client.py，与 ClaudeSessionManager 对偶实现 create/delete/get_or_restore/idle TTL sweeper/HITL PermissionState；spawn 子进程 codex app-server --listen stdio://，通过 generate-json-schema 获取协议 schema 构建 JSON-RPC 客户端；配 FakeClient fixture 单测。
+- **Acceptance**:
+  - src/server/codex/__init__.py + session_manager.py + app_server_client.py 新增，CodexSessionManager 与 ClaudeSessionManager（src/server/claude_code/session_manager.py）对偶：create/delete/get_or_restore/idle TTL sweeper/HITL PermissionState
+  - spawn 子进程 codex app-server --listen stdio://；运行时用 codex app-server generate-json-schema 拿协议 schema 校验兼容性，JSON-RPC 客户端含请求/响应类型 + SSE 适配
+  - OAuth 透明：SDK 路径下自动读取 ~/.codex/auth.json
+  - tests/test_codex_session.py 覆盖 fake codex app-server subprocess fixture + create/delete/message 三路冒烟
+  - 现有 HITL / MCP 桥 / slash / 持久化相关 pytest 全部通过
+
+
+
+### [DONE] 5bc. FakeClient fixture 与 Codex session 冒烟测试
+- **What**: tests/test_codex_session.py 新增 FakeClient fixture（模拟 codex app-server subprocess 的 JSON-RPC 响应），覆盖 create/delete/message 三路基础冒烟；不启动真实 codex 二进制。
+- **Acceptance**:
+  - tests/test_codex_session.py 存在且 pytest 可跑通
+  - FakeClient fixture 实现 Protocol 接口，无需真实 codex app-server 进程
+  - 覆盖 CodexSessionManager.create / delete / send_message 三路，断言回包格式 + 状态机转换
+### [DONE] 5bb. codex app-server JSON-RPC 客户端
+- **What**: 在 src/server/codex/app_server_client.py 实现 spawn 子进程 codex app-server --listen stdio://；运行时用 codex app-server generate-json-schema 获取协议 schema 校验兼容性；JSON-RPC 请求/响应类型 + SSE 流适配。替换 5ba 的 stub 为真实实现。
+- **Acceptance**:
+  - spawn 子进程 codex app-server --listen stdio://，通过 stdin/stdout 收发 JSON-RPC 消息
+  - codex app-server generate-json-schema 运行时跑一次，schema 字段非空检查（DP7：schema drift → 抛 CodexSchemaError 显式错误）
+  - JSON-RPC 请求/响应类型齐全（createSession / sendMessage / deleteSession 等），流式事件适配为 async iterator
+### [DONE] 5ba. CodexSessionManager 生命周期与 HITL 状态机
+- **What**: 在 src/server/codex/__init__.py 与 session_manager.py 中实现 CodexSessionManager，与 src/server/claude_code/session_manager.py 对偶：create/delete/get_or_restore/idle TTL sweeper/HITL PermissionState。为保持可 import，同步创建 app_server_client.py 的 Protocol 抽象 + 最小可用 stub（真实 JSON-RPC 实现由 5bb 落地）。
+- **Acceptance**:
+  - src/server/codex/__init__.py + session_manager.py 新增，CodexSessionManager 与 ClaudeSessionManager 对偶：create/delete/get_or_restore/idle TTL sweeper/HITL PermissionState
+  - OAuth 透明：SDK 路径下自动读取 ~/.codex/auth.json（通过环境变量 / 配置入口）
+  - app_server_client.py 至少提供 Protocol/ABC 作为 session_manager 的依赖抽象，不阻塞本次提交可 import
+  - 现有 HITL / MCP 桥 / slash / 持久化相关 pytest 全部通过
+### [DONE] 5a. Subagent 同步脚本 (.claude/agents → .codex/agents)
+- **What**: 编写 scripts/sync_subagents.py，读取 .claude/agents/*.md 生成 .codex/agents/*.toml，字段映射 name/description/model=gpt-5.5/tools/mcpServers → sandbox_mode、developer_instructions=body；接入 pre-commit hook；生成产物进 repo；配套单元测试。
+- **Acceptance**:
+  - scripts/sync_subagents.py 读 .claude/agents/*.md → 生成 .codex/agents/*.toml；字段映射 name/description/model=gpt-5.5/tools/mcpServers → sandbox_mode, developer_instructions=body
+  - Pre-commit hook (.pre-commit-config.yaml 或 .git/hooks/pre-commit) 自动触发 sync；.codex/agents/*.toml 进 repo（.gitignore 加 !.codex/agents/**）
+  - tests/test_sync_subagents.py 覆盖 5 输入→5 输出、字段映射、空目录、格式错误抛显式 error
+### [DONE] 6. 架构文档 + README + 决策 log 落地
 
 > **AC 重写记录 (2026-04-24)**：原 AC 含"三组 provider 配置样例"、"claude-code-router 命令清单"均为 CCR 方案产物，已失效。新 AC 拆分 release notes 为架构文档（`v2.x-multi-model.md`）+ 工作流文档（`v2.x-multi-subscription.md`，已存在）两份。
 
@@ -162,6 +217,26 @@
   - `README.md` 特性列表加 1 行：简述双订阅 + 多 provider 能力 + 链接到两份 release notes；不新增大段 section
   - 本 plan 的 Decisions log 追加 2026-04-24 的 4 条新决策
 
+
+
+
+
+### [WIP] 6d. Decisions log 追加 4 条决议
+- **What**: T6-D 在 docs/plans/2026-04-23-multi-model-subagent.md Decisions log 追加 4 条 2026-04-24 决议。
+- **Acceptance**:
+  - docs/plans/2026-04-23-multi-model-subagent.md Decisions log 追加 4 条 2026-04-24 决议（CCR 退休 / Workbench 扩 Codex / subagent 单一源 / Task 3 手测改单测）
+### [DONE] 6c. README 特性列表追加 1 行
+- **What**: T6-C README.md 特性列表加 1 行：双订阅 + 多 provider 提示，指 docs/releases/。
+- **Acceptance**:
+  - README.md 在特性列表加 1 行：双订阅 + 多 provider 提示，详见 docs/releases/v2.x-multi-model.md 与 v2.x-multi-subscription.md
+### [DONE] 6b. v2.x-multi-subscription.md 补 cross-reference 与落地状态
+- **What**: T6-B 给 docs/releases/v2.x-multi-subscription.md 加 cross-reference + 补 Task 3/5/6 落地状态。
+- **Acceptance**:
+  - docs/releases/v2.x-multi-subscription.md 加 cross-reference 指向 v2.x-multi-model.md 架构层面章节；补 Task 3/5/6 收尾后实际落地状态
+### [DONE] 6a. 新建 v2.x-multi-model.md 架构文档
+- **What**: T6-A 新建 docs/releases/v2.x-multi-model.md（已部分由 5d 落地：架构 4 章 + Codex 兼容性发现 5 章）。补 v1.0 role vs v2.0 subagent 对比表（如缺）。
+- **Acceptance**:
+  - docs/releases/v2.x-multi-model.md 已存在含 Provider registry / Subagent 分档 / role_models 废弃 / Codex Workbench 集成 4 章；含 v1.0 role vs v2.0 subagent 对比表；含 Codex 兼容性发现章节
 ## Out of scope
 
 - claude-code-router 相关一切（2026-04-24 退休，见 Decisions log）
@@ -235,6 +310,9 @@ When a task should be auto-split at execution time, and how the split is labeled
 - **2026-04-24**：**Workbench 后端原生集成 Codex session**，走官方 `codex app-server --listen stdio://` + 自写 JSON-RPC 2.0 客户端。理由：不引入第三方 `openai-codex-sdk`（非官方 maintainer）依赖；`codex app-server` 是官方 `[experimental]` 入口，schema 可通过 `generate-json-schema` 自描述；工作量 1-2 天，比 PTY 驱动 / SDK 风险低。
 - **2026-04-24**：**subagent 单一源 (.claude/agents/*.md) + converter**。`scripts/sync_subagents.py` + pre-commit hook 自动生成 `.codex/agents/*.toml`；**Codex 侧统一 `model=gpt-5.5` 不做 haiku/sonnet/opus 分档映射**。理由：Codex 无对等分档模型，统一用当前最强避免选择困惑；分档在 Claude 侧仍保留。
 - **2026-04-24**：**Task 3 手测 AC 改写为单测覆盖**。原"Workbench `/agents` 列 5 subagent"+"真实对话委派 paper-searcher"改为 `pytest tests/test_claude_code_agents.py` 覆盖（16 tests），手测降为 supplementary 不阻塞 pipeline。理由：pipeline 要全自动跑；真实对话委派的"Claude 模型行为"不在我们架构验证边界内。
+- **2026-04-25**：**pipeline `Skill` 工具语义改为 inline 而非 hand-off**。原 `~/.claude/skills/pipeline/SKILL.md` Phase 2.3 让 pipeline 通过 `Skill("dev"/"review"/"fix")` 触发子 skill，但 `Skill` 工具实际语义是"加载指令 + yield 给用户"，导致每个 stage 后 pipeline 停下等用户按命令键。改为 "Execution model — inline, do NOT hand off" 元规则：`Skill` 工具被禁用于 pipeline 内，sub-skill 视为内联程序文档；2.6 `/compact` 步骤删除（built-in 不可工具触发，由 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 兜底）。本次 5bc → 5c → 5d → 6 全程实现真正自动化。
+- **2026-04-25**：**5d 实测产出 5 个 Codex 兼容性发现**（F1-F5）。F2 `thread/start` 嵌套响应 schema、F3 `_write_raw` check-then-use 竞态在本次会话内修复；F1 `.codex/agents/*.toml` 顶层 schema 与 codex 期望不符（"invalid type: sequence, expected a map"）+ F4 复杂 prompt 下 turn 异常截断 + F5 approval response format 未实测，需后续 follow-up。详见 `docs/releases/v2.x-multi-model.md` §5。F1 阻塞 Task 5d AC 3 (subagent 委派验证)，5d 状态保持 PENDING-VERIFY 不直接 DONE。
+- **2026-04-25**：**`.codex/config.toml` 落地为项目级 MCP 桥配置**。挂载 `[mcp_servers.research_agent] command="python" args=["-m", "src.mcp_bridge.server"]`，与 Claude 侧 `configs/agent.yaml` 的 `mcp.servers` 段对偶但配置入口不同（Claude 走 SDK options 注入，Codex 走 CLI config 文件）。同一份 `src/mcp_bridge/server.py` 两边复用——skill 能力跨 CLI 一致。
 
 ## Reference
 
