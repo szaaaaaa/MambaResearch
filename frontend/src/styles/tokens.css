@@ -1,0 +1,232 @@
+/* =============================================================
+   MambaResearch Design System — Colors & Typography
+   暖中性纸张 + 赤陶强调，作用域 .ds-scope，避免和 Tailwind @theme 冲突
+   ============================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Noto+Serif+SC:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+.ds-scope {
+  /* ============================================================
+     1. COLOR — WARM NEUTRAL FOUNDATION
+     ============================================================ */
+  --bg-0: #faf6f1;
+  --bg-1: #f4ece1;
+  --bg-2: #fffdf9;
+  --bg-3: #ffffff;
+  --bg-inset: #efe5d6;
+
+  --fg-1: #2a2118;
+  --fg-2: #5b4b3a;
+  --fg-3: #8a7a66;
+  --fg-4: #b4a590;
+  --fg-on-accent: #fffaf2;
+
+  --line-1: #ebdfcc;
+  --line-2: #dccdb4;
+  --line-focus: #c87a5a;
+
+  /* ============================================================
+     2. ACCENT — Terracotta scale
+     ============================================================ */
+  --clay-50:  #fbf1ea;
+  --clay-100: #f6dfd0;
+  --clay-200: #eec2a6;
+  --clay-300: #e3a07d;
+  --clay-400: #d27e58;
+  --clay-500: #c2633c;
+  --clay-600: #a94f2c;
+  --clay-700: #8a3e22;
+  --clay-800: #67301c;
+  --clay-900: #401e11;
+
+  --accent:         var(--clay-500);
+  --accent-hover:   var(--clay-600);
+  --accent-press:   var(--clay-700);
+  --accent-soft:    var(--clay-50);
+  --accent-soft-fg: var(--clay-700);
+  --accent-ring:    rgba(194, 99, 60, 0.22);
+
+  /* ============================================================
+     3. STATE — Muted warm-leaning
+     ============================================================ */
+  --ok-fg:     #4e6b3a;   --ok-bg:     #eef0e1;   --ok-dot: #6e8f4e;
+  --warn-fg:   #8a5a12;   --warn-bg:   #faecd2;   --warn-dot: #cf9028;
+  --danger-fg: #8a2e22;   --danger-bg: #f6d9d1;   --danger-dot: #c24a37;
+  --info-fg:   #2f5b6b;   --info-bg:   #dde9ed;   --info-dot: #4a8094;
+
+  --role-conductor-bg:   #f1e6d4; --role-conductor-fg:   #7a5a22;
+  --role-researcher-bg:  #e7ecd9; --role-researcher-fg:  #4e6b3a;
+  --role-experimenter-bg:#f4dccb; --role-experimenter-fg:#8a3e22;
+  --role-analyst-bg:     #e4ddd2; --role-analyst-fg:     #5b4b3a;
+  --role-writer-bg:      #eee2ea; --role-writer-fg:      #7a3e5c;
+  --role-reviewer-bg:    #dde5e8; --role-reviewer-fg:    #3f5c69;
+  --role-hitl-bg:        #f2e2d0; --role-hitl-fg:        #8a5a22;
+
+  /* ============================================================
+     4. TYPOGRAPHY — DS 字体族（Tailwind @theme 仍生效，互不冲突）
+     ============================================================ */
+  --ds-font-serif:   "Fraunces", "Noto Serif SC", "Songti SC", "Source Han Serif SC", ui-serif, Georgia, serif;
+  --ds-font-sans:    "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", ui-sans-serif, system-ui, sans-serif;
+  --ds-font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif:      var(--ds-font-serif);
+  --font-sans:       var(--ds-font-sans);
+  --font-mono:       var(--ds-font-mono);
+
+  --t-display: 2.75rem;
+  --t-h1:      2rem;
+  --t-h2:      1.5rem;
+  --t-h3:      1.25rem;
+  --t-h4:      1.0625rem;
+  --t-body:    0.9375rem;
+  --t-sm:      0.8125rem;
+  --t-xs:      0.75rem;
+  --t-micro:   0.6875rem;
+
+  --lh-tight: 1.15;
+  --lh-snug:  1.3;
+  --lh-body:  1.55;
+  --lh-loose: 1.7;
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semi:    600;
+  --fw-bold:    700;
+
+  --track-eyebrow: 0.18em;
+  --track-tight:  -0.01em;
+  --track-display:-0.02em;
+
+  /* ============================================================
+     5. SHAPE — Radii / shadow / spacing
+     ============================================================ */
+  --ds-radius-xs:   4px;
+  --ds-radius-sm:   8px;
+  --ds-radius-md:   12px;
+  --ds-radius-lg:   16px;
+  --ds-radius-xl:   20px;
+  --ds-radius-2xl:  28px;
+  --ds-radius-pill: 9999px;
+
+  --shadow-hairline: 0 0 0 1px rgba(90, 58, 30, 0.06);
+  --shadow-card:     0 1px 2px rgba(90, 58, 30, 0.05), 0 2px 8px -4px rgba(90, 58, 30, 0.08);
+  --shadow-raised:   0 6px 18px -10px rgba(90, 58, 30, 0.24), 0 2px 4px rgba(90, 58, 30, 0.04);
+  --shadow-modal:    0 24px 60px -28px rgba(60, 36, 14, 0.35), 0 4px 12px rgba(60, 36, 14, 0.08);
+  --shadow-inset:    inset 0 1px 2px rgba(90, 58, 30, 0.06);
+
+  --ds-sp-1: 4px;
+  --ds-sp-2: 8px;
+  --ds-sp-3: 12px;
+  --ds-sp-4: 16px;
+  --ds-sp-5: 20px;
+  --ds-sp-6: 24px;
+  --ds-sp-8: 32px;
+  --ds-sp-10: 40px;
+  --ds-sp-12: 48px;
+  --ds-sp-16: 64px;
+
+  --ease-standard: cubic-bezier(0.2, 0.0, 0.0, 1.0);
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast:   120ms;
+  --dur-base:   200ms;
+  --dur-slow:   360ms;
+
+  --rail-w:    72px;
+  --sidebar-w: 280px;
+  --composer-max: 820px;
+
+  font-family: var(--ds-font-sans);
+  color: var(--fg-1);
+  background: var(--bg-0);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.ds-scope * { box-sizing: border-box; }
+
+/* ============================================================
+   6. SEMANTIC TYPOGRAPHY UTILITIES — 在组件里用这些类名
+   ============================================================ */
+.ds-scope .type-display {
+  font-family: var(--ds-font-serif);
+  font-size: var(--t-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-display);
+  font-weight: var(--fw-semi);
+  color: var(--fg-1);
+}
+.ds-scope .type-h1 {
+  font-family: var(--ds-font-serif);
+  font-size: var(--t-h1);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  font-weight: var(--fw-semi);
+  color: var(--fg-1);
+}
+.ds-scope .type-h2 {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-h2);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--track-tight);
+  font-weight: var(--fw-semi);
+  color: var(--fg-1);
+}
+.ds-scope .type-h3 {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-h3);
+  line-height: var(--lh-snug);
+  font-weight: var(--fw-semi);
+  color: var(--fg-1);
+}
+.ds-scope .type-h4 {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-h4);
+  line-height: var(--lh-snug);
+  font-weight: var(--fw-semi);
+  color: var(--fg-1);
+}
+.ds-scope .type-body {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-body);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-regular);
+  color: var(--fg-1);
+}
+.ds-scope .type-body-secondary {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-body);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.ds-scope .type-sm {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-sm);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.ds-scope .type-meta {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-xs);
+  line-height: var(--lh-snug);
+  color: var(--fg-3);
+}
+.ds-scope .type-eyebrow {
+  font-family: var(--ds-font-sans);
+  font-size: var(--t-micro);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.ds-scope .type-mono {
+  font-family: var(--ds-font-mono);
+  font-size: var(--t-sm);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.ds-scope .type-quote {
+  font-family: var(--ds-font-serif);
+  font-style: italic;
+  font-size: var(--t-h3);
+  line-height: var(--lh-body);
+  color: var(--fg-1);
+}

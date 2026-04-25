@@ -1,0 +1,143 @@
+/* MambaResearch v2 — Coze sidebar + chat main
+   作用域：仅 .ds-scope 下生效，不污染全局
+*/
+
+.ds-scope .rb-app, .ds-scope .rb-app * { box-sizing: border-box; }
+.ds-scope .rb-app {
+  display: grid; grid-template-columns: auto 1fr; height: 100%; min-height: 0;
+  background: var(--bg-0); color: var(--fg-1);
+  font-family: var(--ds-font-sans);
+  font-size: 13.5px; line-height: 1.55;
+}
+
+/* ============== SIDEBAR ============== */
+.ds-scope .rb-sb { background: var(--bg-1); border-right: 1px solid var(--line-1); display: flex; flex-direction: column; min-height: 0; width: var(--sidebar-w); }
+.ds-scope .rb-sb-head { display:flex; align-items:center; justify-content:space-between; padding: 14px 14px 10px; }
+.ds-scope .rb-brand { display:flex; align-items:center; gap:10px; }
+.ds-scope .rb-mark { width:36px; height:36px; border-radius:10px; background: var(--clay-900); color: var(--clay-100); display:flex; align-items:center; justify-content:center; font-family: var(--ds-font-serif); font-weight:700; font-size:18px; letter-spacing:-.02em; }
+.ds-scope .rb-eyebrow { font-size:10px; letter-spacing:.18em; text-transform:uppercase; color: var(--fg-3); font-weight:600; }
+.ds-scope .rb-brand-name { font-family: var(--ds-font-serif); font-size:16px; font-weight:600; color: var(--fg-1); letter-spacing:-.01em; margin-top:2px; }
+.ds-scope .rb-icon-btn { width:30px; height:30px; border-radius:8px; background: var(--bg-2); border:1px solid var(--line-1); color: var(--fg-2); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.ds-scope .rb-icon-btn:hover { background: var(--bg-3); color: var(--fg-1); }
+.ds-scope .rb-nav { padding: 4px 10px 12px; flex:1; overflow:auto; }
+.ds-scope .rb-group { margin-bottom: 14px; }
+.ds-scope .rb-group-h { font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color: var(--fg-3); padding: 6px 10px; font-weight:600; }
+.ds-scope .rb-nav-item { width:100%; display:flex; align-items:center; gap:10px; padding: 7px 10px; border-radius:10px; background:transparent; border:0; cursor:pointer; color: var(--fg-2); text-align:left; font-size: 13px; font-family:inherit; transition: background 120ms; }
+.ds-scope .rb-nav-item:hover { background: var(--bg-2); color: var(--fg-1); }
+.ds-scope .rb-nav-item.on { background: var(--bg-2); color: var(--fg-1); box-shadow: var(--shadow-hairline); }
+.ds-scope .rb-nav-item.on .rb-nav-ico { color: var(--accent); }
+.ds-scope .rb-nav-ico { width:20px; height:20px; display:flex; align-items:center; justify-content:center; color: var(--fg-3); }
+.ds-scope .rb-nav-lbl { flex:1; }
+.ds-scope .rb-sb-foot { border-top: 1px solid var(--line-1); padding: 10px 14px 14px; }
+.ds-scope .rb-sb-foot .rb-eyebrow { padding: 4px 0 8px; }
+.ds-scope .rb-conv-list { display:flex; flex-direction:column; gap:2px; max-height: 220px; overflow:auto; }
+.ds-scope .rb-conv { display:flex; align-items:center; gap:8px; padding: 6px 8px; border-radius:8px; background:transparent; border:0; cursor:pointer; color: var(--fg-2); text-align:left; font-size:12.5px; font-family:inherit; }
+.ds-scope .rb-conv:hover { background: var(--bg-2); color: var(--fg-1); }
+.ds-scope .rb-conv.on { background: var(--bg-2); color: var(--fg-1); }
+.ds-scope .rb-conv-title { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ds-scope .rb-conv-dot { width:6px; height:6px; border-radius:9999px; background: var(--fg-4); flex-shrink:0; }
+.ds-scope .rb-conv-dot.s-Running { background: var(--warn-dot); }
+.ds-scope .rb-conv-dot.s-Stopping { background: var(--warn-dot); }
+.ds-scope .rb-conv-dot.s-Completed { background: var(--ok-dot); }
+.ds-scope .rb-conv-dot.s-Failed { background: var(--danger-dot); }
+
+/* ============== CHAT ============== */
+.ds-scope .rb-chat { display:flex; flex-direction:column; min-height:0; height: 100%; background: var(--bg-0); }
+.ds-scope .rb-chat-head { display:flex; align-items:center; justify-content:space-between; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line-1); background: var(--bg-2); }
+.ds-scope .rb-chat-title h2 { margin:0; font-family: var(--ds-font-serif); font-size: 18px; font-weight: 600; color: var(--fg-1); letter-spacing: -.01em; }
+.ds-scope .rb-chat-meta { display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+.ds-scope .rb-cli-pill { background: var(--bg-3); border: 1px solid var(--line-1); padding: 3px 9px; border-radius: 9999px; font-size: 11px; color: var(--fg-2); }
+.ds-scope .rb-cli-pill.mono { font-family: var(--ds-font-mono); font-size: 10.5px; }
+.ds-scope .rb-cli-status { display:inline-flex; align-items:center; gap:5px; font-size: 11px; color: var(--warn-fg); background: var(--warn-bg); padding: 3px 9px; border-radius: 9999px; font-weight: 500; }
+.ds-scope .rb-cli-status i { width:6px; height:6px; border-radius:9999px; background: var(--warn-dot); animation: rb-pulse 1.6s infinite; }
+@keyframes rb-pulse { 50% { opacity: 0.4; } }
+
+.ds-scope .rb-backend { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+.ds-scope .rb-backend-lbl { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
+.ds-scope .rb-backend-tabs { display:flex; gap: 0; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 10px; padding: 3px; }
+.ds-scope .rb-backend-tab { display:flex; align-items:center; gap:6px; padding: 5px 10px; border-radius: 7px; background: transparent; border: 0; cursor:pointer; color: var(--fg-3); font-family: var(--ds-font-mono); font-size: 11.5px; }
+.ds-scope .rb-backend-tab.on { background: var(--bg-3); color: var(--fg-1); box-shadow: var(--shadow-hairline); }
+.ds-scope .rb-backend-tab em { color: var(--ok-dot); font-style: normal; font-size: 9px; }
+.ds-scope .rb-backend-tab:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ds-scope .rb-chat-body { flex:1; display:flex; flex-direction:column; min-height:0; }
+.ds-scope .rb-chat-stream { flex:1; overflow:auto; padding: 24px 0 12px; }
+.ds-scope .rb-chat-stream > .bb,
+.ds-scope .rb-chat-stream > .rb-prompts { max-width: 760px; margin: 0 auto 18px; padding: 0 24px; }
+
+/* bubbles */
+.ds-scope .bb { display:flex; gap: 12px; align-items:flex-start; }
+.ds-scope .bb-av { width: 30px; height: 30px; border-radius: 9999px; flex-shrink: 0; display:flex; align-items:center; justify-content:center; font-family: var(--ds-font-serif); font-weight: 600; font-size: 13px; }
+.ds-scope .bb-av.agent { background: var(--clay-900); color: var(--clay-100); }
+.ds-scope .bb-user .bb-av { background: var(--fg-1); color: var(--bg-0); }
+.ds-scope .bb-body { flex:1; min-width:0; }
+.ds-scope .bb-meta { font-size: 11px; color: var(--fg-3); font-family: var(--ds-font-mono); letter-spacing: .04em; margin-bottom: 4px; }
+.ds-scope .bb-text { color: var(--fg-1); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.ds-scope .bb-user { flex-direction: row-reverse; }
+.ds-scope .bb-user .bb-body { display:flex; flex-direction: column; align-items: flex-end; }
+.ds-scope .bb-user .bb-meta { font-family: var(--ds-font-sans); font-size: 11px; }
+.ds-scope .bb-user .bb-text { background: var(--clay-50); border: 1px solid var(--clay-100); padding: 10px 14px; border-radius: 14px 14px 4px 14px; max-width: 90%; }
+
+/* tool call card */
+.ds-scope .bb-tool { display:flex; flex-direction:column; gap: 0; }
+.ds-scope .bb-tool-rule { height: 1px; background: linear-gradient(90deg, transparent, var(--line-2), transparent); margin: 4px 0 12px; }
+.ds-scope .bb-tool-card { background: var(--bg-2); border: 1px solid var(--line-1); border-left: 3px solid var(--clay-300); border-radius: 10px; padding: 10px 14px; }
+.ds-scope .bb-tool-h { display:flex; align-items:center; gap: 8px; margin-bottom: 6px; }
+.ds-scope .bb-tool-ico { color: var(--clay-600); display:flex; }
+.ds-scope .bb-tool-tag { font-family: var(--ds-font-mono); font-size: 11.5px; color: var(--clay-700); font-weight: 600; }
+.ds-scope .bb-tool-status { font-size: 10.5px; color: var(--fg-3); background: var(--bg-inset); padding: 2px 7px; border-radius: 4px; margin-left: auto; font-family: var(--ds-font-mono); letter-spacing: .04em; }
+.ds-scope .bb-tool-text { color: var(--fg-2); font-size: 13px; line-height: 1.6; }
+
+/* steps */
+.ds-scope .bb-steps { margin-top: 10px; background: var(--bg-2); border: 1px solid var(--line-1); border-radius: 10px; padding: 6px; display:flex; flex-direction:column; gap: 2px; }
+.ds-scope .bb-step { display:flex; align-items:center; gap: 10px; padding: 6px 10px; border-radius: 6px; font-size: 12.5px; }
+.ds-scope .bb-step-dot { width: 6px; height: 6px; border-radius: 9999px; }
+.ds-scope .bb-step-dot.d-done { background: var(--ok-dot); }
+.ds-scope .bb-step-dot.d-running { background: var(--warn-dot); animation: rb-pulse 1.6s infinite; }
+.ds-scope .bb-step-dot.d-pending { background: var(--fg-4); }
+.ds-scope .bb-step-name { font-family: var(--ds-font-mono); font-size: 12px; color: var(--fg-1); font-weight: 500; }
+.ds-scope .bb-step-meta { color: var(--fg-3); font-size: 11.5px; flex: 1; }
+.ds-scope .bb-step-status { font-family: var(--ds-font-mono); font-size: 10.5px; color: var(--fg-3); padding: 2px 7px; border-radius: 4px; background: var(--bg-inset); }
+.ds-scope .bb-step.st-running .bb-step-status { background: var(--warn-bg); color: var(--warn-fg); }
+.ds-scope .bb-step.st-done .bb-step-status { background: var(--ok-bg); color: var(--ok-fg); }
+
+/* artifacts */
+.ds-scope .bb-arts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ds-scope .bb-art { display:flex; align-items:center; gap: 10px; background: var(--bg-2); border: 1px solid var(--line-1); border-radius: 10px; padding: 8px 12px; }
+.ds-scope .bb-art-ico { width: 28px; height: 28px; border-radius: 6px; background: var(--clay-50); color: var(--clay-700); display:flex; align-items:center; justify-content:center; }
+.ds-scope .bb-art-name { font-size: 12.5px; color: var(--fg-1); font-weight: 500; }
+.ds-scope .bb-art-size { font-size: 10.5px; color: var(--fg-3); font-family: var(--ds-font-mono); margin-top: 1px; }
+
+/* cursor */
+.ds-scope .cl-cur { display:inline-block; width:7px; height:14px; background: var(--accent); margin-left: 2px; vertical-align:-2px; animation: rb-blink 1.1s steps(2) infinite; }
+@keyframes rb-blink { 50% { opacity: 0; } }
+
+/* prompts */
+.ds-scope .rb-prompts { background: var(--bg-2); border: 1px dashed var(--line-2); border-radius: 14px; padding: 16px; }
+.ds-scope .rb-prompts .rb-eyebrow { margin-bottom: 8px; }
+.ds-scope .rb-prompt { display:flex; gap:10px; align-items:center; padding: 8px 10px; background:transparent; border:0; border-radius:8px; color: var(--fg-2); font-family: var(--ds-font-sans); font-size: 13.5px; cursor:pointer; text-align:left; width: 100%; }
+.ds-scope .rb-prompt:hover { background: var(--bg-1); color: var(--fg-1); }
+.ds-scope .rb-prompt-arrow { color: var(--accent); font-family: var(--ds-font-mono); }
+
+/* composer */
+.ds-scope .rb-composer-wrap { padding: 10px 24px 18px; max-width: 760px; margin: 0 auto; width: 100%; }
+.ds-scope .rb-composer { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 18px; padding: 12px 14px 8px; box-shadow: var(--shadow-card); transition: border-color 120ms, box-shadow 120ms; }
+.ds-scope .rb-composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.ds-scope .rb-composer textarea { width: 100%; border: 0; outline: 0; resize: none; background: transparent; font-family: var(--ds-font-sans); font-size: 14px; line-height: 1.55; color: var(--fg-1); }
+.ds-scope .rb-composer textarea::placeholder { color: var(--fg-4); }
+.ds-scope .rb-composer-bar { display:flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.ds-scope .rb-composer-tools { display:flex; align-items:center; gap: 6px; }
+.ds-scope .rb-tool-btn { width: 28px; height: 28px; border-radius: 8px; background: transparent; border: 0; color: var(--fg-3); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+.ds-scope .rb-tool-btn:hover { background: var(--bg-inset); color: var(--fg-1); }
+.ds-scope .rb-composer-pill { background: var(--bg-inset); padding: 3px 9px; border-radius: 9999px; font-size: 11px; color: var(--fg-2); font-family: var(--ds-font-mono); }
+.ds-scope .rb-composer-pill.ghost { background: transparent; color: var(--fg-3); }
+.ds-scope .rb-send { width: 32px; height: 32px; border-radius: 10px; background: var(--accent); color: var(--fg-on-accent); border: 0; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+.ds-scope .rb-send:hover { background: var(--accent-hover); }
+.ds-scope .rb-send:disabled { background: var(--fg-4); cursor: not-allowed; }
+.ds-scope .rb-composer-hint { text-align: center; font-size: 11px; color: var(--fg-3); margin-top: 8px; font-family: var(--ds-font-mono); }
+
+/* placeholder pages for not-yet-built nav items */
+.ds-scope .rb-placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; height: 100%; padding: 48px; gap: 12px; }
+.ds-scope .rb-placeholder h3 { margin:0; font-family: var(--ds-font-serif); font-size: 22px; color: var(--fg-1); }
+.ds-scope .rb-placeholder p { margin:0; color: var(--fg-3); font-size: 13.5px; max-width: 520px; text-align: center; line-height: 1.6; }
+.ds-scope .rb-placeholder-card { background: var(--bg-2); border: 1px dashed var(--line-2); border-radius: 16px; padding: 28px 32px; max-width: 560px; }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, Send, Square, Terminal } from 'lucide-react';
+import { LogOut, MessagesSquare, Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
 import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo, PendingWorkbenchLaunch } from '../../types';
 import { parseSseFrames } from '../../utils/sse';
@@ -19,7 +19,7 @@ import { ModelPicker } from '../workbench/panels/ModelPicker';
 import { PermissionsPanel } from '../workbench/panels/PermissionsPanel';
 import { McpStatusPanel } from '../workbench/panels/McpStatusPanel';
 import { SLASH_COMMANDS } from '../workbench/slash/registry';
-import { WorkbenchShell } from '../workbench/shell/WorkbenchShell';
+import { SessionsPanel } from '../workbench/shell/activities/SessionsPanel';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -97,6 +97,8 @@ export const WorkbenchTab: React.FC = () => {
   const [elapsedSec, setElapsedSec] = React.useState(0);
   const [slashActiveIdx, setSlashActiveIdx] = React.useState(0);
   const [autocompleteDismissed, setAutocompleteDismissed] = React.useState(false);
+  // 会话列表 popover；被 header 按钮 + /resume 等 slash 命令共用
+  const [sessionsOpen, setSessionsOpen] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
 
   // 只有当输入以 "/" 开头、用户没按 Esc 关过、且不在运行态时才弹出下拉
@@ -521,7 +523,13 @@ export const WorkbenchTab: React.FC = () => {
       openPanel: ccOpenPanel,
       submitPrompt,
       runBackendCommand,
-      openActivity: ccSetActiveActivity,
+      // 取消旧 ActivityBar 后，'sessions' 直接驱动 chat-head 内的会话列表 popover；
+      // null（关闭）映射回 false。仍同步 store 里的 ccSetActiveActivity，保持
+      // /resume 类命令对外契约不变（其他订阅者可继续读取此 state）。
+      openActivity: (activity) => {
+        ccSetActiveActivity(activity);
+        setSessionsOpen(activity === 'sessions');
+      },
     });
     setPrompt('');
     setAutocompleteDismissed(false);
@@ -734,76 +742,177 @@ export const WorkbenchTab: React.FC = () => {
     }
   };
 
+  // 当前后端：根据 session.provider 推断；无 session 时默认 claude（首次发送时会创建）
+  const currentBackend: 'claude' | 'codex' = session?.provider === 'codex' ? 'codex' : 'claude';
+
+  /**
+   * 切换后端 = 用 target provider 新建一个 session。
+   * 旧 session 仍在 DB 中可通过"会话列表"找回；当前 UI items 会被清空。
+   */
+  const handleBackendSwitch = (target: 'claude' | 'codex') => {
+    if (currentBackend === target) return;
+    if (isRunning) return;
+    if (session || items.length > 0) {
+      const ok = window.confirm(
+        `切换到 ${target === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} 将开启新会话。当前会话仍保留在会话列表中，可随时切回。确定？`,
+      );
+      if (!ok) return;
+    }
+    void handleCreateSession(target === 'codex' ? 'codex' : null);
+  };
+
   return (
-    <WorkbenchShell
-      onSwitchSession={handleSwitchSession}
-      onCreateSession={handleCreateSession}
-      onActiveSessionDeleted={handleActiveSessionDeleted}
-    >
-    <div className="flex h-full flex-col">
+    <div className="rb-chat" style={{ position: 'relative' }}>
       {activePermission ? (
         <PermissionModal request={activePermission} onResolved={ccResolvePermissionRequest} />
       ) : null}
       {renderActivePanel()}
-      <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3">
-        <Terminal className="h-5 w-5 text-slate-500" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold tracking-tight text-slate-900">Claude Code 工作台</h2>
-          <p className="truncate font-mono text-[11px] text-slate-500">
-            {session ? (
-              <>
-                cwd={session.cwd} · session={session.id.slice(0, 8)}
-              </>
-            ) : (
-              <>基于 Claude Agent SDK · 首次发送创建会话</>
-            )}
-          </p>
-        </div>
-        <RawEventsToggle value={rawEventsVisible} onChange={ccSetRawEventsVisible} />
-        {session && !isRunning ? (
-          <button
-            type="button"
-            onClick={() => void handleEndSession()}
-            aria-label="结束会话"
-            title="结束会话（销毁 SDK client + 清空对话）"
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-[12px] text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            结束会话
-          </button>
-        ) : null}
-      </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
-        <div className="mx-auto flex max-w-3xl flex-col">
-          {items.length === 0 ? (
-            <div className="mt-16 text-center text-sm text-slate-400">
-              输入需求后按 Enter 发送；首次发送会自动创建 Claude Agent SDK 会话，后续轮次共享上下文
+      <div className="rb-chat-head">
+        <div className="rb-chat-title" style={{ minWidth: 0, flex: 1 }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Terminal size={16} style={{ color: 'var(--fg-3)' }} />
+            {session ? `工作台 · ${session.id.slice(0, 8)}` : '工作台'}
+          </h2>
+          <div className="rb-chat-meta">
+            {isRunning ? (
+              <span className="rb-cli-status">
+                <i /> 运行中 · {elapsedSec}s
+              </span>
+            ) : null}
+            {session ? (
+              <span className="rb-cli-pill mono" title={session.cwd}>
+                cwd={session.cwd.length > 28 ? `…${session.cwd.slice(-28)}` : session.cwd}
+              </span>
+            ) : (
+              <span className="rb-cli-pill">基于 Claude Agent SDK · 首次发送创建会话</span>
+            )}
+            <button
+              type="button"
+              className="rb-cli-pill"
+              onClick={() => setSessionsOpen((v) => !v)}
+              title="会话列表"
+              style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
+              <MessagesSquare size={11} />
+              会话列表
+            </button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <RawEventsToggle value={rawEventsVisible} onChange={ccSetRawEventsVisible} />
+          <div className="rb-backend">
+            <span className="rb-backend-lbl">后端</span>
+            <div className="rb-backend-tabs">
+              <button
+                type="button"
+                className={`rb-backend-tab ${currentBackend === 'claude' ? 'on' : ''}`}
+                onClick={() => handleBackendSwitch('claude')}
+                disabled={isRunning}
+                title="切换到 Claude Code CLI（新建会话）"
+              >
+                <Terminal size={12} />
+                <span>claude code cli</span>
+                {currentBackend === 'claude' && session ? <em>●</em> : null}
+              </button>
+              <button
+                type="button"
+                className={`rb-backend-tab ${currentBackend === 'codex' ? 'on' : ''}`}
+                onClick={() => handleBackendSwitch('codex')}
+                disabled={isRunning}
+                title="切换到 Codex CLI（新建会话）"
+              >
+                <Terminal size={12} />
+                <span>codex cli</span>
+                {currentBackend === 'codex' && session ? <em>●</em> : null}
+              </button>
             </div>
-          ) : (
-            items.map((item) => (
-              <React.Fragment key={item.id}>
-                <MessageRenderer
-                  message={item.payload}
-                  rawEventsVisible={rawEventsVisible}
-                  suppressedToolUseIds={suppressedToolUseIds}
-                />
-              </React.Fragment>
-            ))
-          )}
+          </div>
+          {session && !isRunning ? (
+            <button
+              type="button"
+              onClick={() => void handleEndSession()}
+              title="结束会话（销毁 SDK client + 清空对话）"
+              className="rb-icon-btn"
+              style={{ color: 'var(--danger-fg)' }}
+            >
+              <LogOut size={14} />
+            </button>
+          ) : null}
         </div>
       </div>
 
-      {isRunning && (
-        <div className="border-t border-slate-100 bg-white">
-          <div className="mx-auto max-w-3xl px-6 py-2 font-mono text-[12px] text-slate-500">
-            ✽ Vibing… ({elapsedSec}s · esc 或中止按钮取消)
+      {sessionsOpen ? (
+        <>
+          {/* 透明遮罩层：点击空白处收起会话列表 */}
+          <div
+            onClick={() => setSessionsOpen(false)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 25,
+              background: 'transparent',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 70,
+              left: 24,
+              zIndex: 30,
+              width: 320,
+              maxHeight: 480,
+              background: 'var(--bg-3)',
+              border: '1px solid var(--line-1)',
+              borderRadius: 12,
+              boxShadow: 'var(--shadow-modal)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <SessionsPanel
+              onSwitchSession={async (id) => {
+                setSessionsOpen(false);
+                await handleSwitchSession(id);
+              }}
+              onCreateSession={async (p) => {
+                setSessionsOpen(false);
+                await handleCreateSession(p);
+              }}
+              onActiveSessionDeleted={handleActiveSessionDeleted}
+            />
           </div>
-        </div>
-      )}
+        </>
+      ) : null}
 
-      <footer className="border-t border-slate-200 bg-white px-6 py-4">
-        <div className="mx-auto max-w-3xl">
+      <div className="rb-chat-body">
+        <div ref={scrollRef} className="rb-chat-stream">
+          {items.length === 0 ? (
+            <div className="rb-prompts">
+              <div className="rb-eyebrow">从这里开始</div>
+              <p style={{ color: 'var(--fg-3)', fontSize: 13.5, padding: '8px 10px', margin: 0 }}>
+                输入需求后按 Enter 发送；首次发送会自动创建{' '}
+                {currentBackend === 'codex' ? 'Codex' : 'Claude Code'} 会话，后续轮次共享上下文。
+                右上角"后端"切换 claude / codex 任意 CLI，左侧导航的所有视图都可以与之联动。
+              </p>
+            </div>
+          ) : (
+            <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+              {items.map((item) => (
+                <React.Fragment key={item.id}>
+                  <MessageRenderer
+                    message={item.payload}
+                    rawEventsVisible={rawEventsVisible}
+                    suppressedToolUseIds={suppressedToolUseIds}
+                  />
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rb-composer-wrap">
           {slashQueryActive && slashMatches.length > 0 ? (
             <SlashAutocomplete
               matches={slashMatches}
@@ -812,7 +921,13 @@ export const WorkbenchTab: React.FC = () => {
               onSelect={(cmd) => runSlashCommand(`/${cmd.id}`)}
             />
           ) : null}
-          <div className="flex items-end gap-3">
+          <form
+            className="rb-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleSend();
+            }}
+          >
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
@@ -857,38 +972,56 @@ export const WorkbenchTab: React.FC = () => {
                   void handleSend();
                 }
               }}
-              placeholder="向 Claude Code 提问…（/ 打开命令面板，Enter 发送，Shift+Enter 换行）"
+              placeholder={
+                currentBackend === 'codex'
+                  ? '向 Codex CLI 提问…（/ 打开命令面板，Enter 发送，Shift+Enter 换行）'
+                  : '向 Claude Code CLI 提问…（/ 打开命令面板，Enter 发送，Shift+Enter 换行）'
+              }
               rows={2}
               disabled={isRunning}
-              className="min-h-[48px] flex-1 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
             />
-            {isRunning ? (
-              <button
-                type="button"
-                onClick={() => void handleStop()}
-                aria-label="中断本轮（Esc）"
-                title="中断本轮推理（Esc）"
-                className="flex h-11 items-center gap-2 rounded-2xl bg-rose-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-rose-500"
-              >
-                <Square className="h-4 w-4" />
-                中断本轮
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handleSend()}
-                disabled={!prompt.trim()}
-                aria-label="发送消息"
-                className="flex h-11 items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                <Send className="h-4 w-4" />
-                发送
-              </button>
-            )}
+            <div className="rb-composer-bar">
+              <div className="rb-composer-tools">
+                <span className="rb-composer-pill">
+                  {currentBackend === 'codex' ? 'codex cli' : 'claude code cli'}
+                </span>
+                {permissionMode ? (
+                  <span className="rb-composer-pill ghost">权限：{permissionMode}</span>
+                ) : null}
+                {isRunning ? (
+                  <span className="rb-composer-pill ghost">✽ {elapsedSec}s · Esc 中止</span>
+                ) : null}
+              </div>
+              {isRunning ? (
+                <button
+                  type="button"
+                  onClick={() => void handleStop()}
+                  aria-label="中断本轮（Esc）"
+                  title="中断本轮推理（Esc）"
+                  className="rb-send"
+                  style={{ background: 'var(--danger-fg)' }}
+                >
+                  <Square size={14} />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!prompt.trim()}
+                  aria-label="发送消息"
+                  title="发送消息（Enter）"
+                  className="rb-send"
+                >
+                  <Send size={14} />
+                </button>
+              )}
+            </div>
+          </form>
+          <div className="rb-composer-hint">
+            Enter 发送 · Shift+Enter 换行 · 后端：
+            {currentBackend === 'claude' ? 'Claude Code CLI' : 'Codex CLI'}
           </div>
         </div>
-      </footer>
+      </div>
     </div>
-    </WorkbenchShell>
   );
 };

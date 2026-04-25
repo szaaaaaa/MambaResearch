@@ -110,11 +110,11 @@ export const SettingsModal: React.FC<{
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/18 p-3 backdrop-blur-sm sm:p-6"
+      className="ds-settings fixed inset-0 z-50 flex items-center justify-center p-3 backdrop-blur-sm sm:p-6"
       onClick={onClose}
     >
       <div
-        className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_40px_120px_-48px_rgba(15,23,42,0.45)]"
+        className="ds-settings-card flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-[30px] border"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 sm:px-6">

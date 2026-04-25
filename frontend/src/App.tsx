@@ -1,8 +1,8 @@
 import React from 'react';
-import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
-import { PanelLeft, PanelRight } from 'lucide-react';
+import { FileText, Database, Lightbulb, Users, Plug } from 'lucide-react';
 import { AppProvider, useAppContext } from './store';
-import { Sidebar } from './components/Sidebar';
+import { MambaSidebar, NavId } from './components/MambaSidebar';
+import { PlaceholderView } from './components/PlaceholderView';
 import { RunTab } from './components/tabs/RunTab';
 import { HistoryTab } from './components/tabs/HistoryTab';
 import { SkillsTab } from './components/tabs/SkillsTab';
@@ -24,21 +24,16 @@ function loadUiPreferences(): UiPreferences {
   if (typeof window === 'undefined') {
     return DEFAULT_UI_PREFERENCES;
   }
-
   try {
     const raw = window.localStorage.getItem(UI_PREFERENCES_KEY);
-    if (!raw) {
-      return DEFAULT_UI_PREFERENCES;
-    }
+    if (!raw) return DEFAULT_UI_PREFERENCES;
     return { ...DEFAULT_UI_PREFERENCES, ...(JSON.parse(raw) as Partial<UiPreferences>) };
   } catch {
     return DEFAULT_UI_PREFERENCES;
   }
 }
 
-type ToolPanelTab = 'history' | 'skills';
-
-// 清除旧版 react-resizable-panels 持久化的布局数据，避免与当前默认值冲突
+// 清除旧版 react-resizable-panels 持久化的布局数据，避免和新 grid 布局冲突
 if (typeof window !== 'undefined') {
   for (const key of Object.keys(window.localStorage)) {
     if (key.startsWith('react-resizable-panels:')) {
@@ -59,184 +54,117 @@ const AppContent: React.FC = () => {
   } = useAppContext();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(() => loadUiPreferences());
-  const [toolPanelTab, setToolPanelTab] = React.useState<ToolPanelTab | null>(null);
-  const [activeTab, setActiveTab] = React.useState<'run' | 'history' | 'skills' | 'workbench'>('run');
-  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
-
-  const sidebarPanelRef = usePanelRef();
-  const toolsPanelRef = usePanelRef();
+  /**
+   * activeNav 默认 'exp'（实验），匹配截图中的"研究对话"主入口；
+   * 'set' 不参与 activeNav，只触发 SettingsModal。
+   */
+  const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>('exp');
 
   React.useEffect(() => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
   }, [uiPreferences]);
 
-  // Task 12: ExperimentPlan "在工作台运行"按钮 → store.launchWorkbenchExperiment 写入
-  // pendingWorkbenchLaunch → 这里监听到非 null 值就切到 workbench tab。
-  // 不消费 pending——WorkbenchTab 挂载后自己读一次清一次（ref guard），保证 SDK 侧
-  // session 创建只发一次 POST /sessions。
+  // ExperimentPlan "在工作台运行"按钮 → store.launchWorkbenchExperiment
+  // pendingWorkbenchLaunch 非 null 即切到 bench；WorkbenchTab 自管 consume。
   React.useEffect(() => {
-    if (state.pendingWorkbenchLaunch !== null && activeTab !== 'workbench') {
-      setActiveTab('workbench');
-      setToolPanelTab(null);
-      toolsPanelRef.current?.collapse();
+    if (state.pendingWorkbenchLaunch !== null && activeNav !== 'bench') {
+      setActiveNav('bench');
     }
-  }, [state.pendingWorkbenchLaunch, activeTab]);
+  }, [state.pendingWorkbenchLaunch, activeNav]);
 
-  const handleTabChange = (tab: 'run' | 'history' | 'skills' | 'workbench') => {
-    setActiveTab(tab);
-    if (tab === 'run' || tab === 'workbench') {
-      setToolPanelTab(null);
-      toolsPanelRef.current?.collapse();
-    } else {
-      setToolPanelTab(tab);
-      toolsPanelRef.current?.expand();
+  const handleNav = (id: NavId) => {
+    if (id === 'set') {
+      setIsSettingsOpen(true);
+      return;
     }
+    setActiveNav(id);
   };
 
-  const closeToolPanel = () => {
-    setToolPanelTab(null);
-    setActiveTab('run');
-    toolsPanelRef.current?.collapse();
+  const handleSelectConversation = (id: string) => {
+    selectConversation(id);
+    setActiveNav('exp');
   };
 
-  const toggleSidebar = () => {
-    if (sidebarCollapsed) {
-      sidebarPanelRef.current?.expand();
-    } else {
-      sidebarPanelRef.current?.collapse();
+  const handleCreateConversation = () => {
+    createConversation();
+    setActiveNav('exp');
+  };
+
+  const renderMain = () => {
+    switch (activeNav) {
+      case 'exp':
+        return <RunTab uiPreferences={uiPreferences} />;
+      case 'bench':
+        return <WorkbenchTab />;
+      case 'skill':
+        return <SkillsTab compact={false} />;
+      case 'hist':
+        return <HistoryTab compact={false} />;
+      case 'pap':
+        return (
+          <PlaceholderView
+            icon={FileText}
+            title="文献"
+            description="集中管理研究中检索到的论文与笔记。后端 paper_search MCP 已具备六个搜索源（arXiv / Semantic Scholar / PubMed / OpenAlex / CrossRef / Google Scholar），UI 还未落地。"
+            plannedSource="计划接入：MCP paper_search 工具检索 + 已收藏论文列表 + 单篇详情阅读视图。在工作台或实验对话中通过 @ 文献 引用。"
+          />
+        );
+      case 'data':
+        return (
+          <PlaceholderView
+            icon={Database}
+            title="数据集"
+            description="实验中产生与引用的数据资产。当前 artifact 系统已支持 RunArtifact 存储，独立的数据集视图尚未拆分。"
+            plannedSource="计划接入：从 artifact 系统中筛选 kind=data 的产物 + 数据集元信息 + 在工作台中以路径引用。"
+          />
+        );
+      case 'idea':
+        return (
+          <PlaceholderView
+            icon={Lightbulb}
+            title="灵感"
+            description="未结构化的研究问题、假设、TODO。完全未实现——目前用户用对话窗口承载这些。"
+            plannedSource="计划接入：本地 markdown 笔记本 + 标签 + 一键发起新研究会话。"
+          />
+        );
+      case 'roles':
+        return (
+          <PlaceholderView
+            icon={Users}
+            title="Agent 角色"
+            description="conductor / researcher / experimenter / analyst / writer / reviewer 六种角色的 LLM 配置。后端已有 roles registry，UI 入口暂在工作台 /agents 命令内。"
+            plannedSource="计划接入：把 frontend/src/components/workbench/panels/AgentsPanel 提为顶层视图，支持模型 / 提示词 / 终止条件配置。"
+          />
+        );
+      case 'mcp':
+        return (
+          <PlaceholderView
+            icon={Plug}
+            title="MCP 工具"
+            description="已连接的 MCP 服务器列表与工具清单。后端已具备 paper_search MCP 集成（含协议探测），UI 暂在工作台 /mcp 命令内。"
+            plannedSource="计划接入：把 frontend/src/components/workbench/panels/McpStatusPanel 提为顶层视图 + 添加 / 移除 MCP server 的配置入口。"
+          />
+        );
     }
   };
-
-  const toolPanelOpen = toolPanelTab !== null;
 
   return (
-    <div className="h-screen bg-[var(--app-bg)] text-slate-900">
-      <Group orientation="horizontal" id="research-agent-layout">
-        {/* 侧栏面板 */}
-        <Panel
-          defaultSize="18%"
-          minSize="12%"
-          maxSize="30%"
-          collapsible
-          className="overflow-hidden"
-          panelRef={sidebarPanelRef}
-          onResize={(panelSize) => {
-            setSidebarCollapsed(panelSize.asPercentage === 0);
-          }}
-          id="sidebar"
-        >
-          <Sidebar
-            conversations={state.conversations}
-            activeConversationId={state.activeConversationId}
-            onSelectConversation={(id) => { selectConversation(id); setActiveTab('run'); }}
-            onCreateConversation={() => { createConversation(); setActiveTab('run'); }}
-            onRenameConversation={renameConversation}
-            onDuplicateConversation={duplicateConversation}
-            onArchiveConversation={archiveConversation}
-            onDeleteConversation={deleteConversation}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-          />
-        </Panel>
-
-        <Separator className="group relative w-1.5 bg-slate-200/60 transition hover:bg-blue-400 active:bg-blue-500">
-          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-slate-300 opacity-0 transition group-hover:opacity-100" />
-        </Separator>
-
-        {/* 主面板 — 始终显示对话/运行监控 */}
-        <Panel minSize="35%" id="main">
-          <main className="relative h-full overflow-hidden">
-            {/* 侧栏折叠时显示展开按钮 */}
-            {sidebarCollapsed && (
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                className="absolute left-3 top-3 z-20 rounded-lg border border-slate-200 bg-white p-1.5 text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-600"
-                title="展开侧栏"
-              >
-                <PanelLeft className="h-4 w-4" />
-              </button>
-            )}
-            {/* 工具面板关闭时显示打开按钮；Workbench 模式右上角已有自己的状态标签，避免遮挡 */}
-            {!toolPanelOpen && activeTab !== 'workbench' && (
-              <button
-                type="button"
-                onClick={() => handleTabChange('history')}
-                className="absolute right-3 top-3 z-20 rounded-lg border border-slate-200 bg-white p-1.5 text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-600"
-                title="打开工具面板"
-              >
-                <PanelRight className="h-4 w-4" />
-              </button>
-            )}
-            {activeTab === 'workbench' ? <WorkbenchTab /> : <RunTab uiPreferences={uiPreferences} />}
-          </main>
-        </Panel>
-
-        <Separator className="group relative w-1.5 bg-slate-200/60 transition hover:bg-blue-400 active:bg-blue-500">
-          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-slate-300 opacity-0 transition group-hover:opacity-100" />
-        </Separator>
-
-        {/* 工具面板 — 始终挂载，通过 collapse/expand 控制可见性 */}
-        <Panel
-          defaultSize="0%"
-          minSize="20%"
-          maxSize="50%"
-          collapsible
-          className="overflow-hidden"
-          panelRef={toolsPanelRef}
-          onResize={(panelSize) => {
-            if (panelSize.asPercentage === 0 && toolPanelTab !== null) {
-              setToolPanelTab(null);
-              setActiveTab('run');
-            }
-          }}
-          id="tools"
-        >
-          {toolPanelOpen && (
-            <div className="flex h-full flex-col border-l border-slate-200 bg-white">
-              {/* 工具面板内部 tab 切换 */}
-              <div className="flex items-center gap-1 border-b border-slate-200 px-3 py-2">
-                <button
-                  type="button"
-                  onClick={() => { setToolPanelTab('history'); setActiveTab('history'); }}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                    toolPanelTab === 'history'
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-                  }`}
-                >
-                  历史
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setToolPanelTab('skills'); setActiveTab('skills'); }}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                    toolPanelTab === 'skills'
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-                  }`}
-                >
-                  技能
-                </button>
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={closeToolPanel}
-                  className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                  title="关闭面板"
-                >
-                  ✕
-                </button>
-              </div>
-              {/* 工具面板内容 */}
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {toolPanelTab === 'history' ? <HistoryTab compact /> : <SkillsTab compact />}
-              </div>
-            </div>
-          )}
-        </Panel>
-      </Group>
+    <div className="ds-scope" style={{ height: '100vh', overflow: 'hidden' }}>
+      <div className="rb-app" style={{ height: '100%' }}>
+        <MambaSidebar
+          active={activeNav}
+          onNav={handleNav}
+          conversations={state.conversations}
+          activeConversationId={state.activeConversationId}
+          onSelectConversation={handleSelectConversation}
+          onCreateConversation={handleCreateConversation}
+          onRenameConversation={renameConversation}
+          onDuplicateConversation={duplicateConversation}
+          onArchiveConversation={archiveConversation}
+          onDeleteConversation={deleteConversation}
+        />
+        <main style={{ minWidth: 0, height: '100%', overflow: 'hidden' }}>{renderMain()}</main>
+      </div>
 
       {isSettingsOpen ? (
         <SettingsModal

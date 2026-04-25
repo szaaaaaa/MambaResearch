@@ -1,0 +1,66 @@
+/* =============================================================
+   SettingsModal — 暖色调皮肤
+   ----------------------------------------------------------------
+   SettingsModal 内部仍用 Tailwind 工具类（slate-* / 蓝色 accent）。
+   这里在 .ds-scope .ds-settings / .ds-settings-card 作用域内：
+   1. 重定向 `--color-primary*` → terracotta，让 Button/Toggle/Input
+      的"主色"自动变暖；
+   2. 映射 slate / 蓝色硬编码到 DS 暖色 token，覆盖 Tailwind utilities。
+
+   不影响其它仍用 slate-* 的组件（这些类全名+父级双重作用域才命中）。
+   ============================================================= */
+
+/* —— 1. 遮罩与外壳 —— */
+.ds-scope .ds-settings {
+  background: rgba(60, 36, 14, 0.32);
+}
+
+.ds-scope .ds-settings-card {
+  --color-primary: var(--clay-500);
+  --color-primary-hover: var(--clay-600);
+  --color-primary-ring: var(--accent-ring);
+  --color-danger: var(--danger-fg);
+  --color-danger-hover: var(--clay-700);
+  background: var(--bg-3) !important;
+  border-color: var(--line-1) !important;
+  box-shadow: var(--shadow-modal) !important;
+}
+
+/* —— 2. 表面色 —— */
+.ds-scope .ds-settings-card .bg-white { background-color: var(--bg-3); }
+.ds-scope .ds-settings-card .bg-slate-50 { background-color: var(--bg-1); }
+.ds-scope .ds-settings-card .bg-slate-100 { background-color: var(--bg-1); }
+.ds-scope .ds-settings-card .bg-slate-200 { background-color: var(--line-1); }
+.ds-scope .ds-settings-card .bg-slate-300 { background-color: var(--line-2); }
+.ds-scope .ds-settings-card .bg-\[\#f8f8fa\] { background-color: var(--bg-1); }
+.ds-scope .ds-settings-card .bg-\[\#fcfcfd\] { background-color: var(--bg-2); }
+
+.ds-scope .ds-settings-card .hover\:bg-slate-50:hover { background-color: var(--bg-1); }
+.ds-scope .ds-settings-card .hover\:bg-slate-100:hover { background-color: var(--bg-1); }
+.ds-scope .ds-settings-card .hover\:bg-white\/80:hover { background-color: rgba(255, 253, 249, 0.85); }
+
+/* —— 3. 文字层级 —— */
+.ds-scope .ds-settings-card .text-slate-400 { color: var(--fg-4); }
+.ds-scope .ds-settings-card .text-slate-500 { color: var(--fg-3); }
+.ds-scope .ds-settings-card .text-slate-600 { color: var(--fg-2); }
+.ds-scope .ds-settings-card .text-slate-700 { color: var(--fg-2); }
+.ds-scope .ds-settings-card .text-slate-800 { color: var(--fg-1); }
+.ds-scope .ds-settings-card .text-slate-900 { color: var(--fg-1); }
+.ds-scope .ds-settings-card .placeholder\:text-slate-400::placeholder { color: var(--fg-4); }
+.ds-scope .ds-settings-card .hover\:text-slate-600:hover { color: var(--fg-2); }
+.ds-scope .ds-settings-card .hover\:text-slate-800:hover { color: var(--fg-1); }
+
+/* 蓝色品牌强调色 → terracotta */
+.ds-scope .ds-settings-card .text-\[\#2563eb\] { color: var(--accent); }
+
+/* —— 4. 边框 / 分割线 / ring —— */
+.ds-scope .ds-settings-card .border-slate-100 { border-color: var(--line-1); }
+.ds-scope .ds-settings-card .border-slate-200 { border-color: var(--line-1); }
+.ds-scope .ds-settings-card .ring-slate-200 { --tw-ring-color: var(--line-1); }
+.ds-scope .ds-settings-card .focus\:ring-slate-300\/40:focus { --tw-ring-color: rgba(220, 205, 180, 0.4); }
+.ds-scope .ds-settings-card .focus\:ring-slate-300\/30:focus { --tw-ring-color: rgba(220, 205, 180, 0.3); }
+
+/* —— 5. 状态语义色（PasswordInput 状态） —— */
+.ds-scope .ds-settings-card .text-emerald-600 { color: var(--ok-fg); }
+.ds-scope .ds-settings-card .text-amber-600 { color: var(--warn-fg); }
+.ds-scope .ds-settings-card .text-rose-500 { color: var(--danger-fg); }
