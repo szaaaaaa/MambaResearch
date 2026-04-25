@@ -608,12 +608,23 @@ export const WorkbenchTab: React.FC = () => {
     ccGetAbortController()?.abort();
     try {
       const prefix = sessionEndpointPrefix(provider);
-      // codex 的 create body 不接受 permission_mode（它用 sandbox_mode 作替代），
-      // 且不走 provider registry 的 env 注入——按 prefix 分支组装 body。
+      // body 组装规则（Task 5c + 5d post-mortem 修复 anthropic OAuth bug）：
+      //
+      // - codex 走 /api/codex/sessions：用 sandbox_mode 替代 permission_mode；
+      //   不传 provider，因为 codex 不走 Claude provider registry（用 ChatGPT
+      //   OAuth，凭据在 ~/.codex/auth.json）。
+      // - anthropic 走 /api/claude-code/sessions：**不传 provider**！传了会触发
+      //   后端 build_env_for_provider 注入 ANTHROPIC_API_KEY，逼 SDK 走付费 API
+      //   key 路径，绕开用户的 Claude Pro/Max 订阅 OAuth。订阅用户的正常路径
+      //   是"零变更"——不传 provider 让 SDK 走 claude CLI 的 OAuth 默认。
+      // - 其它 registry 条目（如 deepseek 反代）：传 provider 触发 env 注入是
+      //   正常用法。
       const body: Record<string, unknown> =
         provider === 'codex'
           ? { sandbox_mode: 'read-only' }
-          : { permission_mode: permissionMode, ...(provider ? { provider } : {}) };
+          : provider && provider !== 'anthropic'
+          ? { permission_mode: permissionMode, provider }
+          : { permission_mode: permissionMode };
       const response = await fetch(`${API_BASE}${prefix}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

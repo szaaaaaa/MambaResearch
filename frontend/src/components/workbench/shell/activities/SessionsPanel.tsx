@@ -42,11 +42,39 @@ export const SessionsPanel: React.FC<Props> = ({
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/claude-code/sessions`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = (await response.json()) as { sessions: ClaudeCodeSessionRow[] };
-      ccSetSessionList(data.sessions ?? []);
-      setError(null);
+      // Task 5c bug fix — Codex sessions 在独立的 codex_session_manager 里，
+      // /api/claude-code/sessions 看不见。并发拉两个端点合并展示——任一失败
+      // 都不该让另一边丢掉，所以用 allSettled。
+      const [claudeRes, codexRes] = await Promise.allSettled([
+        fetch(`${API_BASE}/api/claude-code/sessions`).then((r) => {
+          if (!r.ok) throw new Error(`claude HTTP ${r.status}`);
+          return r.json() as Promise<{ sessions: ClaudeCodeSessionRow[] }>;
+        }),
+        fetch(`${API_BASE}/api/codex/sessions`).then((r) => {
+          if (!r.ok) throw new Error(`codex HTTP ${r.status}`);
+          return r.json() as Promise<{ sessions: ClaudeCodeSessionRow[] }>;
+        }),
+      ]);
+      const merged: ClaudeCodeSessionRow[] = [];
+      const errs: string[] = [];
+      if (claudeRes.status === 'fulfilled') {
+        merged.push(...(claudeRes.value.sessions ?? []));
+      } else {
+        errs.push(`claude-code list: ${claudeRes.reason}`);
+      }
+      if (codexRes.status === 'fulfilled') {
+        merged.push(...(codexRes.value.sessions ?? []));
+      } else {
+        errs.push(`codex list: ${codexRes.reason}`);
+      }
+      // 按 last_message_at desc 排序（codex 列表暂无该字段时退到 created_at）
+      merged.sort(
+        (a, b) =>
+          (b.last_message_at ?? b.created_at ?? 0) -
+          (a.last_message_at ?? a.created_at ?? 0),
+      );
+      ccSetSessionList(merged);
+      setError(errs.length ? errs.join(' | ') : null);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -87,10 +115,15 @@ export const SessionsPanel: React.FC<Props> = ({
   const confirmDelete = React.useCallback(async () => {
     if (!pendingDelete) return;
     const targetId = pendingDelete.id;
+    const target = sessionList.find((row) => row.id === targetId);
     setPendingDelete(null);
+    // Task 5c bug fix — DELETE 必须按 session.provider 分派端点；
+    // codex session 在独立 manager 里，/api/claude-code/* 删不到。
+    const prefix =
+      target?.provider === 'codex' ? '/api/codex' : '/api/claude-code';
     try {
       const response = await fetch(
-        `${API_BASE}/api/claude-code/sessions/${targetId}`,
+        `${API_BASE}${prefix}/sessions/${targetId}`,
         { method: 'DELETE' },
       );
       if (!response.ok && response.status !== 404) {

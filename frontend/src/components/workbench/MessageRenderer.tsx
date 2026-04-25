@@ -191,6 +191,45 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     return <RawEventFold label={type} payload={payload} />;
   }
 
+  // Task 5c — Codex session 的 SSE codex_message 帧被 WorkbenchTab 包成
+  // {type: 'codex_raw', payload: {jsonrpc, method, params, ...}}。
+  // 5d 阶段没做 deep MessageRenderer 集成，但默认视图至少要把"agent 文本输出"
+  // 显示出来，否则用户看到完全空白对话框。提取关键帧类型按可读格式渲染。
+  if (type === 'codex_raw') {
+    const inner = (payload.payload ?? {}) as Record<string, unknown>;
+    const method = typeof inner.method === 'string' ? inner.method : 'unknown';
+    const params = (inner.params ?? {}) as Record<string, unknown>;
+
+    // assistant 文本流式增量——这是用户最关心的
+    if (method === 'item/agentMessage/delta') {
+      const delta = typeof params.delta === 'string' ? params.delta : '';
+      return delta ? (
+        <div className="my-1 flex items-start gap-2">
+          <span className="mt-[6px] font-mono text-[10px] leading-none text-emerald-600">●</span>
+          <div className="min-w-0 flex-1 whitespace-pre-wrap text-[14px] text-slate-800">{delta}</div>
+        </div>
+      ) : null;
+    }
+
+    // turn 生命周期 / 错误 / 警告——dim 单行展示
+    if (method === 'turn/started') {
+      return <div className="my-0.5 font-mono text-[11px] text-slate-400">↳ turn started</div>;
+    }
+    if (method === 'turn/completed' || method === 'connection/lost') {
+      const reason = typeof params.reason === 'string' ? ` (${params.reason})` : '';
+      return <div className="my-0.5 font-mono text-[11px] text-slate-400">↲ {method}{reason}</div>;
+    }
+    if (method === 'warning' || method === 'error') {
+      const text = typeof params.message === 'string' ? params.message : JSON.stringify(params);
+      return <div className="my-1 font-mono text-[11px] text-amber-700">⚠ {text}</div>;
+    }
+
+    // 其余通知（mcpServer/startupStatus/updated, item/started, account/* 等）
+    // 默认收起，用户开"显示原始事件"开关时才看到完整折叠
+    if (!rawEventsVisible) return null;
+    return <RawEventFold label={`codex:${method}`} payload={inner} />;
+  }
+
   if (!rawEventsVisible) return null;
   return <RawEventFold label={type || 'unknown'} payload={payload} />;
 };
