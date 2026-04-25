@@ -455,15 +455,26 @@ class CodexAppServerClient:
                 "sandbox": self.sandbox_mode,
             },
         )
-        # 响应字段名以 threadId 为准（与 v2 schema 对齐）
-        thread_id = None
+        # 实测 schema（5d E2E 发现）：``codex app-server`` 返回
+        # ``{"thread": {"id": "<uuid>", "preview": "", "status": {...}, ...}}``
+        # 而不是 flat ``{"threadId": "..."}``。下面按优先级解析，fallback 保留
+        # 对旧/异构实现的兼容。
+        thread_id: str | None = None
         if isinstance(thread_result, dict):
-            thread_id = thread_result.get("threadId") or thread_result.get(
-                "thread_id"
-            )
-        if not isinstance(thread_id, str) or not thread_id:
+            thread_obj = thread_result.get("thread")
+            if isinstance(thread_obj, dict):
+                tid = thread_obj.get("id") or thread_obj.get("thread_id")
+                if isinstance(tid, str) and tid:
+                    thread_id = tid
+            if thread_id is None:
+                flat = thread_result.get("threadId") or thread_result.get(
+                    "thread_id"
+                )
+                if isinstance(flat, str) and flat:
+                    thread_id = flat
+        if thread_id is None:
             raise CodexSchemaError(
-                f"thread/start returned no threadId: {thread_result!r}"
+                f"thread/start returned no parseable thread id: {thread_result!r}"
             )
         self._thread_id = thread_id
         self._connected = True
@@ -600,13 +611,20 @@ class CodexAppServerClient:
             self._pending.pop(msg_id, None)
 
     async def _write_raw(self, payload: dict[str, Any]) -> None:
-        """NDJSON 写盘——一行 JSON + ``\\n``，锁保护避免并发交错。"""
-        if self._proc is None or self._proc.stdin is None:
-            raise RuntimeError("subprocess stdin not available")
+        """NDJSON 写盘——一行 JSON + ``\\n``，锁保护避免并发交错。
+
+        5d 发现：check-then-use 必须在同一临界段内完成——否则 ``await
+        self._write_lock`` 期间 disconnect 可能把 ``self._proc`` 置 None，
+        锁外的 early-return 检查值已失效，进入锁后 ``self._proc.stdin.write``
+        就抛 AttributeError。修法：把 None 检查移到锁内。
+        """
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
         async with self._write_lock:
-            self._proc.stdin.write(data)
-            await self._proc.stdin.drain()
+            proc = self._proc
+            if proc is None or proc.stdin is None:
+                raise RuntimeError("subprocess stdin not available")
+            proc.stdin.write(data)
+            await proc.stdin.drain()
 
     async def _reader_loop(self) -> None:
         """持续读 stdout，按消息类型派发。

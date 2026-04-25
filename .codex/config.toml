@@ -1,0 +1,20 @@
+# Project-level Codex CLI configuration for ResearchAgent（Task 5d）。
+#
+# Codex CLI 在 cwd=<project_root> 下启动时会叠加 ``~/.codex/config.toml`` +
+# 本地 ``.codex/config.toml``（项目级覆盖），两者合并生效。这里挂载
+# ResearchAgent 自己的 MCP bridge server，让 Codex 主 agent 能调到我们的 skill
+# 库（``clarify_intent`` / ``plan_research`` / ``search_papers`` / ...）。
+#
+# 对偶关系：``configs/agent.yaml`` 里的 ``mcp.servers.*`` 是 Claude 侧通过
+# ``ClaudeAgentOptions.mcp_servers`` 注入给 SDK 子进程的配置；这里是 Codex 侧
+# 通过 CLI config 文件注入给 ``codex app-server`` 的配置。同一份 MCP bridge
+# 脚本两条路径都能消费，保证 skill 能力在两个 CLI 之间一致。
+#
+# 详见 plan 决策：docs/plans/2026-04-23-multi-model-subagent.md Task 5d。
+
+[mcp_servers.research_agent]
+command = "python"
+args = [
+  "-m",
+  "src.mcp_bridge.server",
+]
