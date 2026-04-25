@@ -63,6 +63,9 @@ conductor → researcher → experimenter → analyst → writer → reviewer �
 ### 📄 学术级输出
 生成完整可编译的 LaTeX 论文，自动构建 BibTeX 引用，支持 PDF 下载和 Overleaf 导入。中英文双语支持。
 
+### 🔀 双订阅 + 多 provider Workbench
+Workbench 同一个 UI 入口里同时支持 Claude Pro 订阅（经 `claude` CLI + Claude Agent SDK）和 ChatGPT Pro 订阅（经官方 `codex app-server` + 自写 JSON-RPC 客户端），新建会话时下拉切 provider，无需切窗口。详见 [`docs/releases/v2.x-multi-model.md`](docs/releases/v2.x-multi-model.md) 与 [`v2.x-multi-subscription.md`](docs/releases/v2.x-multi-subscription.md)。
+
 </td>
 </tr>
 </table>
