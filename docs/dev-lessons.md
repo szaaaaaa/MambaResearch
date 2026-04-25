@@ -673,6 +673,44 @@ sources.pdf_download:
 
 ---
 
+### 问题 30：window.confirm 被用户禁用导致删除按钮永远没反应
+
+**发生时间**：2026-04-25
+
+**现象**：新 MambaSidebar 落地后，ziang 反馈右键最近会话 → 点删除按钮"没反应"——菜单弹出正常，菜单消失正常，但会话仍在列表里。复制会话则能正常增加副本。我先后猜了两次根因（事件路径竞争 / `deleteConversation` 删空触发 fallback），都被 ziang 实测推翻。最后做"测复制 vs 测删除"二分定位到真因。
+
+**根因**：`handleDelete` 实现是 `if (window.confirm(\`删除会话"${s.title}"？\`)) onDeleteConversation(s.id);`。ziang 浏览器之前在某个原生 dialog 弹出时勾选过 "阻止此页面创建额外对话框"——Chrome/Edge 会**永久禁用**该 origin 的所有 alert/confirm/prompt 直到关闭页面或在 chrome://settings 重置，且 `confirm()` **不抛错只是直接返回 false**。所以删除分支永远走 false，菜单的 `setContextMenu(null)` 照常执行——从用户视角完美匹配"点了没反应"。
+
+**解决**：
+- `frontend/src/components/MambaSidebar.tsx`：删掉 `window.confirm`，改成 `pendingDelete: boolean` state——第一次点击删除按钮把 state 翻成 true，按钮文案变成"再次点击确认删除"+ 红色背景；第二次点击真正调 `onDeleteConversation`。Esc / 滚动 / 点 backdrop 关菜单时 useEffect 重置回 false
+- 同步把 `window.prompt('重命名会话', s.title)` 也换成菜单内联输入框（`autoFocus` + Enter 提交 + Esc 取消），同样的禁用机制对 prompt 一视同仁
+- 顺手把 contextMenu 关闭逻辑从 `window.addEventListener('click', close)` 重构为 backdrop + `stopPropagation` 模式（同 SettingsModal/HitlModal/ClarificationModal），这是诊断中走过的弯路但保留——避免 React onClick 与 window listener 在事件冒泡顺序上的潜在竞争
+
+**教训**：
+- **浏览器原生 alert/confirm/prompt 是不可信交互原语**——用户一次"阻止额外对话框"的勾选就能让所有 dialog 永久静默返回 false/null。任何破坏性操作（删除 / 覆盖 / 离开未保存）都不能用它做唯一确认路径，必须用 DOM 内自绘 UI（二次点击、modal、内联确认）
+- **诊断"点了没反应"类 UI bug 的二分模板**：在同一菜单/同一组件里找一个**完全不经过 dialog/网络/异步的同位操作**（这次是"复制会话"——纯 store setState），它工作 = onClick 路径 OK，根因在 handler 内部某个分支被吞；它不工作 = 事件/渲染层问题。30 秒定位
+- **作者修自己刚写的代码不能跳过实证**——MambaSidebar 是我同一会话刚提交的（feat: design system + nav refactor），我反而最容易凭印象跳到错误根因（事件竞争、fallback 触发），三次诊断里前两次都错。涉及用户感知的交互必须做最小实证，不能光读代码自证
+
+---
+
+### 问题 31：归档后会话找不到——MambaSidebar 漏掉"找回入口"
+
+**发生时间**：2026-04-25
+
+**现象**：删除修好后，ziang 用归档功能，发现归档完会话从最近会话列表消失但**整个 UI 找不到任何查看归档的入口**，等于一个无法撤销的 delete。
+
+**根因**：MambaSidebar 重写时 `recentConversations` 直接 `.filter((s) => !s.archived)` 过滤掉归档项，但只考虑了"最近会话区不显示归档"这一半语义，**忘了配套提供"找回归档"路径**。旧 Sidebar 在主区域底部有独立的"已归档"分组，重写时漏掉了。
+
+**解决**：
+- `frontend/src/components/MambaSidebar.tsx`：抽出 `renderConvItem(c, dim?)` 共用渲染；新增 `archivedConversations` useMemo + `archivedOpen` state；在 `rb-sb-foot` 末尾、最近会话下方加可折叠"已归档 (N)"分组，仅在有归档时显示；ChevronRight/ChevronDown 切换；展开后归档项 opacity 0.65 视觉降权
+- 右键归档项菜单的"取消归档"按钮原本就有，只是之前没渠道触达——加了入口后能完整闭环
+
+**教训**：
+- **任何"软隐藏"语义（archive / soft-delete / hide / mute / 取消订阅）必须在同一界面层提供找回入口**，否则它就退化成劣化版的 hard delete——用户要么不敢用（怕找不回），要么用了之后产生数据焦虑。决策点：实现"隐藏"功能时，先问"用户什么时候、在哪里能看到被隐藏的东西"，答不上就别做这个功能
+- **UI 重写时清单回归**：照搬旧 UI 时容易盯着"主功能"漏掉"反向操作"（归档/取消归档、订阅/取消订阅、收藏/取消收藏总是配对的）。重写前先列旧组件的所有交互路径，逐项检查新组件是否覆盖
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -758,5 +796,5 @@ sources.pdf_download:
 
 ---
 
-*最后更新：2026-04-24*
+*最后更新：2026-04-25*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*
