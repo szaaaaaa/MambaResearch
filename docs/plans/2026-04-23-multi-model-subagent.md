@@ -221,7 +221,7 @@
 
 
 
-### [WIP] 6d. Decisions log 追加 4 条决议
+### [DONE] 6d. Decisions log 追加 4 条决议
 - **What**: T6-D 在 docs/plans/2026-04-23-multi-model-subagent.md Decisions log 追加 4 条 2026-04-24 决议。
 - **Acceptance**:
   - docs/plans/2026-04-23-multi-model-subagent.md Decisions log 追加 4 条 2026-04-24 决议（CCR 退休 / Workbench 扩 Codex / subagent 单一源 / Task 3 手测改单测）

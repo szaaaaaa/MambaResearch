@@ -48,7 +48,7 @@
   - 本 plan 自身同样补齐 4 段
   - 两个 plan 的 4 段格式与 Task 1 新 template 完全一致
 
-### [TODO] 4. 端到端验证（用 /pipeline 跑 v2.0 Task 1）
+### [WIP] 4. 端到端验证（用 /pipeline 跑 v2.0 Task 1）
 
 - **What**: 启动 `/pipeline` 跑 v2.0 plan 的 Task 1（后端 provider 层），全程无人介入验证端到端可行。
 - **Files**: 无新文件；产生 v2.0 Task 1 相关 commits
@@ -60,6 +60,10 @@
   - `/compact focus on plan progress` 在 task 完成后被实际调用（检查对话历史可见压缩事件）
   - 若触发 STOP，报告格式符合 Task 2 规范
   - 整个执行流程**除启动命令和 STOP 响应外**，零人工输入
+- **Notes**:
+  - 2026-04-23 首次尝试发现架构漏洞：嵌套 Skill 调用下 `/dev` Phase 1 "Wait for user confirmation" 被字面执行，pipeline 的 "auto-confirm with ok" 抽象指令未能跨层生效。Pipeline 的 Phase 0/1/2.1/2.2（pre-flight、parse、mark-wip、子 agent 评估 + append-subtask）实测均工作；卡死点仅 2.3 的 `/dev` 调用。
+  - 2026-04-23 已修复（方案 A）：`/dev` 加 `--batch` flag 跳过 Phase 1 确认；`/pipeline` 2.3 调用传 `--batch`。见 Decisions log。
+  - 待 retry：独立会话 + `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 重跑 `/pipeline docs/plans/2026-04-23-multi-model-subagent.md`，确认 Task 1a 能完整走完 dev→review→fix→commit。
 
 ### [TODO] 5. 文档
 
@@ -116,6 +120,7 @@ STOP conditions halting execution. **Not fallbacks.**
 ## Decisions log
 
 - **2026-04-23**: 失败策略 FP 语义为 **STOP** 而非 fallback。遵守 CLAUDE.md "不加兜底/workaround 掩盖根因"。可预判的分叉 → DP 自动执行；不可预判的失败 → 立即暴露。
+- **2026-04-23**: `/dev` 嵌套调用确认 mechanism 漏洞发现（Task 4 首次实测暴露）→ 方案 A 修复：`/dev` 新增 `--batch` flag 在 batch mode 下跳过 Phase 1 人工确认；`/pipeline` 2.3 调用时传 `--batch`。根因是嵌套 Skill 调用时，Claude 字面执行被调 skill 的 "Wait for user confirmation" 指令，调用方的抽象 "auto-confirm" 指令无法跨层覆盖。`--batch` 把"跳过确认"从运行时认知问题降级为显式 flag 问题。
 - **2026-04-23**: 子任务拆分评估由执行时子 agent 判断（Q1=B 方案）。拆分是否触发、如何拆分的规则由 plan 的 SSP 段预定义，子 agent 只做"应用规则"的判断不自创规则。
 - **2026-04-23**: `/pipeline` 不调用 `/ship`。全 plan 跑完后退出，由用户手动整体 `/ship` 到 main。原因：保留 PR 时机控制点 + 符合 "v2.0 累积到 development，里程碑后一次性 ship" 的 plan 约定。
 - **2026-04-23**: auto-compact 用 Claude Code 原生 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 环境变量，不在 skill 内部判断。SDK 不提供 context 使用率读取，自己造不出更好的方案。
