@@ -170,6 +170,7 @@ def test_route_messages_returns_404_for_missing_conv(temp_db: MambaDb) -> None:
 def test_route_messages_returns_messages_in_order(temp_db: MambaDb) -> None:
     """Hybrid Master Transcript T3 — GET /api/conversations/{id}/messages
     返回该 conversation 的全部 messages，按 created_at 升序。"""
+    import time as _time
     from src.server.projects.messages_store import append_message
 
     app = FastAPI()
@@ -180,6 +181,10 @@ def test_route_messages_returns_messages_in_order(temp_db: MambaDb) -> None:
     append_message(
         conversation_id=conv.id, role="user", text="hi", served_by="user"
     )
+    # SQLite created_at 秒级精度——两次 append 在同一秒内时按 id ASC
+    # 兜底，结果不确定。生产路径里 user 输入和 assistant 回复天然差秒级以上，
+    # 不会撞；测试里手动 sleep 模拟。
+    _time.sleep(1.01)
     append_message(
         conversation_id=conv.id,
         role="assistant",

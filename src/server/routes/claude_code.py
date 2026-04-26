@@ -574,6 +574,10 @@ async def send_message(session_id: str, request: Request):
     prompt = str(payload.get("prompt", "") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
+    # Hybrid Master Transcript T4 — internal=true 用于 backend 切换时的 prior
+    # history 注入：跳过 messages 表持久化，避免 "<conversation_history>..." 内容
+    # 和 "我已加载历史" 这种 ack 污染对话历史。SDK / SSE / 前端展示路径都正常走。
+    internal = bool(payload.get("internal"))
 
     # 刷新恢复路径：若会话被 idle sweeper evict 或进程重启后只剩 DB 行，
     # get_or_restore 会用 SDK resume 重建 client；DB 也查不到才 404。
@@ -601,7 +605,12 @@ async def send_message(session_id: str, request: Request):
     # Hybrid Master Transcript T2 — 把 user prompt 写入 messages 表（真相源）
     # 用 lookup_conversation_by_session 反查 conversation_id：找不到说明此 session
     # 没绑过 conversation（直建路径，未走过切换），跳过持久化。
-    conversation_id = messages_store.lookup_conversation_by_session(session.id)
+    # internal=True 路径同样跳过——见上方注释。
+    conversation_id = (
+        None
+        if internal
+        else messages_store.lookup_conversation_by_session(session.id)
+    )
     if conversation_id is not None:
         try:
             messages_store.append_message(

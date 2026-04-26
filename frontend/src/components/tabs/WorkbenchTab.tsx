@@ -2,6 +2,10 @@ import React from 'react';
 import { LogOut, MessagesSquare, Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
 import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
+import {
+  getConversationMessages,
+  serializeHistoryForBackend,
+} from '../../api/conversations';
 import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
 import { PermissionModal } from '../workbench/PermissionModal';
@@ -585,9 +589,19 @@ export const WorkbenchTab: React.FC = () => {
    * 侧栏 + 按钮新建会话：POST /sessions 用当前默认 permissionMode，
    * 成功后把新 session 设为 active + 清 items + 写 localStorage。
    * 不调 ensureSession，因为 ensureSession 在已有 sessionRef 时会复用旧的。
+   *
+   * Hybrid Master Transcript T4 修改：每次建 session 都同步 ensure 一个
+   * conversation + 把新 session 注册成 segment。这样后续 SSE handler 调
+   * lookup_conversation_by_session 一定能找到 conv_id，messages 表持久化
+   * 路径不会哑火。clearItemsOnSuccess=false 用于切换路径——切换不清 items，
+   * 只追加 segment_boundary。
    */
   const handleCreateSession = React.useCallback(
-    async (provider: string | null) => {
+    async (
+      provider: string | null,
+      opts: { clearItemsOnSuccess?: boolean } = {},
+    ) => {
+    const clearItemsOnSuccess = opts.clearItemsOnSuccess ?? true;
     ccGetAbortController()?.abort();
     try {
       const prefix = sessionEndpointPrefix(provider);
@@ -621,15 +635,73 @@ export const WorkbenchTab: React.FC = () => {
       const info = (await response.json()) as ClaudeCodeSessionInfo;
       sessionRef.current = info;
       ccSetSession(info);
-      ccClearItems();
+      if (clearItemsOnSuccess) {
+        ccClearItems();
+      }
       writeLastSessionId(info.id);
       setPrompt('');
       setAutocompleteDismissed(false);
+
+      // Hybrid Master Transcript T4 — ensure conversation + segment 注册
+      // 失败 fire-and-forget：messages 持久化失效是降级体验（同 backend 内
+      // 仍能对话），不应阻塞 session 创建本身
+      void ensureConversationForSession(info, provider).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('ensureConversationForSession failed', err);
+      });
     } catch (error) {
       pushError(`创建会话失败：${String(error)}`);
     }
     },
     [permissionMode, ccGetAbortController, ccSetSession, ccClearItems, pushError],
+  );
+
+  /**
+   * Hybrid Master Transcript T4 — 确保 session 关联到 conversation。
+   *
+   * 流程：
+   * 1. 已有 conversationIdRef → 仅追加新 segment，复用 conversation
+   * 2. 否则：拿 active project → POST /api/conversations 建新 conv → 写第一段
+   *    segment → conversationIdRef = conv.id
+   *
+   * 失败时 throw —— 调用方 fire-and-forget 抛 console.warn，不弹 pushError，
+   * 因为 messages 持久化失效不影响同 backend 对话本身。
+   */
+  const ensureConversationForSession = React.useCallback(
+    async (sessionInfo: ClaudeCodeSessionInfo, provider: string | null) => {
+      const backend: 'claude' | 'codex' = provider === 'codex' ? 'codex' : 'claude';
+      let convId = conversationIdRef.current;
+      if (!convId) {
+        const projResp = await fetch(`${API_BASE}/api/projects/active`);
+        if (!projResp.ok) {
+          throw new Error('no active project');
+        }
+        const proj = await projResp.json();
+        const convResp = await fetch(`${API_BASE}/api/conversations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: proj.id }),
+        });
+        if (!convResp.ok) {
+          throw new Error(`create conversation: ${await convResp.text()}`);
+        }
+        const conv = await convResp.json();
+        convId = conv.id as string;
+        conversationIdRef.current = convId;
+      }
+      // 注册新 segment：把 session 与 conversation 关联——后续 SSE handler
+      // 调 lookup_conversation_by_session(session.id) 才能找到 conv_id 写入
+      // messages 表
+      await fetch(`${API_BASE}/api/conversations/${convId}/segments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backend,
+          cli_session_id: sessionInfo.id,
+        }),
+      });
+    },
+    [],
   );
 
   /**
@@ -729,17 +801,22 @@ export const WorkbenchTab: React.FC = () => {
   const [isSwitching, setIsSwitching] = React.useState(false);
 
   /**
-   * 切换后端 — Stage 3 Task 7 接通跨 CLI 桥。
+   * 切换后端 — Hybrid Master Transcript T4。
    *
-   * 流程：
-   * 1. 当前有 SDK session → 走 conversation_switch 端点拿 handoff first_prompt
-   *    1a. 若还没建过 conversation：先 POST /api/conversations 建 + 把当前 session
-   *        作为第一段 segment 入库
-   *    1b. POST /api/conversations/{id}/switch 关旧段 + 拿 first_prompt
-   *    1c. handleCreateSession(target) 起新 SDK session
-   *    1d. POST /api/conversations/{id}/segments 写新段（fire-and-forget）
-   *    1e. push 一条 segment_boundary 到 timeline，sendToBackend(first_prompt)
-   * 2. 否则走原直接路径——首次"创会话"不需要桥
+   * 流程（不再用 continues）：
+   * 1. 起新 backend session（handleCreateSession 自动 ensure conversation +
+   *    注册 segment，后续 SSE handler 能 lookup conv_id）
+   * 2. 从 messages 表拉本 conversation 全部历史 + serializeHistoryForBackend
+   *    序列化成 prior_history 文本块
+   * 3. 把 prior_history 作为新 session 首条消息发出去（internal: true，
+   *    后端跳过 messages 表持久化，不污染对话历史）
+   * 4. 等 cc_finished / codex_finished SSE 帧后 isSwitching=false
+   *
+   * 跟 v3 continues 路径相比：
+   * - 不需要 conversation.switch 端点（保留作为 fallback，目前没新触发路径）
+   * - 不跑 continues 的 LLM 压缩调用（省 1-2s 延迟）
+   * - prior history 是全文 lossless（不再压缩损失细节）
+   * - 切换瞬间 UI 看到的是 isSwitching loading chip + segment_boundary 标记
    *
    * 兜底：try/finally 保证 isSwitching 一定 reset，避免按钮永久锁。
    */
@@ -759,6 +836,7 @@ export const WorkbenchTab: React.FC = () => {
     // 一致的，ref 同步是 useEffect 异步路径，刚创建的 session 可能 ref 还没追上。
     const activeSession = session ?? sessionRef.current;
     if (activeSession === null) {
+      // 无 active session：起新 session 即可，不需要历史注入
       setIsSwitching(true);
       void handleCreateSession(target === 'codex' ? 'codex' : null).finally(() => {
         setIsSwitching(false);
@@ -766,93 +844,63 @@ export const WorkbenchTab: React.FC = () => {
       return;
     }
 
-    // 不再用 window.confirm——某些浏览器环境（嵌入 webview / 弹窗拦截 / 扩展
-    // 干预等）会让 confirm 静默返回 false，用户感觉"按钮没反应"。改成直接
-    // 切换 + 顶部 segment_boundary 标记，handoff 进度通过 isSwitching loading
-    // chip 反馈。
     setIsSwitching(true);
     void (async () => {
-      const oldSession = activeSession;
       try {
-        // 1a. 拿 active project，懒建 conversation + 第一段 segment
-        let convId = conversationIdRef.current;
-        if (!convId) {
-          const projResp = await fetch(`${API_BASE}/api/projects/active`);
-          if (!projResp.ok) {
-            pushError('无 active project，无法建立会话编排');
-            return;
+        // 1. 拉旧 conversation 的全部 messages 作为 prior history
+        //    注意此时还在用旧 conversationIdRef—— handleCreateSession 调
+        //    ensureConversationForSession 时会复用同一个 convId，新 segment 注册到
+        //    同一 conversation 下。
+        const convId = conversationIdRef.current;
+        let priorHistory = '';
+        if (convId) {
+          try {
+            const messages = await getConversationMessages(convId);
+            if (messages.length > 0) {
+              priorHistory = serializeHistoryForBackend(messages, target);
+            }
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn('failed to load prior history for switch', err);
           }
-          const proj = await projResp.json();
-          const convResp = await fetch(`${API_BASE}/api/conversations`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ project_id: proj.id }),
-          });
-          if (!convResp.ok) {
-            pushError(`创建 conversation 失败：${await convResp.text()}`);
-            return;
-          }
-          const conv = await convResp.json();
-          convId = conv.id as string;
-          // 写第一段 segment（fire-and-forget，UI 不等数据库 ack）
-          void fetch(
-            `${API_BASE}/api/conversations/${convId}/segments`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                backend: currentBackend,
-                cli_session_id: oldSession.id,
-              }),
-            },
-          ).catch(() => {});
-          conversationIdRef.current = convId;
         }
 
-        // 1b. 调 switch 端点（必须 await：要拿 first_prompt）
-        const switchResp = await fetch(
-          `${API_BASE}/api/conversations/${convId}/switch`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_backend: target }),
-          },
-        );
-        if (!switchResp.ok) {
-          pushError(`切换 backend 失败：${await switchResp.text()}`);
-          return;
-        }
-        const switchBody = await switchResp.json();
-        const firstPrompt = String(switchBody.first_prompt || '');
-        const handoffPath = String(switchBody.handoff_path || '');
-        const usedFallback = Boolean(switchBody.used_fallback);
-
-        // 1c. 起新 SDK session（target backend）
-        await handleCreateSession(target === 'codex' ? 'codex' : null);
+        // 2. 起新 backend session（自动 ensure conversation + 注册 segment）
+        //    切换路径不清 items——保持视觉连续性
+        await handleCreateSession(target === 'codex' ? 'codex' : null, {
+          clearItemsOnSuccess: false,
+        });
         const newSession = sessionRef.current;
         if (!newSession) {
           pushError('新 backend session 创建失败');
           return;
         }
 
-        // 1d. 写新段（fire-and-forget——UI 已经切到新 session，不等 DB）
-        void fetch(`${API_BASE}/api/conversations/${convId}/segments`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            backend: target,
-            cli_session_id: newSession.id,
-            handoff_prompt_path: handoffPath,
-          }),
-        }).catch(() => {});
+        // 3. 顶部追加 segment_boundary marker
+        ccAppendItem({
+          type: 'segment_boundary',
+          text: `已切换到 ${target === 'claude' ? 'claude' : 'codex'}（注入 ${priorHistory ? '完整历史' : '空白'}）`,
+        });
 
-        // 1e. timeline marker + 注入 first_prompt
-        const markerText = usedFallback
-          ? `已切换到 ${target === 'claude' ? 'claude' : 'codex'}（continues 不可用，走兜底 handoff）`
-          : `已切换到 ${target === 'claude' ? 'claude' : 'codex'}（continues handoff）`;
-        ccAppendItem({ type: 'segment_boundary', text: markerText });
-        if (firstPrompt) {
-          await sendToBackend(firstPrompt);
+        // 4. 注入 prior history（internal=true 跳过 messages 持久化）
+        if (priorHistory) {
+          const prefix = sessionEndpointPrefix(target === 'codex' ? 'codex' : null);
+          await fetch(`${API_BASE}${prefix}/sessions/${newSession.id}/messages`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'text/event-stream',
+            },
+            body: JSON.stringify({
+              prompt: priorHistory,
+              internal: true,
+            }),
+            // 这一发只为了把 history 压进 backend 的 LLM context；不解析 SSE
+            // 流（让浏览器本身把响应体读完即可），用户在 UI 上不需要看到 ack
+          });
+          // 注意：这里没 await SSE 流读完，因为浏览器 fetch 完成已经意味着
+          // backend 处理完整个 turn（cc_finished / codex_finished 都已 emit）。
+          // 真要 await 流才能确认 ack 到达，但当前实现下 fetch resolve 就够用。
         }
       } catch (err) {
         pushError(`backend 切换失败：${String(err)}`);

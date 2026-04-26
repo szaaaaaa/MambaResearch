@@ -326,6 +326,9 @@ async def send_message(session_id: str, request: Request):
     prompt = str(payload.get("prompt", "") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
+    # Hybrid Master Transcript T4 — 同 claude_code 路径，internal=true 跳过
+    # messages 表持久化，避免切换时的 prior history 注入污染对话历史。
+    internal = bool(payload.get("internal"))
 
     session = codex_session_manager.get(session_id)
     if session is None:
@@ -333,7 +336,11 @@ async def send_message(session_id: str, request: Request):
     session.last_activity_at = time.time()
 
     # Hybrid Master Transcript T2 — 把 user prompt 写入 messages 表（真相源）
-    conversation_id = messages_store.lookup_conversation_by_session(session.id)
+    conversation_id = (
+        None
+        if internal
+        else messages_store.lookup_conversation_by_session(session.id)
+    )
     if conversation_id is not None:
         try:
             messages_store.append_message(
