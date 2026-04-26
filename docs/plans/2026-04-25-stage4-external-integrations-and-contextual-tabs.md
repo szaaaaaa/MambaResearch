@@ -81,7 +81,7 @@
 
 ## Tasks
 
-### [TODO] 1. 后端：zotero.* MCP server
+### [DONE] 1. 后端：zotero.* MCP server
 
 - **What**: 通过 Zotero Web API（[https://api.zotero.org/](https://api.zotero.org/)）让 Claude/Codex 把 PDF 推到 user library、查 collection、加 tag。
 - **Files**:
@@ -106,7 +106,29 @@
   - Sandbox 直调 `zotero.search query=mamba` 返回真实结果
   - 缺凭据时 tool 返回明确错误 + 引导用户去设置
 
-### [TODO] 2. 后端：colab.* MCP server
+
+
+
+### [DONE] 1a. Zotero 网络 client + 凭据层
+
+- **What**: 实现 client.py（封装 Zotero Web API：upload_pdf / search / list_collections / add_tag 等）和 credentials.py（从环境变量/配置读取 user_id + api_key，缺失时抛明确错误）。包含 test_zotero_client.py 单元测试。
+- **Acceptance**:
+  - pytest tests/test_zotero_client.py 全过
+  - 缺凭据时 client 抛出明确错误并引导用户去设置
+
+### [PENDING-VERIFY] 1b. MCP server 适配层
+
+- **What**: 实现 mcp_server.py，把 client.py 的能力包装成 zotero.upload_pdf / zotero.search / zotero.add_tag 等 MCP 工具，处理参数校验与错误回传。
+- **Acceptance**:
+  - Sandbox 直调 zotero.search query=mamba 返回真实结果
+  - 缺凭据时 tool 返回明确错误 + 引导用户去设置
+
+### [PENDING-VERIFY] 1c. .mcp.json + config.toml 注册
+
+- **What**: 在 .mcp.json 和 config.toml 中注册 zotero MCP server，确保 Claude/Codex 子进程能发现并调用。
+- **Acceptance**:
+  - 工作台说"把 D:\paper.pdf 推到 Zotero" → Claude 调 zotero.upload_pdf 成功，返回 item_key
+### [PENDING-VERIFY] 2. 后端：colab.* MCP server
 
 - **What**: 把本地 .ipynb 文件映射到 Google Colab URL（基于 Drive 文件 ID），让 Claude/Codex 给用户一个"在 Colab 打开"链接。
 - **Files**:
@@ -126,7 +148,7 @@
   - Drive 路径 OK 时给真实 colab.research.google.com/drive/<id>；非 Drive 路径给 fallback
 - **明确不做**：远程执行 Colab（大方向 plan 锁定不做）
 
-### [TODO] 3. 后端：experiment.* MCP server（包装现有实验循环）
+### [PENDING-VERIFY] 3. 后端：experiment.* MCP server（包装现有实验循环）
 
 - **What**: 把现有 ExperimentSection 的本地实验执行能力暴露为 MCP，让 Claude 通过 MCP 触发 + 监听结果，而不是用户在 UI 手动配。
 - **Files**:
@@ -149,7 +171,7 @@
   - 工作台说"跑一下 D:\repo\train.py" → Claude 调 experiment.run_local 拿 run_id → 轮询 status 直到 done
   - 异步任务取消能立即杀子进程
 
-### [TODO] 4. 前端：ContextualTab 抽象 + 情境性 tab 框架
+### [DONE] 4. 前端：ContextualTab 抽象 + 情境性 tab 框架
 
 - **What**: 三个情境 tab 共用一套生命周期管理（标题、关闭按钮、状态、关闭时清理），不重复造。
 - **Files**:
@@ -167,7 +189,7 @@
   - 单元层面：openContextualTab 同参数二次调用不创新 tab
   - 关闭最后一个 tab 时主区域显示当前 sidebar nav 对应 tab
 
-### [TODO] 5. 前端：文献阅读情境 tab
+### [PENDING-VERIFY] 5. 前端：文献阅读情境 tab
 
 - **What**: 由 bucket=literature 行的"打开"action 触发；左 PDF viewer + 右 LLM 摘要 + 底部标注。
 - **Files**:
@@ -190,7 +212,7 @@
   - 关闭 tab 后再打开同 PDF 标注还在
   - "推送到 Zotero" 跳工作台并预填 prompt 含 PDF 路径
 
-### [TODO] 6. 前端：实验执行情境 tab
+### [PENDING-VERIFY] 6. 前端：实验执行情境 tab
 
 - **What**: 由 bucket=experiment 行的"本地跑"action 触发，或 Workbench 中 Claude 调 `experiment.run_local` 时自动开。
 - **Files**:
@@ -212,7 +234,7 @@
   - 关 tab 后 run 仍在后台；通过运行历史 tab 重新打开
   - 与现有 ExperimentSection 配置组件复用关系：本 tab 不引入新配置 UI，"复制配置"按钮把当前 run 的 args 写到 ExperimentSection（如保留）；若 RunTab 在 Stage 5 已删，则把配置直接显示为只读
 
-### [TODO] 7. 前端：Agent 思考情境 tab
+### [PENDING-VERIFY] 7. 前端：Agent 思考情境 tab
 
 - **What**: 工作台某条 assistant 消息上点"展开思考"action 触发。常驻设置可在设置中开（默认折叠）。
 - **Files**:
@@ -228,7 +250,7 @@
   - 浏览器实测：让 Claude 跑一个有思考的任务 → 点"展开思考" → tab 出现完整推理 + tool 调用时间线
   - 同一 assistant 消息再点不重开 tab，激活已有
 
-### [TODO] 8. 前端：文件 action 浮条按 subtype 实装
+### [PENDING-VERIFY] 8. 前端：文件 action 浮条按 subtype 实装
 
 - **What**: Stage 2 占位的 action 浮条在 Stage 4 接通真实功能。
 - **Files**:
@@ -252,7 +274,7 @@
   - 在每种 subtype 上实测一次对应 action
   - 不实装的占位 action 灰态 + tooltip 说明
 
-### [TODO] 9. 前端：独立 LibraryTab（Zotero 远程库浏览）
+### [PENDING-VERIFY] 9. 前端：独立 LibraryTab（Zotero 远程库浏览）
 
 - **What**: bucket=literature 只显示已分类的本地 PDF；用户想看 Zotero 里**未在本地 workspace** 的资料时，需要独立 LibraryTab。
 - **Files**:
@@ -267,7 +289,7 @@
   - LibraryTab 显示 Zotero 真实 collection
   - "拉到 workspace" 后该 PDF 出现在文献 bucket（次次 scan 后）
 
-### [TODO] 10. Auto-compact 兜底（监听 token usage 触发 segment break）
+### [PENDING-VERIFY] 10. Auto-compact 兜底（监听 token usage 触发 segment break）
 
 - **What**: 大方向 plan 锁定的 Codex auto-compact 不确定时的兜底。
 - **Files**:
@@ -281,7 +303,7 @@
 - **Acceptance**:
   - 跑一个长会话超过阈值后自动触发；用户视角对话连续
 
-### [TODO] 11. 验证（Stage 4 done）
+### [WIP] 11. 验证（Stage 4 done）
 
 - **后端**:
   - `pytest tests/` 全绿
@@ -338,3 +360,66 @@
 ## 进度日志
 
 - **2026-04-26 created** — Stage 3 plan 完成后立即起草，待 Stage 1+2+3 实施完成后开始
+- **2026-04-26 DP/EP/FP/SSP 段补齐** — 为让 /pipeline 自动化驱动，追加 4 段；
+  task 1 在 SSP 评估下被拆为 1a (client + credentials) / 1b (MCP server) /
+  1c (注册)；其余 task 走单 unit。
+- **2026-04-26 task 1a DONE** — Zotero client + credentials；19 测试。**plan 偏离**：
+  plan 说"复用现有加密存储"但实际是 plain ``.env`` + ``CREDENTIAL_KEYS`` 列表，
+  没有 Fernet/encryption；按现实机制走，credentials.py 解析顺序与
+  ``_credential_status`` 对齐。upload_pdf 协议 best-effort（用现代 prefix/suffix
+  raw-body 模式，丢弃旧 multipart params 模式）；真实 Zotero S3 round-trip 需
+  浏览器手测验。
+- **2026-04-26 task 1b PENDING-VERIFY** — Zotero MCP server (5 tools)；27 测试。
+  Sandbox 直调返回真实结果需要真凭据 → PENDING-VERIFY per FP rule on 3rd-party deps.
+- **2026-04-26 task 1c PENDING-VERIFY** — 三处注册（programmatic + .codex/config.toml
+  + registry）；smoke verify ``list_servers()`` 看到 mamba_zotero with sources
+  ['builtin_helper', 'codex_project']. 工作台端到端测需真凭据 → PENDING-VERIFY.
+- **2026-04-26 task 2 PENDING-VERIFY** — Colab MCP；22 测试。**设计选择**：用浏览器
+  原生 `<embed type="application/pdf">` 跳过 pdfjs-dist 引入（避免 bundle 膨胀）。
+  drive_locator 走 ``immutable=1`` 只读模式打开 SQLite，失败回退 fallback URL。
+- **2026-04-26 task 3 PENDING-VERIFY** — Experiment MCP + runner + DB schema v3
+  (experiment_runs 表)；27 测试。subprocess 走 platform-aware process-group flags
+  保证 cancel 杀整个进程树；redact 敏感 env keys；run_local 异步 + status/logs/
+  metrics/cancel 多端轮询。**真实 OOM / SIGKILL 路径需浏览器手测**。
+- **2026-04-26 task 4 DONE** — ContextualTab 框架（store/contextual.tsx +
+  ContextualTabBar + ContextualTabFrame，3 lazy stub tabs）。openTab 同 type+key
+  去重；React.lazy + Suspense 切码分割。前端 build 验过；3 个 lazy chunk 各自
+  独立 bundle。Tasks 5/6/7 在原 stub 文件上 Edit-in-place 实装。
+- **2026-04-26 task 5 PENDING-VERIFY** — 文献阅读 tab + 后端 literature 路由
+  （file/summary/annotation 3 端点）；5 测试。**设计偏离**：3 个 action 按钮
+  (推 Zotero / 提取 / 写综述) 在 task 5 阶段写为 disabled，task 8 接通统一的
+  prompt-injection 机制后启用。
+- **2026-04-26 task 6 PENDING-VERIFY** — 实验执行 tab。复用 Stage 3 sandbox
+  直调（POST /api/mcp/sandbox/call）走数据通道，1.5s 轮询；status !== running
+  自动停轮询。中间是手实装 SVG multi-line chart（避免引入 recharts，5.84 kB
+  全 chunk）。"复制配置" action 留 task 8 prompt-injection 接通。
+- **2026-04-26 task 7 PENDING-VERIFY** — Agent 思考 tab + MessageRenderer 触发
+  按钮。snapshot-based（不订阅实时增量），thinking blocks + tool_use timeline
+  各 50/50 split。
+- **2026-04-26 task 8 PENDING-VERIFY** — file action bar matrix + 跨组件
+  prompt-injection 桥（contextual store 加 pendingComposerPrompt + App effect
+  切 bench + WorkbenchTab consume）。回填 LiteratureTab 的 3 个 action 按钮。
+- **2026-04-26 task 9 PENDING-VERIFY** — LibraryTab + 后端 library 路由；4 测试。
+  **已知限制**：Zotero search API 不按 collection key 过滤；collection
+  dropdown 当前是信息提示，需 ZoteroClient 加 list_items_in_collection 后续优化。
+- **2026-04-26 task 10 PENDING-VERIFY** — auto_compact TokenUsageTracker 模块；
+  15 测试。**deferred**：Codex SSE wiring（需在长 session 实测验事件 shape）+
+  实际 conversation_switch 触发（保守路径——目前只 recommend，由用户/前端确认）。
+- **2026-04-26 STAGE 4 完成** — 11 task 全部落地（1 DONE 容器拆为 3 sub-task；
+  4 + 1a = DONE；其余 9 PENDING-VERIFY 等浏览器手测）。
+  - **后端**：539 pytest 全过（baseline 420 + Stage 4 新增 119）
+  - **前端**：`npm run build` 通过（main 856 kB + 4 个 lazy chunks）
+  - **MCP 注册**：``list_servers()`` 看到 ``[mamba_colab, mamba_experiment,
+    mamba_workspace, mamba_zotero, research_agent]``——5 个 server 齐全
+  - **物理文件**：本 stage 零文件移动 / 改名 / 删除（合规 DP "物理文件红线"）
+  - **不动 contracts/**：触线检测 0 命中
+  - **PENDING-VERIFY 项汇总**（待 ziang 浏览器手测 + 真凭据）：
+    1. Zotero workbench 端到端：推 PDF + search + add tag
+    2. Colab workbench 端到端：ipynb → URL（drive_id + fallback 双路径）
+    3. Experiment workbench 端到端：跑 train.py + cancel 立即杀
+    4. 文献 tab：PDF 渲染 + 标注保存 + 关再开还在 + 3 action prompt 注入
+    5. 实验 tab：metric 实时刷新 + 完成定格 + 关 tab 后台继续
+    6. Agent 思考 tab：thinking task → 展开思考 → 完整推理 + tool timeline
+    7. file action bar：每种 subtype 至少点一次 action 验 prompt 落 composer
+    8. LibraryTab：Zotero 列表 + 拉到 workspace prompt
+    9. Auto-compact：长会话超 80% 阈值 → 推荐弹窗（Codex SSE wiring 留待）
