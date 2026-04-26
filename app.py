@@ -19,7 +19,6 @@ from src.server.routes.mcp_calls import router as mcp_calls_router
 from src.server.routes.mcp_servers import router as mcp_servers_router
 from src.server.routes.models import router as model_router
 from src.server.routes.projects import router as projects_router
-from src.server.routes.runs import router as runs_router
 from src.server.routes.skills import router as skills_router
 from src.server.routes.workspace import router as workspace_router
 from src.server.settings import FRONTEND_DIST
@@ -49,7 +48,6 @@ app.include_router(workspace_router)
 app.include_router(auth_router)
 app.include_router(conversations_router)
 app.include_router(conversation_switch_router)
-app.include_router(runs_router)
 app.include_router(skills_router)
 app.include_router(claude_code_router)
 app.include_router(codex_router)
