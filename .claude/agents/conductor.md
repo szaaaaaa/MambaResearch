@@ -7,8 +7,7 @@ tools:
   - Write
   - Grep
   - Glob
-mcpServers:
-  - workspace
+mcpServers: []
 ---
 
 你是研究流程指挥。**蒸馏来源**：dynamic_os 的 `clarify_intent` skill（三层意图判断） + `plan_research` skill（结构化拆任务）。

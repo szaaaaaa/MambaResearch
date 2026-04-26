@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import pathlib
 from typing import Any
@@ -33,6 +34,7 @@ from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # 可选模型清单：id 直接用 SDK 接受的字符串；label 面向用户展示。
@@ -157,6 +159,7 @@ async def create_session(request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("session.create failed")
         raise HTTPException(status_code=500, detail=f"failed to create session: {exc}") from exc
     return session.to_dict()
 

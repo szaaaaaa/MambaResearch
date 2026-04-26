@@ -86,7 +86,8 @@ def _load_toml(path: Path) -> dict:
 
 
 def test_field_mapping_paper_searcher_readonly(tmp_path: Path):
-    """paper-searcher：无 exec / 无写工具 → read-only；保留原 mcp_servers。"""
+    """paper-searcher：无 exec / 无写工具 → read-only；mcpServers 在 v3 清空
+    （sub-agent 继承主 agent 的 4 个 builtin server）。"""
     dst = tmp_path / "out"
     sync_subagents.sync_directory(_REPO_CLAUDE, dst)
     data = _load_toml(dst / "paper-searcher.toml")
@@ -94,7 +95,7 @@ def test_field_mapping_paper_searcher_readonly(tmp_path: Path):
     assert data["model"] == "gpt-5.5"
     assert data["sandbox_mode"] == "read-only"
     assert data["tools"] == ["Read", "WebSearch", "WebFetch", "Grep", "Glob"]
-    assert data["mcp_servers"] == ["search", "paper_search"]
+    assert data["mcp_servers"] == []
     # developer_instructions 是从 markdown body 透传的非空字符串
     assert isinstance(data["developer_instructions"], str)
     assert "论文搜索专员" in data["developer_instructions"]
@@ -102,7 +103,8 @@ def test_field_mapping_paper_searcher_readonly(tmp_path: Path):
 
 
 def test_field_mapping_analyzer_workspace_write(tmp_path: Path):
-    """analyzer：含 exec MCP 且有 Write/Edit/Bash → workspace-write。"""
+    """analyzer：含 Write/Edit/Bash → workspace-write（tools-driven，
+    v3 清空 mcpServers 后 sandbox_mode 仍由 tools 决定）。"""
     dst = tmp_path / "out"
     sync_subagents.sync_directory(_REPO_CLAUDE, dst)
     data = _load_toml(dst / "analyzer.toml")
@@ -110,7 +112,7 @@ def test_field_mapping_analyzer_workspace_write(tmp_path: Path):
     assert data["model"] == "gpt-5.5"
     assert data["sandbox_mode"] == "workspace-write"
     assert set(data["tools"]) >= {"Write", "Edit", "Bash"}
-    assert "exec" in data["mcp_servers"]
+    assert data["mcp_servers"] == []
 
 
 def test_field_mapping_writer_workspace_write_via_tools(tmp_path: Path):

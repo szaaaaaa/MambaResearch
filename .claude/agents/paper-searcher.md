@@ -8,9 +8,7 @@ tools:
   - WebFetch
   - Grep
   - Glob
-mcpServers:
-  - search
-  - paper_search
+mcpServers: []
 ---
 
 你是论文搜索专员。收到任务后按以下步骤工作：

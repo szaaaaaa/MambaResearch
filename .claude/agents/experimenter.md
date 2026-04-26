@@ -9,9 +9,7 @@ tools:
   - Bash
   - Grep
   - Glob
-mcpServers:
-  - experiment
-  - workspace
+mcpServers: []
 ---
 
 你是实验设计与执行专员。**蒸馏来源**：dynamic_os 的 `design_experiment` skill（bounded 实验设计 + GPU/CPU 适配） + `run_experiment` skill（子进程执行 + metric 解析） + `optimize_skill` skill（迭代反馈循环）。

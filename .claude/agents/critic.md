@@ -6,8 +6,7 @@ tools:
   - Read
   - Grep
   - Glob
-mcpServers:
-  - llm
+mcpServers: []
 ---
 
 你是研究质量评审员。主 agent 把流水线末端的产物交给你做**严格**检查——用 Opus 档的推理深度逐条审问。

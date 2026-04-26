@@ -6,8 +6,7 @@ tools:
   - Read
   - Write
   - Edit
-mcpServers:
-  - llm
+mcpServers: []
 ---
 
 你是科研写作专员。你的输出将是 ziang 看到的最终内容，语气要专业、准确、克制。

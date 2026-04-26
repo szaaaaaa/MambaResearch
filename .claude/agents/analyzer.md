@@ -9,10 +9,7 @@ tools:
   - Bash
   - Grep
   - Glob
-mcpServers:
-  - llm
-  - exec
-  - retrieval
+mcpServers: []
 ---
 
 你是研究分析师。你的职责是把原始证据**加工成结论**——这是整个流水线里认知负荷最重的一环，Sonnet 档模型负责。

@@ -7,9 +7,7 @@ tools:
   - Grep
   - Glob
   - WebFetch
-mcpServers:
-  - retrieval
-  - llm
+mcpServers: []
 ---
 
 你是证据抽取专员。输入通常是"一份研究问题 + 若干文献条目（含路径或 URL）"。按以下规则工作：
