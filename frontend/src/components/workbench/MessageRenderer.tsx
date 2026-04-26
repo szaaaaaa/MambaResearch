@@ -1,9 +1,11 @@
 import React from 'react';
+import { Brain } from 'lucide-react';
 import { MarkdownBlock } from './MarkdownBlock';
 import { ThinkingBlock } from './ThinkingBlock';
 import { dispatchToolView } from './tools';
 import { UserPromptLine } from './UserPromptLine';
 import { ResultFooter } from './ResultFooter';
+import { useContextualTabs } from '../../store/contextual';
 
 interface MessageRendererProps {
   message: unknown;
@@ -89,6 +91,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
   rawEventsVisible,
   suppressedToolUseIds,
 }) => {
+  const { openTab } = useContextualTabs();
   if (!message || typeof message !== 'object') return null;
   const payload = message as Record<string, unknown>;
   const type = typeof payload.type === 'string' ? payload.type : '';
@@ -152,10 +155,37 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     // 所有 block 都被 suppress（典型场景：一整条 assistant 消息只包含被去重的 TodoWrite
     // tool_use）时返回 null，避免留下空 `●` 气泡
     if (rendered.length === 0) return null;
+    // Stage 4 Task 7 — 是否含 thinking 或 tool_use（多于一个），用于决定是否显示
+    // "展开思考" 入口；纯 text 消息没必要弹 contextual tab
+    const hasThinkingOrTools = content.some((block) => {
+      if (!block || typeof block !== 'object') return false;
+      const t = (block as Record<string, unknown>).type;
+      return t === 'thinking' || t === 'tool_use';
+    });
+    const messageKey = JSON.stringify(payload).slice(0, 64);
     return (
       <div className="my-2 flex items-start gap-2">
         <span className="mt-[6px] font-mono text-[10px] leading-none text-sky-600">●</span>
-        <div className="min-w-0 flex-1">{rendered}</div>
+        <div className="min-w-0 flex-1">
+          {rendered}
+          {hasThinkingOrTools ? (
+            <button
+              type="button"
+              onClick={() =>
+                openTab({
+                  type: 'thinking',
+                  title: 'Agent 思考',
+                  key: messageKey,
+                  props: { messageId: messageKey, message: payload },
+                })
+              }
+              className="mt-1 inline-flex items-center gap-1 rounded border border-violet-200 px-1.5 py-0.5 text-[10px] text-violet-600 hover:bg-violet-50"
+              title="在情境性 tab 里展开 thinking + tool call timeline"
+            >
+              <Brain size={10} /> 展开思考
+            </button>
+          ) : null}
+        </div>
       </div>
     );
   }
