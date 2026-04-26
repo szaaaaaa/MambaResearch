@@ -42,6 +42,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from src.server.bridge.auto_compact import get_tracker as get_token_tracker
+from src.server.bridge.auto_compact_config import load_auto_compact_config
+from src.server.bridge.compact_runner import run_compact_for_codex
 from src.server.codex.session_manager import (
     VALID_SANDBOX_MODES,
     CodexAuthError,
@@ -50,7 +52,7 @@ from src.server.codex.session_manager import (
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
 from src.server.projects import messages_store
 from src.server.projects.registry import get_registry
-from src.server.settings import ROOT
+from src.server.settings import CONFIG_PATH, ROOT
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -65,26 +67,19 @@ def _accumulate_codex_for_messages(
     buffer: list[str],
     conversation_id: str,
     session_id: str,
-) -> dict[str, Any] | None:
-    """处理一帧 codex_message 用于 messages 表持久化 + auto-compact 推荐检查。
+) -> None:
+    """处理一帧 codex_message 用于 messages 表持久化 + token 累计。
 
     Hybrid Master Transcript T2 — Codex SSE 是 JSON-RPC notification 流，每条
     ``item/agentMessage/delta`` 是几个 token，必须本地累积。规则：
 
     - ``item/agentMessage/delta``：累加 delta 文本到 buffer
     - ``turn/completed``：拼接 buffer，append 一条 assistant message 到 messages 表
-      （buffer 非空才写；空说明这一 turn 没生成助手文本，可能纯权限请求或错误）
-      然后累计 token 到 tracker；若 should_trigger 返 True 则**返回**一个建议
-      payload（调用方负责 _emit "codex_auto_compact_recommended"）
+      （buffer 非空才写；空说明这一 turn 没生成助手文本）。累计 token 到 tracker。
     - 其他 method：忽略
 
-    Tool use 暂不文本化进 tool_use_summary——T2 仅捕获文本；Task 4 切换路径若
-    需要工具摘要可后续从 raw_payload（未存）或单独 store 派生。
-
-    Returns
-    -------
-    dict or None
-        触发 auto-compact 推荐时返回 payload；否则 None。
+    auto-compact 触发判断 / LLM 调用都不在这里——由 _run_turn finally 统一处理
+    （v3.2 完整版 Task 4），那里持有 session.lock 又能 await。
     """
     method = data.get("method")
     if method == "item/agentMessage/delta":
@@ -93,7 +88,7 @@ def _accumulate_codex_for_messages(
             delta = params.get("delta")
             if isinstance(delta, str) and delta:
                 buffer.append(delta)
-        return None
+        return
     if method == "turn/completed":
         text = "".join(buffer)
         buffer.clear()
@@ -104,30 +99,62 @@ def _accumulate_codex_for_messages(
                     role="assistant",
                     text=text,
                     served_by="codex",
-                    raw_payload=None,  # 完整 turn 帧序列太大，仅保留拼接后文本
+                    raw_payload=None,
                 )
             except Exception:
                 logger.exception("messages_store append codex assistant failed")
-            # v3.2 衔接：累计 assistant token + 触发推荐检查
             try:
-                tracker = get_token_tracker()
-                tracker.observe(
+                get_token_tracker().observe(
                     session_id, delta_tokens=messages_store.estimate_tokens(text)
                 )
-                # Codex context window 128k；用 backend-specific override
-                if tracker.should_trigger(session_id, context_window=128_000):
-                    state = tracker.get_state(session_id)
-                    used = state.total_tokens if state else 0
-                    tracker.mark_triggered(session_id)
-                    return {
-                        "session_id": session_id,
-                        "used_tokens": used,
-                        "context_window": 128_000,
-                        "ratio": round(used / 128_000, 3),
-                    }
             except Exception:
-                logger.exception("codex auto_compact check failed")
-    return None
+                pass
+
+
+async def _maybe_run_compact_codex(
+    session: Any, conversation_id: str, emit: Any
+) -> None:
+    """v3.2 完整版触发钩子 for Codex（_run_turn finally 内调用，session.lock 持有）。
+
+    跟 claude 路径对偶 — 加载配置、check should_trigger、enabled 时跑 compact，
+    disabled 时仅发推荐 marker。
+    """
+    try:
+        cfg = load_auto_compact_config(CONFIG_PATH)
+        tracker = get_token_tracker()
+        tracker.threshold_ratio = cfg.threshold_ratio
+        window = cfg.context_window_for("codex")
+        if not tracker.should_trigger(session.id, context_window=window):
+            return
+        state = tracker.get_state(session.id)
+        used = state.total_tokens if state else 0
+        if cfg.enabled:
+            emit("codex_compact_started", {
+                "session_id": session.id,
+                "used_tokens": used,
+                "context_window": window,
+            })
+            try:
+                result = await run_compact_for_codex(session, conversation_id, cfg)
+            except Exception as exc:
+                logger.exception("codex compact runner failed")
+                emit("codex_compact_done", {"success": False, "error": str(exc)})
+                return
+            if result.success:
+                tracker.reset_session(session.id)
+            else:
+                tracker.mark_triggered(session.id)
+            emit("codex_compact_done", result.to_event_payload())
+        else:
+            emit("codex_auto_compact_recommended", {
+                "session_id": session.id,
+                "used_tokens": used,
+                "context_window": window,
+                "ratio": round(used / max(window, 1), 3),
+            })
+            tracker.mark_triggered(session.id)
+    except Exception:
+        logger.exception("_maybe_run_compact_codex unexpected failure")
 
 
 def _resolve_cwd(cwd_raw: str | None) -> str:
@@ -407,19 +434,14 @@ async def send_message(session_id: str, request: Request):
                 mcp_logger.observe_codex_event(data, mcp_ctx)
             except Exception:
                 pass
-            # Hybrid MT T2 — 累积 delta；turn/completed 时落库
+            # Hybrid MT T2 — 累积 delta；turn/completed 时落库 + token 累计
             if conversation_id is not None:
-                compact_payload = _accumulate_codex_for_messages(
+                _accumulate_codex_for_messages(
                     data,
                     assistant_buffer,
                     conversation_id,
                     session.id,
                 )
-                if compact_payload is not None:
-                    # v3.2 衔接：在 codex_message → SSE 帧入队之后再插一帧推荐
-                    queue.put_nowait(
-                        _sse_frame("codex_auto_compact_recommended", compact_payload)
-                    )
 
     async def _run_turn() -> None:
         async with session.lock:
@@ -432,6 +454,13 @@ async def send_message(session_id: str, request: Request):
                 _emit("codex_error", {"message": str(exc)})
             finally:
                 session.permission_state.current_sse_emitter = None
+                # v3.2 完整版 T4：用户 turn 结束后检查是否要 auto-compact。
+                # 必须在 finished 之前发，前端会以 finished 作为 isRunning=false 的信号。
+                if conversation_id is not None and not internal:
+                    try:
+                        await _maybe_run_compact_codex(session, conversation_id, _emit)
+                    except Exception:
+                        logger.exception("codex auto-compact post-turn check failed")
                 _emit("codex_finished", {"session_id": session.id})
                 queue.put_nowait(None)
 

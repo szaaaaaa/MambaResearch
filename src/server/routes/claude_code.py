@@ -29,8 +29,11 @@ from fastapi.responses import StreamingResponse
 from src.server.claude_code import serialize_message
 from src.server.claude_code.providers import get_provider_registry
 from src.server.bridge.auto_compact import get_tracker as get_token_tracker
+from src.server.bridge.auto_compact_config import load_auto_compact_config
+from src.server.bridge.compact_runner import run_compact_for_claude
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
 from src.server.projects import messages_store
+from src.server.settings import CONFIG_PATH
 from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
 from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
@@ -556,6 +559,60 @@ def _extract_claude_assistant(payload: dict[str, Any]) -> tuple[str, str | None]
     return text, tool_summary
 
 
+async def _maybe_run_compact(
+    session: Any, conversation_id: str, emit: Any
+) -> None:
+    """v3.2 完整版触发钩子（在 _run_turn finally 内调用，session.lock 仍持有）。
+
+    流程：
+    1. 加载用户配置（每次都重读，让用户在 Settings 改阈值后立即生效）
+    2. tracker.should_trigger 用配置的 threshold + Claude context window
+    3. enabled=True 且触发 → emit cc_compact_started → run_compact_for_claude
+       → emit cc_compact_done + reset_session
+    4. enabled=False 但触发 → 仅 emit cc_auto_compact_recommended（信息性）
+       + mark_triggered（启动冷却避免连发）
+    任何异常都吞掉——压缩失败不能影响主对话流；下个 turn 仍会再次评估。
+    """
+    try:
+        cfg = load_auto_compact_config(CONFIG_PATH)
+        tracker = get_token_tracker()
+        # 同步配置阈值到 tracker（让 Settings 改 threshold_pct 立即生效）
+        tracker.threshold_ratio = cfg.threshold_ratio
+        window = cfg.context_window_for("claude")
+        if not tracker.should_trigger(session.id, context_window=window):
+            return
+        state = tracker.get_state(session.id)
+        used = state.total_tokens if state else 0
+        if cfg.enabled:
+            emit("cc_compact_started", {
+                "session_id": session.id,
+                "used_tokens": used,
+                "context_window": window,
+            })
+            try:
+                result = await run_compact_for_claude(session, conversation_id, cfg)
+            except Exception as exc:
+                logger.exception("compact runner failed")
+                emit("cc_compact_done", {"success": False, "error": str(exc)})
+                return
+            if result.success:
+                tracker.reset_session(session.id)
+            else:
+                tracker.mark_triggered(session.id)
+            emit("cc_compact_done", result.to_event_payload())
+        else:
+            # 用户禁用了 auto-compact——只发提示让用户知道接近上限
+            emit("cc_auto_compact_recommended", {
+                "session_id": session.id,
+                "used_tokens": used,
+                "context_window": window,
+                "ratio": round(used / max(window, 1), 3),
+            })
+            tracker.mark_triggered(session.id)
+    except Exception:
+        logger.exception("_maybe_run_compact unexpected failure")
+
+
 def _short_repr(value: Any, max_len: int = 200) -> str:
     """工具入参的简短表示——给 tool_use_summary 用，避免单条摘要膨胀到几 KB。"""
     if value is None:
@@ -681,28 +738,6 @@ async def send_message(session_id: str, request: Request):
                     )
                 except Exception:
                     pass
-        # turn 结束时判断是否要 emit auto_compact_recommended
-        # Claude context window 200k；用 tracker 默认值即可
-        if event == "cc_finished":
-            try:
-                tracker = get_token_tracker()
-                if tracker.should_trigger(session.id):
-                    state = tracker.get_state(session.id)
-                    used = state.total_tokens if state else 0
-                    queue.put_nowait(
-                        _sse_frame(
-                            "cc_auto_compact_recommended",
-                            {
-                                "session_id": session.id,
-                                "used_tokens": used,
-                                "context_window": tracker.default_context_window,
-                                "ratio": round(used / max(tracker.default_context_window, 1), 3),
-                            },
-                        )
-                    )
-                    tracker.mark_triggered(session.id)
-            except Exception:
-                logger.exception("auto_compact_recommended emit failed")
 
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
@@ -721,6 +756,12 @@ async def send_message(session_id: str, request: Request):
                 _emit("cc_error", {"message": str(exc)})
             finally:
                 session.permission_state.current_sse_emitter = None
+                # v3.2 完整版：用户 turn 结束后检查是否要 auto-compact。
+                # 仍持有 session.lock（async with 内），直接复用 session.client
+                # 跑一次 LLM 总结，不通过 _emit 避免污染 messages 表。
+                # internal=True 路径或无 conversation_id 跳过。
+                if conversation_id is not None and not internal:
+                    await _maybe_run_compact(session, conversation_id, _emit)
                 _emit("cc_finished", {"session_id": session.id})
                 queue.put_nowait(None)
 

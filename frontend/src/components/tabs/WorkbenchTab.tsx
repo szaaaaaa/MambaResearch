@@ -401,6 +401,54 @@ export const WorkbenchTab: React.FC = () => {
           });
           return;
         }
+        // v3.2 完整版 T4：自动压缩开始/结束事件 — 渲染成 segment_boundary
+        // 让用户清楚看到"刚才那条 turn 触发了 compact"。
+        if (
+          frame.event === 'cc_compact_started' ||
+          frame.event === 'codex_compact_started'
+        ) {
+          let used = '?';
+          let total = '?';
+          if (parsed && typeof parsed === 'object') {
+            const r = parsed as Record<string, unknown>;
+            used = String(r.used_tokens ?? '?');
+            total = String(r.context_window ?? '?');
+          }
+          ccAppendItem({
+            type: 'segment_boundary',
+            text: `🔄 正在自动压缩历史…（已用 ${used}/${total} tokens）`,
+          });
+          return;
+        }
+        if (
+          frame.event === 'cc_compact_done' ||
+          frame.event === 'codex_compact_done'
+        ) {
+          let success = false;
+          let count = 0;
+          let excerpt = '';
+          let error = '';
+          if (parsed && typeof parsed === 'object') {
+            const r = parsed as Record<string, unknown>;
+            success = Boolean(r.success);
+            count = typeof r.compacted_count === 'number' ? r.compacted_count : 0;
+            excerpt = typeof r.summary_excerpt === 'string' ? r.summary_excerpt : '';
+            error = typeof r.error === 'string' ? r.error : '';
+          }
+          if (success) {
+            const tail = excerpt ? `；摘要开头："${excerpt}…"` : '';
+            ccAppendItem({
+              type: 'segment_boundary',
+              text: `✓ 已压缩 ${count} 条历史消息成 summary${tail}`,
+            });
+          } else {
+            ccAppendItem({
+              type: 'segment_boundary',
+              text: `⚠️ 自动压缩失败：${error || '未知错误'}（下一轮会重试）`,
+            });
+          }
+          return;
+        }
         if (frame.event === 'codex_message') {
           // Codex SSE pass-through 是 JSON-RPC 通知逐帧发的（包括逐 token
           // delta）。把 item/agentMessage/delta 单独合并成一个连续的
