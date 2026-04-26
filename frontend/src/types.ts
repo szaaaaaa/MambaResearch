@@ -201,6 +201,20 @@ export interface ProjectConfig {
     sqlite_path?: string;
     cross_run_mode?: string;
   };
+  ui?: {
+    workbench?: {
+      auto_compact?: {
+        enabled?: boolean;
+        threshold_pct?: number;
+        strategy?: 'rolling' | 'single_summary';
+        keep_recent_n?: number;
+        backend_context_windows?: {
+          claude?: number;
+          codex?: number;
+        };
+      };
+    };
+  };
 }
 
 export interface RunOverrides {

@@ -235,6 +235,17 @@ const defaultProjectConfig: ProjectConfig = {
   },
   metadata_store: { backend: 'sqlite', sqlite_path: '${project.data_dir}/metadata.db' },
   budget_guard: { max_tokens: 1000000, max_api_calls: 1000, max_wall_time_sec: 3600 },
+  ui: {
+    workbench: {
+      auto_compact: {
+        enabled: true,
+        threshold_pct: 80,
+        strategy: 'rolling',
+        keep_recent_n: 10,
+        backend_context_windows: { claude: 200000, codex: 128000 },
+      },
+    },
+  },
 };
 
 const EXECUTION_ROLE_IDS = ['conductor', 'researcher', 'experimenter', 'analyst', 'writer', 'reviewer'] as const;
