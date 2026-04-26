@@ -14,6 +14,9 @@ import { TopBar } from './components/layout/TopBar';
 import { BucketContainer } from './components/buckets/BucketContainer';
 import { McpTab } from './components/mcp/McpTab';
 import { getActiveProject, Project } from './api/projects';
+import { ContextualTabsProvider, useActiveContextualTab } from './store/contextual';
+import { ContextualTabBar } from './components/contextual/ContextualTabBar';
+import { ContextualTabFrame } from './components/contextual/ContextualTabFrame';
 
 const UI_PREFERENCES_KEY = 'research-agent-ui-preferences';
 const LAST_NAV_KEY = 'mamba_last_nav';
@@ -88,6 +91,7 @@ const AppContent: React.FC = () => {
   const [activeProject, setActiveProject] = React.useState<Project | null>(null);
   const [bootstrapping, setBootstrapping] = React.useState(true);
   const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>(() => loadLastNav());
+  const activeContextualTab = useActiveContextualTab();
 
   React.useEffect(() => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
@@ -225,6 +229,15 @@ const AppContent: React.FC = () => {
     }
   };
 
+  // Stage 4 Task 4 — 当存在 active contextual tab 时，主区域渲染 contextual
+  // 内容；无 active 时回退到 sidebar nav 决定的 renderMain。
+  const renderMainArea = (): React.ReactNode => {
+    if (activeContextualTab !== null) {
+      return <ContextualTabFrame />;
+    }
+    return renderMain();
+  };
+
   if (bootstrapping) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
@@ -263,7 +276,10 @@ const AppContent: React.FC = () => {
             onArchiveConversation={archiveConversation}
             onDeleteConversation={deleteConversation}
           />
-          <main style={{ minWidth: 0, height: '100%', overflow: 'hidden' }}>{renderMain()}</main>
+          <main style={{ minWidth: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <ContextualTabBar />
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>{renderMainArea()}</div>
+          </main>
         </div>
       </div>
 
@@ -281,7 +297,9 @@ const AppContent: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
-      <AppContent />
+      <ContextualTabsProvider>
+        <AppContent />
+      </ContextualTabsProvider>
     </AppProvider>
   );
 }
