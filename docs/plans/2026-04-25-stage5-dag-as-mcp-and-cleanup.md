@@ -23,6 +23,70 @@
 - 运行历史 tab 是 Stage 4 之后只展示会话（不展示 DAG run）
 - Stage 4 的 ContextualTabFrame 可复用作 DAG 进度展示
 
+## Decision points
+
+规划期已锁的决策；运行期用作"不在 plan 范围内的歧义"的解释依据。
+
+- **dynamic_os 访问唯一入口**：MCP。删 `runs.py` 后，REST `/api/runs/*` 全删；前端只通过 `research_dag.*` MCP（由 Claude/Codex 调）+ 新 `/api/history` 读历史展示。
+- **HITL 处理位置**：DAG 内部产生的 HITL **不弹** MambaResearch 的 permission 模态；以 `state: paused_hitl` + `hitl_question` + `hitl_choices` 经 MCP `status` 返给 Claude，让 Claude 决定如何回应（调 `research_dag.respond_hitl`）。理由：DAG 是 Claude 的子工具，决策权应归 Claude；UI 仅展示状态。
+- **runtime 单例策略**：`runtime_holder` 按 `(active_project_id,)` key 缓存 `DynamicResearchRuntime` 实例；切 active project 时关旧的 → 起新的。不做并发多 project runtime。
+- **DAG 进度 SSE 事件**：自定义 event type `dag_progress`（前缀避免与 `cc_*` / `codex_*` 冲突）；payload `{run_id, current_node, total_nodes, completed_nodes, message}`；MessageRenderer 按 run_id 找到对应 `research_dag.start` tool_use 行渲染进度条。
+- **历史 tab 数据源统一**：新建 `GET /api/history?project_id=&types=conversations,dag_runs,experiment_runs&limit=`；后端在一个端点内 JOIN 三张表（conversations / dag_runs / experiment_runs）按 `last_active_at` desc 混排返回，前端 toggle 仅做客户端过滤。
+- **localStorage 迁移**：读到 `mamba_last_nav == 'runs'` 时映射为 `'hist'`（不崩、不空白）；映射后 setItem 覆写为 `'hist'`。
+- **删除策略**：RunTab 与 `runs.py` 均**硬删**（无 deprecation period、无兼容层、无 feature flag）；理由：MambaResearch 自用工具单用户，用户即开发者，无需照顾外部消费者。
+- **dynamic_os 项目作用域**：`DynamicResearchRuntime` 接 `project_id` 入参；run 元数据带 project_id；现有不带 project_id 的旧 run 不迁移（历史空数据，project 是新概念）。
+- **细粒度 skill MCP 命名**：21 个 builtin skill 各暴露为 `research_dag.skill_<dir_name>`（保留 dir 名，不重命名）；与粗粒度 `research_dag.start` 共存。
+- **物理文件红线（沿用 Stage 4）**：本 stage **零文件移动 / 改名 / 删除**。例外：`runs.py` 与 `RunTab*` 是源代码删除，不是用户数据/workspace 文件。
+
+## External preconditions
+
+用户侧或环境侧前置条件；缺少任何一条 pipeline 不应启动。
+
+- **CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70**：pipeline Phase 0 自检。
+- **Stage 1+2+3+4 已落地**：项目注册表、workspace MCP、MCP 控制台、conversation_segments 表、continues 桥、Zotero/Colab/Experiment MCP、3 个情境 tab；详见 `project_mamba_pivot_progress.md`。
+- **测试基线绿**：开工前 `pytest tests/` 当前 539 通过；本 stage 删 `runs.py` + 加 `research_dag` MCP + `history` route 后保持全绿。
+- **dynamic_os 测试基线绿**：`pytest tests/test_dynamic_*` 60 通过；本 stage Task 6 改 `runtime.py` 时不能破。
+- **前端可构建**：`cd frontend && npm run build` 通过；删 RunTab + 加 history 子组件后保持。
+- **continues CLI ≥ v4.0.12**：沿用 Stage 3/4 依赖。
+- **git 工作树干净**：pipeline 每个 leaf task 一个 commit。
+
+## Failure policy
+
+运行期硬 STOP 条件。每条对应 pipeline STOP 报告的 `reason` 字段。
+
+- `pytest tests/` 在任何 task 后失败 → **STOP**（reason: `pytest tests/ failed for task <id>`）。
+- `pytest tests/test_dynamic_*` 在 Task 6 后失败 → **STOP**（reason: `dynamic_os 60 tests broke for task 6`）；本 stage 明确不能让 dynamic_os 基线退化。
+- `cd frontend && tsc --noEmit` 或 `npm run build` 失败 → **STOP**。
+- `/review` 同一 task 连续 3 次仍报 issue → **STOP**（pipeline 自带 cap）。
+- 触碰 🔴 禁区文件（`src/dynamic_os/contracts/*`、`artifact_refs.py`）→ **STOP**；本 stage 不应有合法理由改它们。
+- 数据库 schema migration 失败（如 `dag_runs` 表创建）→ **STOP**；不允许"事后再补"。
+- 检测到源目录文件（用户 workspace 内）被移动 / 重命名 / 删除 → **STOP**（DP "物理文件红线"）；删 `runs.py` 与 `RunTab*` 不属此范畴。
+- `git commit` merge conflict → **STOP**。
+- 评估 subagent 返回非合法 JSON / 缺字段 → **STOP**（pipeline 自带）。
+- DP/EP/FP/SSP 段在 pipeline 运行中被任何工具修改 → **STOP**。
+- 第三方依赖（Drive Desktop / Zotero 凭据）相关浏览器手测在本 stage **不**视为 STOP；只有 dynamic_os runtime 单测 / pytest / build 失败才阻塞。
+
+## Subtask split policy
+
+判断当前 task 是单 unit 还是拆成 subtask 的规则。subagent 严格按以下规则评估，不发明额外规则。
+
+- **拆**条件（满足任一）：
+  - acceptance ≥ 4 条 **且** 跨 ≥ 2 个独立模块（如同时改 backend MCP server + 前端 SSE 渲染 + DB schema）。
+  - Files 列表 ≥ 5 个文件 **且** 涉及多个目录层级。
+  - `research_dag` MCP server task（Task 1）同时包含 (a) runtime_holder 单例 (b) 粗粒度 5 工具 (c) 细粒度 21 skill 暴露 三层 → 可拆 a/b/c。
+  - 前端历史 tab 升级（Task 5）同时包含 (a) backend `/api/history` (b) UnifiedTimeline 主件 (c) ConversationRow/DagRunRow 子件 → 可拆 a/b/c。
+- **不拆**条件（满足任一）：
+  - 单 task Files ≤ 3 **且** acceptance ≤ 3。
+  - 删除型 task（Task 3 删 `runs.py` / Task 4 删 RunTab）— 收敛性强，拆开反破坏一次性 diff 完整性。
+  - dynamic_os runtime 增 `project_id` 入参（Task 6）— 单文件 + 单测试更新，不拆。
+  - 文档 task（Task 7）— 自带 3-4 个文件但纯文本，无技术依赖，不拆。
+  - 验证 task（Task 8）— 全 stage 收尾检查，不拆。
+- **强制规则**：
+  - 拆出的每个 subtask 必须自带 ≥ 1 条 acceptance，可独立验证。
+  - **不允许**把"测试"或"文档"拆成独立 subtask；测试随实现走，文档在进度日志写。
+  - subtask label 用 `a`, `b`, `c`, ... 顺序；最大 5 个（>5 说明 task 设计本身有问题，应回头改 plan 而不是机械拆分）。
+  - subtask 之间允许有顺序依赖（runtime_holder 先 → 粗粒度后 → 细粒度后）；评估器在 `parts` 数组中按执行顺序排列。
+
 ## Tasks
 
 ### [TODO] 1. 后端：research_dag.* MCP server 框架
