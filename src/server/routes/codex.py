@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import pathlib
 import time
@@ -46,14 +47,59 @@ from src.server.codex.session_manager import (
     codex_session_manager,
 )
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
+from src.server.projects import messages_store
 from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _sse_frame(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _accumulate_codex_for_messages(
+    data: dict[str, Any],
+    buffer: list[str],
+    conversation_id: str,
+) -> None:
+    """处理一帧 codex_message 用于 messages 表持久化。
+
+    Hybrid Master Transcript T2 — Codex SSE 是 JSON-RPC notification 流，每条
+    ``item/agentMessage/delta`` 是几个 token，必须本地累积。规则：
+
+    - ``item/agentMessage/delta``：累加 delta 文本到 buffer
+    - ``turn/completed``：拼接 buffer，append 一条 assistant message 到 messages 表
+      （buffer 非空才写；空说明这一 turn 没生成助手文本，可能纯权限请求或错误）
+    - 其他 method：忽略
+
+    Tool use 暂不文本化进 tool_use_summary——T2 仅捕获文本；Task 4 切换路径若
+    需要工具摘要可后续从 raw_payload（未存）或单独 store 派生。
+    """
+    method = data.get("method")
+    if method == "item/agentMessage/delta":
+        params = data.get("params", {})
+        if isinstance(params, dict):
+            delta = params.get("delta")
+            if isinstance(delta, str) and delta:
+                buffer.append(delta)
+        return
+    if method == "turn/completed":
+        text = "".join(buffer)
+        buffer.clear()
+        if not text:
+            return
+        try:
+            messages_store.append_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                text=text,
+                served_by="codex",
+                raw_payload=None,  # 完整 turn 帧序列太大，仅保留拼接后文本
+            )
+        except Exception:
+            logger.exception("messages_store append codex assistant failed")
 
 
 def _resolve_cwd(cwd_raw: str | None) -> str:
@@ -286,10 +332,29 @@ async def send_message(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="session not found")
     session.last_activity_at = time.time()
 
+    # Hybrid Master Transcript T2 — 把 user prompt 写入 messages 表（真相源）
+    conversation_id = messages_store.lookup_conversation_by_session(session.id)
+    if conversation_id is not None:
+        try:
+            messages_store.append_message(
+                conversation_id=conversation_id,
+                role="user",
+                text=prompt,
+                served_by="user",
+            )
+        except Exception:
+            logger.exception("messages_store append user failed")
+
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     mcp_ctx = McpCallContext(cli_session_id=session.id)
     mcp_logger = get_call_logger()
+
+    # Hybrid Master Transcript T2 — 累积 item/agentMessage/delta 进 buffer，
+    # turn/completed 时一次性 append 一条 assistant message 到 messages 表。
+    # Codex 的 SSE 帧是 JSON-RPC notification 流式 delta，跟 Claude 的"完整
+    # message per yield"模型不同——必须本地 buffer 才能拿到完整 turn 文本。
+    assistant_buffer: list[str] = []
 
     def _emit(event: str, data: dict[str, Any]) -> None:
         queue.put_nowait(_sse_frame(event, data))
@@ -300,6 +365,13 @@ async def send_message(session_id: str, request: Request):
                 mcp_logger.observe_codex_event(data, mcp_ctx)
             except Exception:
                 pass
+            # Hybrid MT T2 — 累积 delta；turn/completed 时落库
+            if conversation_id is not None:
+                _accumulate_codex_for_messages(
+                    data,
+                    assistant_buffer,
+                    conversation_id,
+                )
 
     async def _run_turn() -> None:
         async with session.lock:

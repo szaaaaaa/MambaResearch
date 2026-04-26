@@ -29,6 +29,7 @@ from fastapi.responses import StreamingResponse
 from src.server.claude_code import serialize_message
 from src.server.claude_code.providers import get_provider_registry
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
+from src.server.projects import messages_store
 from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
 from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
@@ -507,6 +508,66 @@ async def list_session_messages(session_id: str, request: Request):
     }
 
 
+def _extract_claude_assistant(payload: dict[str, Any]) -> tuple[str, str | None]:
+    """从 Claude SDK 序列化 payload 抽出 assistant 文本 + tool_use 摘要。
+
+    Hybrid Master Transcript T2 — 用于把每条 assistant 消息持久化到 messages
+    表。同 backend 内 SDK 已经维护原生 tool_use blocks，但跨 backend 切换时新
+    backend 看不见这些 blocks，所以同步生成一份文本摘要存到 tool_use_summary
+    字段供 T4 切换路径序列化使用。
+
+    Parameters
+    ----------
+    payload : dict
+        ``serialize_message(SDK message)`` 的输出；只关心
+        ``{"type": "assistant", "content": [...]}`` 形态。
+
+    Returns
+    -------
+    (text, tool_use_summary) : (str, str or None)
+        - text: 所有 ``{type: "text"}`` content blocks 的 ``text`` 字段拼接
+        - tool_use_summary: 所有 ``{type: "tool_use"}`` blocks 的文本摘要，
+          形如 ``"[Claude 调用工具 Bash(command='ls -la')]"`` 多行；无 tool_use
+          时返回 ``None``
+    非 assistant payload 返回 ``("", None)``——调用方据此跳过持久化。
+    """
+    if payload.get("type") != "assistant":
+        return ("", None)
+    content = payload.get("content", [])
+    if not isinstance(content, list):
+        return ("", None)
+    text_parts: list[str] = []
+    tool_lines: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            t = block.get("text", "")
+            if isinstance(t, str) and t:
+                text_parts.append(t)
+        elif btype == "tool_use":
+            name = str(block.get("name") or "?")
+            inp = block.get("input")
+            tool_lines.append(f"[Claude 调用工具 {name}({_short_repr(inp)})]")
+    text = "".join(text_parts)
+    tool_summary = "\n".join(tool_lines) if tool_lines else None
+    return text, tool_summary
+
+
+def _short_repr(value: Any, max_len: int = 200) -> str:
+    """工具入参的简短表示——给 tool_use_summary 用，避免单条摘要膨胀到几 KB。"""
+    if value is None:
+        return ""
+    try:
+        s = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        s = str(value)
+    if len(s) > max_len:
+        return s[: max_len - 3] + "..."
+    return s
+
+
 @router.post("/api/claude-code/sessions/{session_id}/messages")
 async def send_message(session_id: str, request: Request):
     payload = await _parse_json_body(request)
@@ -537,6 +598,21 @@ async def send_message(session_id: str, request: Request):
     except Exception:
         pass
 
+    # Hybrid Master Transcript T2 — 把 user prompt 写入 messages 表（真相源）
+    # 用 lookup_conversation_by_session 反查 conversation_id：找不到说明此 session
+    # 没绑过 conversation（直建路径，未走过切换），跳过持久化。
+    conversation_id = messages_store.lookup_conversation_by_session(session.id)
+    if conversation_id is not None:
+        try:
+            messages_store.append_message(
+                conversation_id=conversation_id,
+                role="user",
+                text=prompt,
+                served_by="user",
+            )
+        except Exception:
+            logger.exception("messages_store append user failed")
+
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     mcp_ctx = McpCallContext(cli_session_id=session.id)
@@ -560,6 +636,25 @@ async def send_message(session_id: str, request: Request):
             except Exception:
                 # logger 异常吞掉，绝不影响主对话
                 pass
+        # Hybrid Master Transcript T2 — 把 assistant 消息写入 messages 表
+        # SDK 一个 turn 内可能 emit 多条 assistant message（含 tool 调用回环），
+        # 每条独立成一行，text 为该 message 内文本块拼接，tool_use_summary 为该
+        # message 内 tool_use 块的文本摘要（供跨 backend 切换时序列化用）。
+        if event == "cc_message" and conversation_id is not None:
+            text, tool_summary = _extract_claude_assistant(data)
+            # 仅当此条确实是 assistant 输出（含文本或工具调用）时才写
+            if text or tool_summary:
+                try:
+                    messages_store.append_message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        text=text,
+                        served_by="claude",
+                        tool_use_summary=tool_summary,
+                        raw_payload=json.dumps(data, ensure_ascii=False),
+                    )
+                except Exception:
+                    logger.exception("messages_store append assistant failed")
 
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
