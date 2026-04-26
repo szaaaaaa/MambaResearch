@@ -13,6 +13,7 @@ import { HomeScreen } from './components/home/HomeScreen';
 import { TopBar } from './components/layout/TopBar';
 import { BucketContainer } from './components/buckets/BucketContainer';
 import { McpTab } from './components/mcp/McpTab';
+import { LibraryTab } from './components/library/LibraryTab';
 import { getActiveProject, Project } from './api/projects';
 import { ContextualTabsProvider, useActiveContextualTab, useContextualTabs } from './store/contextual';
 import { ContextualTabBar } from './components/contextual/ContextualTabBar';
@@ -60,6 +61,7 @@ function loadLastNav(): Exclude<NavId, 'set'> {
     'bench',
     'hist',
     'runs',
+    'library',
   ];
   return (valid as string[]).includes(raw) ? (raw as Exclude<NavId, 'set'>) : 'bench';
 }
@@ -234,6 +236,8 @@ const AppContent: React.FC = () => {
         );
       case 'mcp':
         return <McpTab />;
+      case 'library':
+        return <LibraryTab />;
     }
   };
 

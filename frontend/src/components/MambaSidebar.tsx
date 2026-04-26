@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronRight,
   Workflow,
+  BookOpen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ChatSession } from '../types';
@@ -40,6 +41,7 @@ export type NavId =
   | 'bench'
   | 'hist'
   | 'runs'
+  | 'library'
   | 'set';
 
 interface NavItem {
@@ -69,6 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'roles', label: 'Agent 角色', icon: Users },
       { id: 'mcp', label: 'MCP 工具', icon: Plug },
       { id: 'bench', label: '工作台', icon: LineChart },
+      { id: 'library', label: 'Zotero 库', icon: BookOpen },
     ],
   },
   {
