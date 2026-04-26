@@ -303,7 +303,7 @@
 - **Acceptance**:
   - 跑一个长会话超过阈值后自动触发；用户视角对话连续
 
-### [WIP] 11. 验证（Stage 4 done）
+### [DONE] 11. 验证（Stage 4 done）
 
 - **后端**:
   - `pytest tests/` 全绿
