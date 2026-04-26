@@ -744,8 +744,27 @@ export const WorkbenchTab: React.FC = () => {
    * 兜底：try/finally 保证 isSwitching 一定 reset，避免按钮永久锁。
    */
   const handleBackendSwitch = (target: 'claude' | 'codex') => {
-    if (currentBackend === target) return;
-    if (isSwitching) return;
+    // 调试用：用户报"按钮没反应"时打开 DevTools console 看分支命中情况
+    // eslint-disable-next-line no-console
+    console.log('[backend-switch] click', {
+      target,
+      currentBackend,
+      sessionProvider: session?.provider,
+      sessionId: session?.id,
+      sessionRefId: sessionRef.current?.id,
+      isRunning,
+      isSwitching,
+    });
+    if (currentBackend === target) {
+      // eslint-disable-next-line no-console
+      console.log('[backend-switch] noop: already on target', target);
+      return;
+    }
+    if (isSwitching) {
+      // eslint-disable-next-line no-console
+      console.log('[backend-switch] noop: already switching');
+      return;
+    }
 
     // 切换前主动 abort 当前 turn——即便 isRunning 因为 SSE 异常 / finished 帧
     // 丢失而卡住，用户也能切换。同时 ccSetRunning(false) 强制重置 UI 状态。
@@ -756,6 +775,8 @@ export const WorkbenchTab: React.FC = () => {
     }
 
     const hasActiveSession = sessionRef.current !== null;
+    // eslint-disable-next-line no-console
+    console.log('[backend-switch] hasActiveSession=', hasActiveSession);
     if (!hasActiveSession) {
       setIsSwitching(true);
       void handleCreateSession(target === 'codex' ? 'codex' : null).finally(() => {
@@ -764,11 +785,12 @@ export const WorkbenchTab: React.FC = () => {
       return;
     }
 
-    if (
-      !window.confirm(
-        `切换到 ${target === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} 会用 \`continues\` 工具压缩当前会话作为 handoff 注入新会话。继续？`,
-      )
-    ) {
+    const confirmResult = window.confirm(
+      `切换到 ${target === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} 会用 \`continues\` 工具压缩当前会话作为 handoff 注入新会话。继续？`,
+    );
+    // eslint-disable-next-line no-console
+    console.log('[backend-switch] confirm result=', confirmResult);
+    if (!confirmResult) {
       return;
     }
 
