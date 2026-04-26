@@ -157,3 +157,40 @@ def test_mambaresearch_compact_served_by_allowed(temp_db: MambaDb) -> None:
     assert msg.served_by == "mambaresearch_compact"
     listed = list_by_conversation("c1")
     assert listed[0].served_by == "mambaresearch_compact"
+
+
+# ---------------------------------------------------------------------------
+# estimate_tokens 启发式
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_tokens_empty_string() -> None:
+    from src.server.projects.messages_store import estimate_tokens
+
+    assert estimate_tokens("") == 0
+
+
+def test_estimate_tokens_pure_ascii_4_chars_per_token() -> None:
+    from src.server.projects.messages_store import estimate_tokens
+
+    # 4 ASCII chars → 1 token
+    assert estimate_tokens("abcd") == 1
+    # 5 chars → 2 tokens (向上取整)
+    assert estimate_tokens("abcde") == 2
+    # 8 chars → 2 tokens
+    assert estimate_tokens("abcdefgh") == 2
+
+
+def test_estimate_tokens_cjk_one_char_per_token() -> None:
+    from src.server.projects.messages_store import estimate_tokens
+
+    # 中文字符按 1:1 估算
+    assert estimate_tokens("你好") == 2
+    assert estimate_tokens("中日韩繁體字") == 6
+
+
+def test_estimate_tokens_mixed_text() -> None:
+    from src.server.projects.messages_store import estimate_tokens
+
+    # "Hello 世界" = 6 ASCII (含空格) + 2 CJK = ceil(6/4) + 2 = 2 + 2 = 4
+    assert estimate_tokens("Hello 世界") == 4

@@ -194,3 +194,43 @@ def _row_to_message(row) -> Message:
         compacted=bool(row[7]),
         created_at=int(row[8]),
     )
+
+
+# ---------------------------------------------------------------------------
+# Token 估算（v3.2 衔接：auto_compact_recommended 触发用）
+# ---------------------------------------------------------------------------
+
+
+def estimate_tokens(text: str) -> int:
+    """启发式 token 估算 — 不依赖 tiktoken，避免引入额外依赖。
+
+    规则（保守偏高，宁误报不漏报）：
+    - ASCII 字符按 4 字符 / token（GPT 系列经验值）
+    - 中日韩字符（CJK Unified Ideographs 等）按 1 字符 / token
+      （CJK 在 BPE 分词器里几乎一字一 token，BPE 偶尔合并成 multi-char token，
+      但稳健起见按 1:1 估）
+    - 其他 unicode 按 2 字符 / token
+
+    返回向上取整的整数。空字符串返 0。
+    """
+    if not text:
+        return 0
+    ascii_chars = 0
+    cjk_chars = 0
+    other_chars = 0
+    for ch in text:
+        code = ord(ch)
+        if code < 0x80:
+            ascii_chars += 1
+        elif (
+            0x4E00 <= code <= 0x9FFF  # CJK Unified
+            or 0x3040 <= code <= 0x30FF  # Hiragana + Katakana
+            or 0xAC00 <= code <= 0xD7AF  # Hangul
+        ):
+            cjk_chars += 1
+        else:
+            other_chars += 1
+    # 向上取整
+    ascii_tok = (ascii_chars + 3) // 4
+    other_tok = (other_chars + 1) // 2
+    return ascii_tok + cjk_chars + other_tok

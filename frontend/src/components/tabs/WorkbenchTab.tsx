@@ -377,6 +377,30 @@ export const WorkbenchTab: React.FC = () => {
           ccSetTurnStartAt(null);
           return;
         }
+        // v3.2 衔接：后端在 token 累计接近 backend context window 上限（默认 80%）时
+        // 推 auto_compact_recommended 帧。前端把它落成一条可见的 system marker，
+        // 让用户知道接下来切 backend 时 first-message 注入可能撞上限——可以手动
+        // 开新对话或等 v3.2 完整 LLM compact 实现自动化。
+        if (
+          frame.event === 'cc_auto_compact_recommended' ||
+          frame.event === 'codex_auto_compact_recommended'
+        ) {
+          let ratioPct = '?';
+          let used = '?';
+          let total = '?';
+          if (parsed && typeof parsed === 'object') {
+            const r = parsed as Record<string, unknown>;
+            const ratio = typeof r.ratio === 'number' ? r.ratio : 0;
+            ratioPct = `${Math.round(ratio * 100)}%`;
+            used = String(r.used_tokens ?? '?');
+            total = String(r.context_window ?? '?');
+          }
+          ccAppendItem({
+            type: 'segment_boundary',
+            text: `⚠️ 上下文已用 ${ratioPct}（约 ${used}/${total} tokens）— 接近 backend 上限，建议开新对话或等待 v3.2 自动压缩落地`,
+          });
+          return;
+        }
         if (frame.event === 'codex_message') {
           // Codex SSE pass-through 是 JSON-RPC 通知逐帧发的（包括逐 token
           // delta）。把 item/agentMessage/delta 单独合并成一个连续的

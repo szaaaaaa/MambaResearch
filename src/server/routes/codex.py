@@ -41,6 +41,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from src.server.bridge.auto_compact import get_tracker as get_token_tracker
 from src.server.codex.session_manager import (
     VALID_SANDBOX_MODES,
     CodexAuthError,
@@ -63,8 +64,9 @@ def _accumulate_codex_for_messages(
     data: dict[str, Any],
     buffer: list[str],
     conversation_id: str,
-) -> None:
-    """处理一帧 codex_message 用于 messages 表持久化。
+    session_id: str,
+) -> dict[str, Any] | None:
+    """处理一帧 codex_message 用于 messages 表持久化 + auto-compact 推荐检查。
 
     Hybrid Master Transcript T2 — Codex SSE 是 JSON-RPC notification 流，每条
     ``item/agentMessage/delta`` 是几个 token，必须本地累积。规则：
@@ -72,10 +74,17 @@ def _accumulate_codex_for_messages(
     - ``item/agentMessage/delta``：累加 delta 文本到 buffer
     - ``turn/completed``：拼接 buffer，append 一条 assistant message 到 messages 表
       （buffer 非空才写；空说明这一 turn 没生成助手文本，可能纯权限请求或错误）
+      然后累计 token 到 tracker；若 should_trigger 返 True 则**返回**一个建议
+      payload（调用方负责 _emit "codex_auto_compact_recommended"）
     - 其他 method：忽略
 
     Tool use 暂不文本化进 tool_use_summary——T2 仅捕获文本；Task 4 切换路径若
     需要工具摘要可后续从 raw_payload（未存）或单独 store 派生。
+
+    Returns
+    -------
+    dict or None
+        触发 auto-compact 推荐时返回 payload；否则 None。
     """
     method = data.get("method")
     if method == "item/agentMessage/delta":
@@ -84,22 +93,41 @@ def _accumulate_codex_for_messages(
             delta = params.get("delta")
             if isinstance(delta, str) and delta:
                 buffer.append(delta)
-        return
+        return None
     if method == "turn/completed":
         text = "".join(buffer)
         buffer.clear()
-        if not text:
-            return
-        try:
-            messages_store.append_message(
-                conversation_id=conversation_id,
-                role="assistant",
-                text=text,
-                served_by="codex",
-                raw_payload=None,  # 完整 turn 帧序列太大，仅保留拼接后文本
-            )
-        except Exception:
-            logger.exception("messages_store append codex assistant failed")
+        if text:
+            try:
+                messages_store.append_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    text=text,
+                    served_by="codex",
+                    raw_payload=None,  # 完整 turn 帧序列太大，仅保留拼接后文本
+                )
+            except Exception:
+                logger.exception("messages_store append codex assistant failed")
+            # v3.2 衔接：累计 assistant token + 触发推荐检查
+            try:
+                tracker = get_token_tracker()
+                tracker.observe(
+                    session_id, delta_tokens=messages_store.estimate_tokens(text)
+                )
+                # Codex context window 128k；用 backend-specific override
+                if tracker.should_trigger(session_id, context_window=128_000):
+                    state = tracker.get_state(session_id)
+                    used = state.total_tokens if state else 0
+                    tracker.mark_triggered(session_id)
+                    return {
+                        "session_id": session_id,
+                        "used_tokens": used,
+                        "context_window": 128_000,
+                        "ratio": round(used / 128_000, 3),
+                    }
+            except Exception:
+                logger.exception("codex auto_compact check failed")
+    return None
 
 
 def _resolve_cwd(cwd_raw: str | None) -> str:
@@ -351,6 +379,13 @@ async def send_message(session_id: str, request: Request):
             )
         except Exception:
             logger.exception("messages_store append user failed")
+        # v3.2 衔接：累计 token，turn 结束判断是否触发推荐
+        try:
+            get_token_tracker().observe(
+                session.id, delta_tokens=messages_store.estimate_tokens(prompt)
+            )
+        except Exception:
+            pass
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -374,11 +409,17 @@ async def send_message(session_id: str, request: Request):
                 pass
             # Hybrid MT T2 — 累积 delta；turn/completed 时落库
             if conversation_id is not None:
-                _accumulate_codex_for_messages(
+                compact_payload = _accumulate_codex_for_messages(
                     data,
                     assistant_buffer,
                     conversation_id,
+                    session.id,
                 )
+                if compact_payload is not None:
+                    # v3.2 衔接：在 codex_message → SSE 帧入队之后再插一帧推荐
+                    queue.put_nowait(
+                        _sse_frame("codex_auto_compact_recommended", compact_payload)
+                    )
 
     async def _run_turn() -> None:
         async with session.lock:

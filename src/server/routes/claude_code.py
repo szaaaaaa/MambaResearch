@@ -28,6 +28,7 @@ from fastapi.responses import StreamingResponse
 
 from src.server.claude_code import serialize_message
 from src.server.claude_code.providers import get_provider_registry
+from src.server.bridge.auto_compact import get_tracker as get_token_tracker
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
 from src.server.projects import messages_store
 from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
@@ -621,6 +622,13 @@ async def send_message(session_id: str, request: Request):
             )
         except Exception:
             logger.exception("messages_store append user failed")
+        # v3.2 衔接：累计 token 估算到 tracker，turn 结束时判断是否触发推荐
+        try:
+            get_token_tracker().observe(
+                session.id, delta_tokens=messages_store.estimate_tokens(prompt)
+            )
+        except Exception:
+            pass
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -664,6 +672,37 @@ async def send_message(session_id: str, request: Request):
                     )
                 except Exception:
                     logger.exception("messages_store append assistant failed")
+                # v3.2 衔接：累计 assistant token 到 tracker
+                try:
+                    combined_text = text + ("\n" + tool_summary if tool_summary else "")
+                    get_token_tracker().observe(
+                        session.id,
+                        delta_tokens=messages_store.estimate_tokens(combined_text),
+                    )
+                except Exception:
+                    pass
+        # turn 结束时判断是否要 emit auto_compact_recommended
+        # Claude context window 200k；用 tracker 默认值即可
+        if event == "cc_finished":
+            try:
+                tracker = get_token_tracker()
+                if tracker.should_trigger(session.id):
+                    state = tracker.get_state(session.id)
+                    used = state.total_tokens if state else 0
+                    queue.put_nowait(
+                        _sse_frame(
+                            "cc_auto_compact_recommended",
+                            {
+                                "session_id": session.id,
+                                "used_tokens": used,
+                                "context_window": tracker.default_context_window,
+                                "ratio": round(used / max(tracker.default_context_window, 1), 3),
+                            },
+                        )
+                    )
+                    tracker.mark_triggered(session.id)
+            except Exception:
+                logger.exception("auto_compact_recommended emit failed")
 
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
