@@ -41,9 +41,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.server.bridge.auto_compact import get_tracker as get_token_tracker
-from src.server.bridge.auto_compact_config import load_auto_compact_config
-from src.server.bridge.compact_runner import run_compact_for_codex
 from src.server.codex.session_manager import (
     VALID_SANDBOX_MODES,
     CodexAuthError,
@@ -52,7 +49,7 @@ from src.server.codex.session_manager import (
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
 from src.server.projects import messages_store
 from src.server.projects.registry import get_registry
-from src.server.settings import CONFIG_PATH, ROOT
+from src.server.settings import ROOT
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -66,20 +63,19 @@ def _accumulate_codex_for_messages(
     data: dict[str, Any],
     buffer: list[str],
     conversation_id: str,
-    session_id: str,
 ) -> None:
-    """处理一帧 codex_message 用于 messages 表持久化 + token 累计。
+    """处理一帧 codex_message 用于 messages 表 mirror 持久化（v3.3 用途）。
 
-    Hybrid Master Transcript T2 — Codex SSE 是 JSON-RPC notification 流，每条
-    ``item/agentMessage/delta`` 是几个 token，必须本地累积。规则：
+    Codex SSE 是 JSON-RPC notification 流，每条 ``item/agentMessage/delta`` 是
+    几个 token，必须本地累积：
 
     - ``item/agentMessage/delta``：累加 delta 文本到 buffer
-    - ``turn/completed``：拼接 buffer，append 一条 assistant message 到 messages 表
-      （buffer 非空才写；空说明这一 turn 没生成助手文本）。累计 token 到 tracker。
+    - ``turn/completed``：拼接 buffer，mirror 一条 assistant message 到 messages 表
+      （buffer 非空才写；空说明这一 turn 没生成助手文本）
     - 其他 method：忽略
 
-    auto-compact 触发判断 / LLM 调用都不在这里——由 _run_turn finally 统一处理
-    （v3.2 完整版 Task 4），那里持有 session.lock 又能 await。
+    v3.3 multi-conversation：mirror 仅用于 mamba_history MCP tool 跨 conversation
+    查询；不被注入回任何 backend——backend 自己持有真相源。
     """
     method = data.get("method")
     if method == "item/agentMessage/delta":
@@ -103,61 +99,6 @@ def _accumulate_codex_for_messages(
                 )
             except Exception:
                 logger.exception("messages_store append codex assistant failed")
-            try:
-                get_token_tracker().observe(
-                    session_id, delta_tokens=messages_store.estimate_tokens(text)
-                )
-            except Exception:
-                pass
-
-
-async def _maybe_run_compact_codex(
-    session: Any, conversation_id: str, emit: Any
-) -> None:
-    """v3.2 完整版触发钩子 for Codex（_run_turn finally 内调用，session.lock 持有）。
-
-    Tracker 语义见 ``claude_code.py::_maybe_run_compact`` 的 docstring；这里
-    保持与 claude 路径完全对偶：success → reset_session；failure / 异常 →
-    mark_triggered（5 分钟冷却防 thrash）。
-    """
-    try:
-        cfg = load_auto_compact_config(CONFIG_PATH)
-        tracker = get_token_tracker()
-        tracker.threshold_ratio = cfg.threshold_ratio
-        window = cfg.context_window_for("codex")
-        if not tracker.should_trigger(session.id, context_window=window):
-            return
-        state = tracker.get_state(session.id)
-        used = state.total_tokens if state else 0
-        if cfg.enabled:
-            emit("codex_compact_started", {
-                "session_id": session.id,
-                "used_tokens": used,
-                "context_window": window,
-            })
-            try:
-                result = await run_compact_for_codex(session, conversation_id, cfg)
-            except Exception as exc:
-                logger.exception("codex compact runner failed")
-                # 异常路径也必须 mark_triggered，否则下个 turn 立即重试 = thrash
-                tracker.mark_triggered(session.id)
-                emit("codex_compact_done", {"success": False, "error": str(exc)})
-                return
-            if result.success:
-                tracker.reset_session(session.id)
-            else:
-                tracker.mark_triggered(session.id)
-            emit("codex_compact_done", result.to_event_payload())
-        else:
-            emit("codex_auto_compact_recommended", {
-                "session_id": session.id,
-                "used_tokens": used,
-                "context_window": window,
-                "ratio": round(used / max(window, 1), 3),
-            })
-            tracker.mark_triggered(session.id)
-    except Exception:
-        logger.exception("_maybe_run_compact_codex unexpected failure")
 
 
 def _resolve_cwd(cwd_raw: str | None) -> str:
@@ -384,21 +325,15 @@ async def send_message(session_id: str, request: Request):
     prompt = str(payload.get("prompt", "") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    # Hybrid Master Transcript T4 — 同 claude_code 路径，internal=true 跳过
-    # messages 表持久化，避免切换时的 prior history 注入污染对话历史。
-    internal = bool(payload.get("internal"))
 
     session = codex_session_manager.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     session.last_activity_at = time.time()
 
-    # Hybrid Master Transcript T2 — 把 user prompt 写入 messages 表（真相源）
-    conversation_id = (
-        None
-        if internal
-        else messages_store.lookup_conversation_by_session(session.id)
-    )
+    # v3.3 multi-conversation：messages 表降级为 read-only mirror（mamba_history
+    # MCP tool 跨 conversation 查询用）；不被注入回任何 backend。
+    conversation_id = messages_store.lookup_conversation_by_session(session.id)
     if conversation_id is not None:
         try:
             messages_store.append_message(
@@ -409,23 +344,14 @@ async def send_message(session_id: str, request: Request):
             )
         except Exception:
             logger.exception("messages_store append user failed")
-        # v3.2 衔接：累计 token，turn 结束判断是否触发推荐
-        try:
-            get_token_tracker().observe(
-                session.id, delta_tokens=messages_store.estimate_tokens(prompt)
-            )
-        except Exception:
-            pass
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     mcp_ctx = McpCallContext(cli_session_id=session.id)
     mcp_logger = get_call_logger()
 
-    # Hybrid Master Transcript T2 — 累积 item/agentMessage/delta 进 buffer，
-    # turn/completed 时一次性 append 一条 assistant message 到 messages 表。
-    # Codex 的 SSE 帧是 JSON-RPC notification 流式 delta，跟 Claude 的"完整
-    # message per yield"模型不同——必须本地 buffer 才能拿到完整 turn 文本。
+    # Codex SSE 是 JSON-RPC notification 流式 delta，必须本地 buffer 才能拿到
+    # 完整 turn 文本写入 messages mirror。
     assistant_buffer: list[str] = []
 
     def _emit(event: str, data: dict[str, Any]) -> None:
@@ -437,13 +363,12 @@ async def send_message(session_id: str, request: Request):
                 mcp_logger.observe_codex_event(data, mcp_ctx)
             except Exception:
                 pass
-            # Hybrid MT T2 — 累积 delta；turn/completed 时落库 + token 累计
+            # 累积 delta；turn/completed 时 mirror 落 messages 表
             if conversation_id is not None:
                 _accumulate_codex_for_messages(
                     data,
                     assistant_buffer,
                     conversation_id,
-                    session.id,
                 )
 
     async def _run_turn() -> None:
@@ -457,13 +382,6 @@ async def send_message(session_id: str, request: Request):
                 _emit("codex_error", {"message": str(exc)})
             finally:
                 session.permission_state.current_sse_emitter = None
-                # v3.2 完整版 T4：用户 turn 结束后检查是否要 auto-compact。
-                # 必须在 finished 之前发，前端会以 finished 作为 isRunning=false 的信号。
-                if conversation_id is not None and not internal:
-                    try:
-                        await _maybe_run_compact_codex(session, conversation_id, _emit)
-                    except Exception:
-                        logger.exception("codex auto-compact post-turn check failed")
                 _emit("codex_finished", {"session_id": session.id})
                 queue.put_nowait(None)
 

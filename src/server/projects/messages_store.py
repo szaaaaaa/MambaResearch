@@ -1,16 +1,22 @@
-"""Hybrid Master Transcript：MambaResearch 拥有的 conversation messages 真相源。
+"""Conversation messages — read-only mirror（v3.3 multi-conversation 模型）。
 
 设计要点
 --------
 - 一条 message = 一段对话原子（user 输入 / assistant 回复 / system 标记）
 - ``served_by`` 区分谁产出（claude / codex / user / system / mambaresearch_compact）
-- ``tool_use_summary`` 仅在跨 backend 切换时由前端文本化产生；同 backend 内为 NULL
-- ``raw_payload`` 保留原始 SSE payload JSON 字符串，便于 debug 与未来升级
-- ``compacted=1`` 标记此 message 已被 v3.2 auto-compact 的 rolling summary 替代——序列化
-  prior history 时跳过它（用对应的 mambaresearch_compact 段代替）
+- ``tool_use_summary`` 给跨 conversation 引用（mamba_history MCP tool）做可读上下文
+- ``raw_payload`` 保留原始 SSE payload JSON 字符串，便于 debug
+- ``compacted`` 字段保留 schema 兼容老对话（v3.2 hybrid MT 时期的 rolling summary 标记）
 
-切换 backend 时由 ``handleBackendSwitch`` 调 ``GET /api/conversations/{id}/messages``
-拉全量，前端序列化成 prior-history 文本块作为新 backend session 的首条消息。
+**v3.3 关键约定**：本表是 read-only mirror。**真相源在 backend 自己**（claude
+SDK 写 ``~/.claude/projects/<project>/<session>.jsonl``；codex 写
+``~/.codex/sessions/...``）。本表只用于：
+1. 浏览器刷新时 hydrate UI 历史
+2. 跨 conversation 引用（``mamba_history`` MCP tool 暴露 search / get 接口给
+   backend 主动调）
+
+**绝不要**把 ``list_by_conversation`` 的结果再注入回任何 backend session ——
+那是 v3.2 hybrid MT 的反模式，已经被 2026-04-27 pivot 撤掉。
 """
 
 from __future__ import annotations

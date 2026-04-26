@@ -41,16 +41,6 @@ claude_code:
       base_url: https://api.anthropic.com
       api_key_env: ANTHROPIC_API_KEY
       default_model: ''
-ui:
-  workbench:
-    auto_compact:
-      enabled: true
-      threshold_pct: 80
-      strategy: rolling
-      keep_recent_n: 10
-      backend_context_windows:
-        claude: 200000
-        codex: 128000
 llm:
   provider: openrouter
   model: google/gemini-2.0-flash-001

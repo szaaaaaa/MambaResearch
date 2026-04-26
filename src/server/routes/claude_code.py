@@ -28,12 +28,8 @@ from fastapi.responses import StreamingResponse
 
 from src.server.claude_code import serialize_message
 from src.server.claude_code.providers import get_provider_registry
-from src.server.bridge.auto_compact import get_tracker as get_token_tracker
-from src.server.bridge.auto_compact_config import load_auto_compact_config
-from src.server.bridge.compact_runner import run_compact_for_claude
 from src.server.mcp.call_logger import McpCallContext, get_call_logger
 from src.server.projects import messages_store
-from src.server.settings import CONFIG_PATH
 from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
 from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
@@ -559,72 +555,6 @@ def _extract_claude_assistant(payload: dict[str, Any]) -> tuple[str, str | None]
     return text, tool_summary
 
 
-async def _maybe_run_compact(
-    session: Any, conversation_id: str, emit: Any
-) -> None:
-    """v3.2 完整版触发钩子（在 _run_turn finally 内调用，session.lock 仍持有）。
-
-    Tracker 语义（来自 ``auto_compact.py``）::
-      - reset_session  →  total_tokens 清零，下轮要重新累计才再 trigger
-      - mark_triggered →  启动 5 分钟冷却，期间 should_trigger 永远 False
-      - 都不调          →  下个 turn 立即再次满足阈值，会立刻重跑
-
-    所以"成功 reset / 失败也 mark_triggered" 是唯一不会 thrash 的策略：
-    LLM 调用失败时不让下个 turn 立即再触发同一个失败操作，5 分钟冷却给
-    upstream 恢复时间；用户手动开新对话仍可绕过冷却。
-
-    流程：
-    1. 加载用户配置（每次都重读，让用户在 Settings 改阈值后立即生效）
-    2. tracker.should_trigger 用配置的 threshold + Claude context window
-    3. enabled=True 且触发 →
-         - try run_compact_for_claude
-         - success=True：reset_session（token 清零）
-         - success=False / 异常：mark_triggered（5 分钟冷却防 thrash）
-    4. enabled=False 但触发 → 仅 emit cc_auto_compact_recommended（信息性）
-       + mark_triggered（启动冷却避免连发）
-    """
-    try:
-        cfg = load_auto_compact_config(CONFIG_PATH)
-        tracker = get_token_tracker()
-        # 同步配置阈值到 tracker（让 Settings 改 threshold_pct 立即生效）
-        tracker.threshold_ratio = cfg.threshold_ratio
-        window = cfg.context_window_for("claude")
-        if not tracker.should_trigger(session.id, context_window=window):
-            return
-        state = tracker.get_state(session.id)
-        used = state.total_tokens if state else 0
-        if cfg.enabled:
-            emit("cc_compact_started", {
-                "session_id": session.id,
-                "used_tokens": used,
-                "context_window": window,
-            })
-            try:
-                result = await run_compact_for_claude(session, conversation_id, cfg)
-            except Exception as exc:
-                logger.exception("compact runner failed")
-                # 异常路径也必须 mark_triggered，否则下个 turn 立即重试 = thrash
-                tracker.mark_triggered(session.id)
-                emit("cc_compact_done", {"success": False, "error": str(exc)})
-                return
-            if result.success:
-                tracker.reset_session(session.id)
-            else:
-                tracker.mark_triggered(session.id)
-            emit("cc_compact_done", result.to_event_payload())
-        else:
-            # 用户禁用了 auto-compact——只发提示让用户知道接近上限
-            emit("cc_auto_compact_recommended", {
-                "session_id": session.id,
-                "used_tokens": used,
-                "context_window": window,
-                "ratio": round(used / max(window, 1), 3),
-            })
-            tracker.mark_triggered(session.id)
-    except Exception:
-        logger.exception("_maybe_run_compact unexpected failure")
-
-
 def _short_repr(value: Any, max_len: int = 200) -> str:
     """工具入参的简短表示——给 tool_use_summary 用，避免单条摘要膨胀到几 KB。"""
     if value is None:
@@ -644,10 +574,6 @@ async def send_message(session_id: str, request: Request):
     prompt = str(payload.get("prompt", "") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    # Hybrid Master Transcript T4 — internal=true 用于 backend 切换时的 prior
-    # history 注入：跳过 messages 表持久化，避免 "<conversation_history>..." 内容
-    # 和 "我已加载历史" 这种 ack 污染对话历史。SDK / SSE / 前端展示路径都正常走。
-    internal = bool(payload.get("internal"))
 
     # 刷新恢复路径：若会话被 idle sweeper evict 或进程重启后只剩 DB 行，
     # get_or_restore 会用 SDK resume 重建 client；DB 也查不到才 404。
@@ -672,15 +598,12 @@ async def send_message(session_id: str, request: Request):
     except Exception:
         pass
 
-    # Hybrid Master Transcript T2 — 把 user prompt 写入 messages 表（真相源）
-    # 用 lookup_conversation_by_session 反查 conversation_id：找不到说明此 session
-    # 没绑过 conversation（直建路径，未走过切换），跳过持久化。
-    # internal=True 路径同样跳过——见上方注释。
-    conversation_id = (
-        None
-        if internal
-        else messages_store.lookup_conversation_by_session(session.id)
-    )
+    # v3.3 multi-conversation：messages 表降级为 read-only mirror（mamba_history
+    # MCP tool 用于跨 conversation 查询）。每条 user/assistant 消息仍 mirror 写
+    # 一份，但永远不被注入回任何 backend——这条 conversation 绑死的 backend
+    # 自己持有真相源（JSONL）。lookup 失败说明此 session 没绑 conversation
+    # （直建调试路径），跳过 mirror。
+    conversation_id = messages_store.lookup_conversation_by_session(session.id)
     if conversation_id is not None:
         try:
             messages_store.append_message(
@@ -691,13 +614,6 @@ async def send_message(session_id: str, request: Request):
             )
         except Exception:
             logger.exception("messages_store append user failed")
-        # v3.2 衔接：累计 token 估算到 tracker，turn 结束时判断是否触发推荐
-        try:
-            get_token_tracker().observe(
-                session.id, delta_tokens=messages_store.estimate_tokens(prompt)
-            )
-        except Exception:
-            pass
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -722,10 +638,11 @@ async def send_message(session_id: str, request: Request):
             except Exception:
                 # logger 异常吞掉，绝不影响主对话
                 pass
-        # Hybrid Master Transcript T2 — 把 assistant 消息写入 messages 表
+        # v3.3 multi-conversation：把 assistant 消息 mirror 到 messages 表
         # SDK 一个 turn 内可能 emit 多条 assistant message（含 tool 调用回环），
-        # 每条独立成一行，text 为该 message 内文本块拼接，tool_use_summary 为该
-        # message 内 tool_use 块的文本摘要（供跨 backend 切换时序列化用）。
+        # 每条独立成一行，text 为该 message 内文本块拼接，tool_use_summary 为
+        # tool_use 块的文本摘要（供 mamba_history MCP tool 跨 conversation 查询时
+        # 给出可读上下文）。
         if event == "cc_message" and conversation_id is not None:
             text, tool_summary = _extract_claude_assistant(data)
             # 仅当此条确实是 assistant 输出（含文本或工具调用）时才写
@@ -741,15 +658,6 @@ async def send_message(session_id: str, request: Request):
                     )
                 except Exception:
                     logger.exception("messages_store append assistant failed")
-                # v3.2 衔接：累计 assistant token 到 tracker
-                try:
-                    combined_text = text + ("\n" + tool_summary if tool_summary else "")
-                    get_token_tracker().observe(
-                        session.id,
-                        delta_tokens=messages_store.estimate_tokens(combined_text),
-                    )
-                except Exception:
-                    pass
 
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
@@ -768,12 +676,6 @@ async def send_message(session_id: str, request: Request):
                 _emit("cc_error", {"message": str(exc)})
             finally:
                 session.permission_state.current_sse_emitter = None
-                # v3.2 完整版：用户 turn 结束后检查是否要 auto-compact。
-                # 仍持有 session.lock（async with 内），直接复用 session.client
-                # 跑一次 LLM 总结，不通过 _emit 避免污染 messages 表。
-                # internal=True 路径或无 conversation_id 跳过。
-                if conversation_id is not None and not internal:
-                    await _maybe_run_compact(session, conversation_id, _emit)
                 _emit("cc_finished", {"session_id": session.id})
                 queue.put_nowait(None)
 
