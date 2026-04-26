@@ -14,7 +14,7 @@ import { TopBar } from './components/layout/TopBar';
 import { BucketContainer } from './components/buckets/BucketContainer';
 import { McpTab } from './components/mcp/McpTab';
 import { getActiveProject, Project } from './api/projects';
-import { ContextualTabsProvider, useActiveContextualTab } from './store/contextual';
+import { ContextualTabsProvider, useActiveContextualTab, useContextualTabs } from './store/contextual';
 import { ContextualTabBar } from './components/contextual/ContextualTabBar';
 import { ContextualTabFrame } from './components/contextual/ContextualTabFrame';
 
@@ -92,6 +92,14 @@ const AppContent: React.FC = () => {
   const [bootstrapping, setBootstrapping] = React.useState(true);
   const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>(() => loadLastNav());
   const activeContextualTab = useActiveContextualTab();
+  const { pendingComposerPrompt } = useContextualTabs();
+
+  // Stage 4 Task 8 — pending prompt 触发时切到 bench；WorkbenchTab 自管 consume
+  React.useEffect(() => {
+    if (pendingComposerPrompt !== null && activeNav !== 'bench') {
+      setActiveNav('bench');
+    }
+  }, [pendingComposerPrompt, activeNav]);
 
   React.useEffect(() => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));

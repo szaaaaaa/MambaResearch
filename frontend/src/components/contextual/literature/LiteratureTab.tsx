@@ -1,5 +1,6 @@
 import React from 'react';
 import { Send, FlaskConical, FileText as FileIcon } from 'lucide-react';
+import { useContextualTabs } from '../../../store/contextual';
 
 const SUMMARY_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
@@ -41,6 +42,7 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
   const [savedAnnotation, setSavedAnnotation] = React.useState<string>('');
   const [error, setError] = React.useState<string | null>(null);
   const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const { injectComposerPrompt } = useContextualTabs();
   const fileUrl = `/api/literature/file?path=${encodeURIComponent(path)}`;
 
   React.useEffect(() => {
@@ -102,25 +104,33 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled
-            title="Task 8 接通：发 prompt 到工作台让 Claude 调 zotero.upload_pdf"
-            className="flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-400"
+            onClick={() =>
+              injectComposerPrompt(
+                `把 ${path} 推到 Zotero（用 mcp__mamba_zotero__upload_pdf，title 用文件名）。`,
+              )
+            }
+            title="发 prompt 到工作台让 Claude 调 zotero.upload_pdf"
+            className="flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
           >
             <Send size={12} /> 推送到 Zotero
           </button>
           <button
             type="button"
-            disabled
-            title="Task 8 接通"
-            className="flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-400"
+            onClick={() =>
+              injectComposerPrompt(
+                `读这篇论文 ${path}，按 (背景 / 实验设计 / 数据集 / 评测 / 主要结论) 五段提取实验设计。`,
+              )
+            }
+            className="flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
           >
             <FlaskConical size={12} /> 提取实验设计
           </button>
           <button
             type="button"
-            disabled
-            title="Task 8 接通"
-            className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-400"
+            onClick={() =>
+              injectComposerPrompt(`基于 ${path}，写一段 200-400 字的综述段落，引用关键结论。`)
+            }
+            className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
           >
             写综述段落
           </button>

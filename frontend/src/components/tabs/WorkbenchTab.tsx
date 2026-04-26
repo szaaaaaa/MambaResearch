@@ -21,6 +21,7 @@ import { McpStatusPanel } from '../workbench/panels/McpStatusPanel';
 import { SLASH_COMMANDS } from '../workbench/slash/registry';
 import { SessionsPanel } from '../workbench/shell/activities/SessionsPanel';
 import { ClassifyHintBar } from '../workbench/ClassifyHintBar';
+import { useContextualTabs } from '../../store/contextual';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -96,6 +97,17 @@ export const WorkbenchTab: React.FC = () => {
 
   const [prompt, setPrompt] = React.useState('');
   const [elapsedSec, setElapsedSec] = React.useState(0);
+  const { pendingComposerPrompt, consumeComposerPrompt } = useContextualTabs();
+
+  // Stage 4 Task 8 — 外部组件（FileActionBar / LiteratureTab actions）通过
+  // contextual store 注入 prompt；切到 bench 后 consume 一次，append 到当前
+  // composer 文本（避免覆盖用户已经输入的内容）。
+  React.useEffect(() => {
+    if (pendingComposerPrompt === null) return;
+    const text = consumeComposerPrompt();
+    if (text === null) return;
+    setPrompt((prev) => (prev.trim() ? `${prev}\n\n${text}` : text));
+  }, [pendingComposerPrompt, consumeComposerPrompt]);
   const [slashActiveIdx, setSlashActiveIdx] = React.useState(0);
   const [autocompleteDismissed, setAutocompleteDismissed] = React.useState(false);
   // 会话列表 popover；被 header 按钮 + /resume 等 slash 命令共用

@@ -30,6 +30,9 @@ export interface ContextualTab {
 interface ContextualState {
   tabs: ContextualTab[];
   activeId: string | null;
+  /** Stage 4 Task 8 — 跨组件向工作台 composer 注入 prompt 的桥。
+   *  写入即触发 App.tsx effect 切到 bench；WorkbenchTab 一次性 consume。 */
+  pendingComposerPrompt: string | null;
 }
 
 interface ContextualActions {
@@ -37,6 +40,10 @@ interface ContextualActions {
   closeTab: (id: string) => void;
   activateTab: (id: string | null) => void;
   closeAll: () => void;
+  /** 写一段文本到工作台 composer。 */
+  injectComposerPrompt: (text: string) => void;
+  /** WorkbenchTab consume 用：拿一次后即清空。 */
+  consumeComposerPrompt: () => string | null;
 }
 
 type ContextualContextValue = ContextualState & ContextualActions;
@@ -54,6 +61,7 @@ export const ContextualTabsProvider: React.FC<{ children: React.ReactNode }> = (
 }) => {
   const [tabs, setTabs] = React.useState<ContextualTab[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);
+  const [pendingComposerPrompt, setPendingComposerPrompt] = React.useState<string | null>(null);
 
   const openTab = React.useCallback<ContextualActions['openTab']>((init) => {
     let resolvedId = '';
@@ -98,6 +106,22 @@ export const ContextualTabsProvider: React.FC<{ children: React.ReactNode }> = (
     setActiveId(null);
   }, []);
 
+  const injectComposerPrompt = React.useCallback<ContextualActions['injectComposerPrompt']>(
+    (text) => {
+      setPendingComposerPrompt(text);
+    },
+    [],
+  );
+
+  const consumeComposerPrompt = React.useCallback<ContextualActions['consumeComposerPrompt']>(() => {
+    let value: string | null = null;
+    setPendingComposerPrompt((prev) => {
+      value = prev;
+      return null;
+    });
+    return value;
+  }, []);
+
   // closeTab 后如果 active 变 null 且仍有其他 tab，自动激活最后一个
   React.useEffect(() => {
     if (activeId === null && tabs.length > 0) {
@@ -106,8 +130,28 @@ export const ContextualTabsProvider: React.FC<{ children: React.ReactNode }> = (
   }, [activeId, tabs]);
 
   const value = React.useMemo<ContextualContextValue>(
-    () => ({ tabs, activeId, openTab, closeTab, activateTab, closeAll }),
-    [tabs, activeId, openTab, closeTab, activateTab, closeAll],
+    () => ({
+      tabs,
+      activeId,
+      pendingComposerPrompt,
+      openTab,
+      closeTab,
+      activateTab,
+      closeAll,
+      injectComposerPrompt,
+      consumeComposerPrompt,
+    }),
+    [
+      tabs,
+      activeId,
+      pendingComposerPrompt,
+      openTab,
+      closeTab,
+      activateTab,
+      closeAll,
+      injectComposerPrompt,
+      consumeComposerPrompt,
+    ],
   );
 
   return <ContextualContext.Provider value={value}>{children}</ContextualContext.Provider>;
