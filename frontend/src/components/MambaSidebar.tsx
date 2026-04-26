@@ -17,7 +17,6 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-  Workflow,
   BookOpen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -27,8 +26,8 @@ import { ChatSession } from '../types';
  * NavId — 主导航视图标识。'set' 不是视图而是打开 SettingsModal 的开关，
  * App.tsx 收到该 id 时调用 onOpenSettings 并保留当前 active 不变。
  *
- * Stage 1 引入 'runs'：原 'exp' 指向多 LLM DAG RunTab；现在 'exp' 留给 Stage 2
- * 的"实验 bucket"语义，RunTab 迁到 'runs'，Stage 5 删 RunTab 时只动 'runs'。
+ * Stage 5 v3 已删除 'runs'（RunTab + dynamic_os DAG 整体废弃）。'exp' 保留为
+ * Stage 2 的"实验 bucket"语义。loadLastNav 在 App.tsx 中把 'runs' 旧值映射 'hist'。
  */
 export type NavId =
   | 'exp'
@@ -40,7 +39,6 @@ export type NavId =
   | 'mcp'
   | 'bench'
   | 'hist'
-  | 'runs'
   | 'library'
   | 'set';
 
@@ -77,7 +75,6 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: '运行',
     items: [
-      { id: 'runs', label: 'DAG 运行', icon: Workflow },
       { id: 'hist', label: '运行历史', icon: History },
       { id: 'set', label: '设置', icon: Settings },
     ],

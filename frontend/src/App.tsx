@@ -3,7 +3,6 @@ import { FileText, Database, Lightbulb, FlaskConical, Users, Plug } from 'lucide
 import { AppProvider, useAppContext } from './store';
 import { MambaSidebar, NavId } from './components/MambaSidebar';
 import { PlaceholderView } from './components/PlaceholderView';
-import { RunTab } from './components/tabs/RunTab';
 import { HistoryTab } from './components/tabs/HistoryTab';
 import { SkillsTab } from './components/tabs/SkillsTab';
 import { WorkbenchTab } from './components/tabs/WorkbenchTab';
@@ -43,13 +42,16 @@ function loadUiPreferences(): UiPreferences {
   }
 }
 
-// Stage 1 — 把旧的 'exp' nav（指向 RunTab，多 LLM DAG 入口）映射为 'runs'，
-// 给"实验 bucket"留出 'exp' 这个语义键，避免 Stage 5 删 RunTab 时再做迁移。
+// Stage 5 v3 — RunTab 已删除。'runs' 旧值映射到 'hist' 并写回 localStorage 覆盖。
+// 'exp' 在 Stage 1 已迁到"实验 bucket"语义，仍是合法值（不再指 RunTab）。
 function loadLastNav(): Exclude<NavId, 'set'> {
   if (typeof window === 'undefined') return 'bench';
   const raw = window.localStorage.getItem(LAST_NAV_KEY);
   if (!raw) return 'bench';
-  if (raw === 'exp') return 'runs'; // 旧值映射
+  if (raw === 'runs') {
+    window.localStorage.setItem(LAST_NAV_KEY, 'hist');
+    return 'hist';
+  }
   const valid: Exclude<NavId, 'set'>[] = [
     'exp',
     'pap',
@@ -60,7 +62,6 @@ function loadLastNav(): Exclude<NavId, 'set'> {
     'mcp',
     'bench',
     'hist',
-    'runs',
     'library',
   ];
   return (valid as string[]).includes(raw) ? (raw as Exclude<NavId, 'set'>) : 'bench';
@@ -153,12 +154,12 @@ const AppContent: React.FC = () => {
 
   const handleSelectConversation = (id: string) => {
     selectConversation(id);
-    setActiveNav('runs');
+    setActiveNav('hist');
   };
 
   const handleCreateConversation = () => {
     createConversation();
-    setActiveNav('runs');
+    setActiveNav('hist');
   };
 
   const handleProjectActivated = (project: Project) => {
@@ -173,8 +174,6 @@ const AppContent: React.FC = () => {
 
   const renderMain = () => {
     switch (activeNav) {
-      case 'runs':
-        return <RunTab uiPreferences={uiPreferences} />;
       case 'exp':
         return (
           <BucketContainer
