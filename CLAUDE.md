@@ -100,3 +100,46 @@ Stage 1+ 引入的新核心模块（被 routes / MCP / tests 共享）：
 | 前端界面 / LLM 提示词 / README | 中文 |
 
 命名：模块/函数/变量 `snake_case`；类 `PascalCase`；私有成员 `_` 前缀。
+
+# Pipeline artifact 命名约定
+
+`.claude/skills/` 下的 7 个 pipeline SKILL 共用一套 workspace artifact 命名约定。所有 sub-agent 之间通过这些文件传递 artifact，不依赖任何 in-memory artifact store。
+
+## 路径前缀
+
+`outputs/<run_id>/`（在 active project workspace 根下）
+
+`run_id` 由触发 pipeline 的 conductor 决定，格式约定：
+- `lit_review_<YYYYMMDD>_<HHMMSS>` — structured-lit-review
+- `exp_<YYYYMMDD>_<HHMMSS>` — empirical-study
+- `method_cmp_<YYYYMMDD>_<HHMMSS>` — method-comparison
+- `iter_<YYYYMMDD>_<HHMMSS>` — experiment-iteration
+- `review_<YYYYMMDD>_<HHMMSS>_<artifact_short_name>` — artifact-review
+- `brainstorm_<YYYYMMDD>_<HHMMSS>` — idea-brainstorming
+- `data_explore_<YYYYMMDD>_<HHMMSS>_<dataset_short_name>` — data-exploration
+
+## 标准文件名
+
+| 文件 | 产出方 | 内容 |
+|---|---|---|
+| `plan.md` | conductor | markdown checklist，pipeline 进度的可见表示 |
+| `sources.json` | paper-searcher | 候选论文清单 `[{title, authors, year, venue, abstract, url}]` |
+| `evidence.json` | evidence-extractor | 每篇 paper 的相关原文片段 + 反例 |
+| `analysis.md` | analyzer | findings / conflicts / open_questions 三段，每条带证据引用 |
+| `report.md` | writer | 终稿叙述（默认 markdown；用户要 LaTeX 时为 `report.tex` + `references.bib`） |
+| `review.md` | reviewer | 5 维评分 + standard issue 列表 + verdict |
+| `critique.md` | critic | 🔴/🟠/🟡 严重度分级 issue + 详细 reasoning |
+| `experiments/exp_<NNN>/` | experimenter | 单次实验子目录，含 `spec.md` + `script.py` + `result.json` + 可选 `lessons.md` |
+| `sweep_plan.md` | experimenter | sweep 矩阵 + spec_overrides + compute 估计 |
+| `sweep_analysis.md` | analyzer | sweep 聚合结果 + 最佳配置 + 趋势观察 |
+
+## 跨 pipeline 复用
+
+- 跑完 `structured-lit-review` 拿到 `sources.json` + `evidence.json` 后，可直接喂给 `method-comparison` / `idea-brainstorming` / `empirical-study` 作为 prior context（避免重复检索）
+- 跑完 `empirical-study` 的 `experiments/exp_001/result.json` 可作为 `experiment-iteration` 的 baseline 输入
+
+## 不变约束
+
+- **永不修改物理 workspace 文件**：所有 artifact 写入 `outputs/<run_id>/` 子目录；用户原始数据 / 论文 PDF / 已有脚本绝不动
+- **每 sub-agent 写自己负责的文件**：paper-searcher 只写 sources.json，analyzer 只写 analysis.md / sweep_analysis.md，等等
+- **主 agent 是编排者**：spawn sub-agent 后由主 agent 检查文件存在与否决定是否进入下一步，不让 sub-agent 之间直接通信
