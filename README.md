@@ -4,16 +4,16 @@
 
 # 🧬 MambaResearch
 
-### Autonomous Research Agent with Dynamic DAG Planning
+### 一个建在 Claude Code / Codex CLI 上的研究向 IDE 壳
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![React 19](https://img.shields.io/badge/React-19-61dafb?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
-**输入一句话研究主题 → 自动搜索文献 → 设计并迭代实验 → 输出带实验结果的 LaTeX 论文**
+**所有 LLM 出口都走订阅版的 Claude Code / Codex CLI；MambaResearch 自身零 LLM 路由、零 agent runtime、零自建 skill 注册表。**
 
-[快速开始](#-快速开始) · [系统架构](#-系统架构) · [技能系统](#-技能系统) · [API 文档](#-api-端点) · [配置指南](#-推荐配置)
+[快速开始](#-快速开始) · [架构](#-三层架构) · [Sub-agent + Pipeline](#-sub-agent--pipeline-skill) · [配置](#-配置)
 
 ---
 
@@ -21,352 +21,176 @@
 
 ## 这是什么
 
-一个端到端的自主学术研究系统。7 个 AI 角色协作完成从文献检索到论文输出的完整流程——包括真正可执行的实验。
+MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
+
+- 提供 6 个研究向可视化域（工作台、技能、Agent 角色、4 bucket 文件管理、MCP 功能、情境性 tab）
+- 项目级会话编排 + 跨 backend (Claude ↔ Codex) 桥接（用 `continues`）
+- LLM 智能完全交给已订阅的 Claude Code / Codex CLI
+- 自定义研究流程通过 **8 个 sub-agent**（`.claude/agents/*.md`）+ **7 个 pipeline SKILL.md**（`.claude/skills/`）沉淀
+- 自定义工具通过 **MCP servers** 接入（`workspace` / `zotero` / `colab` / `experiment` / `paper_search`）
+
+> 上一代版本拥有自建 `dynamic_os` 多 agent runtime（21 builtin skill + 7 role + planner + executor + policy + tool gateway），v3.0 完全删除——细节见 [v3.0 release note](docs/releases/v3.0-mamba-as-claude-code-shell.md)。
+
+## 🏗 三层架构
 
 ```
-"研究 Transformer 注意力机制的最新改进方案，设计实验对比不同 attention 变体的效率"
-                                        │
-                                        ▼
-            ┌──────────────────────────────────────────────────────┐
-            │  30 篇论文检索  →  证据图谱  →  实验设计  →  3 轮迭代  │
-            │  →  指标分析  →  图表生成  →  LaTeX 论文  →  审阅评分   │
-            └──────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-                research_report.pdf  +  references.bib  +  实验代码
+┌──────────────────────────────────────────────────────────────┐
+│ MambaResearch UI（薄壳，本仓库写的）                         │
+│   - 6 个可视化域                                             │
+│   - 项目注册表 + 会话编排薄表                                │
+│   - 文件分类索引 (.mambaresearch/classification.db)          │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ 调
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Claude Code CLI / Codex CLI（订阅引擎，唯一 LLM 出口）       │
+│   - Session 存储（CLI JSONL）                                │
+│   - Sub-agent 自动发现（.claude/agents/ ↔ .codex/agents/）   │
+│   - Pipeline SKILL.md 自动发现（.claude/skills/）            │
+│   - MCP 集成 / Slash 命令 / 权限提示 / Bash·Read·Write·Edit  │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ 调
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│ MCP Servers（统一扩展机制）                                  │
+│   - workspace.* / zotero.* / colab.* / experiment.*          │
+│   - paper_search.*（6 source）                               │
+│   - 用户自配的任何标准 MCP server                            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## ✨ 核心能力
+## 🎭 8 个 Sub-agent + 7 个 Pipeline SKILL
 
-<table>
-<tr>
-<td width="50%">
+### Sub-agent（`.claude/agents/*.md`，由 `scripts/sync_subagents.py` 同步到 `.codex/agents/*.toml`）
 
-### 🔬 端到端实验闭环
-自动设计实验 → 生成代码 → 沙箱执行 → 提取指标 → 迭代优化。支持早停、策略切换（refine/pivot）和最佳快照回滚。通用注册表模板让 LLM 可以为任何研究课题生成对应的实验代码。
+| Sub-agent | 职责 | 模型档位 |
+|---|---|---|
+| paper-searcher | arXiv / Semantic Scholar / Google Scholar 多源检索 + 去重 | haiku |
+| evidence-extractor | 给定论文集 → 抽取定量结果 / 论据段落 / 图表注记 | haiku |
+| analyzer | 比对、归纳、找冲突；可跑实验脚本验证假设 | sonnet |
+| writer | 把 analyzer 的结构化发现 + 证据组合成连贯技术文档 | sonnet |
+| critic | 关键节点重度评审：找漏洞 / 挑逻辑跳跃 / 判断结论可信度 | opus |
+| **conductor** | 接 user request → 拆任务 → 决定调用顺序 + 分配 sub-agent | sonnet |
+| **experimenter** | 设计实验 + 调 `experiment.*` MCP 跑本地脚本 + 报告 metric | sonnet |
+| **reviewer** | 审 artifact（report / sources / experiment 结果），返 verdict | sonnet |
 
-### 🧠 LLM 驱动的动态规划
-Planner 根据当前研究进度实时生成执行 DAG，而不是固定流水线。是否做实验、何时终止、指标方向——全部由 LLM 语义判断，硬编码只做安全护栏。
+### Pipeline SKILL.md（`.claude/skills/`，主 agent 看到关键词时自动触发）
 
-### 📊 多维审稿循环
-5 维度评分（新颖性、可靠性、清晰度、重要性、完整性），不通过自动修订重写，直到达标或达到修订上限。
+| Pipeline | 何时用 | sub-agent 链 |
+|---|---|---|
+| structured-lit-review | "做综述" | paper-searcher → evidence-extractor → analyzer → writer → critic |
+| empirical-study | "做实验" / "复现某方法" | conductor → experimenter (× N iter) → analyzer → writer |
+| method-comparison | "对比 A 与 B 方法" | paper-searcher → evidence-extractor → analyzer → writer |
+| experiment-iteration | "调优 / 跑 sweep" | experimenter sweep → analyzer → reviewer |
+| artifact-review | "审 report / 审 sources" | reviewer → critic |
+| idea-brainstorming | "我有个 idea，帮我探讨" | conductor → analyzer → critic |
+| data-exploration | "看看这份数据" | conductor → analyzer → writer |
 
-</td>
-<td width="50%">
-
-### 🎭 7 角色协作
-conductor → researcher → experimenter → analyst → writer → reviewer → hitl，每个角色可独立配置 LLM 模型，按研究任务需要动态调度。
-
-### 🔧 可扩展技能系统
-18 个内置技能 + 用户自定义技能 + LLM 自动进化生成的技能。注册表机制，放入目录即可被发现。前端可视化管理。
-
-### 📄 学术级输出
-生成完整可编译的 LaTeX 论文，自动构建 BibTeX 引用，支持 PDF 下载和 Overleaf 导入。中英文双语支持。
-
-### 🔀 双订阅 + 多 provider Workbench
-Workbench 同一个 UI 入口里同时支持 Claude Pro 订阅（经 `claude` CLI + Claude Agent SDK）和 ChatGPT Pro 订阅（经官方 `codex app-server` + 自写 JSON-RPC 客户端），新建会话时下拉切 provider，无需切窗口。详见 [`docs/releases/v2.x-multi-model.md`](docs/releases/v2.x-multi-model.md) 与 [`v2.x-multi-subscription.md`](docs/releases/v2.x-multi-subscription.md)。
-
-</td>
-</tr>
-</table>
-
-## 🏗 系统架构
-
-```
-                              ┌─────────────────────────────┐
-                              │        用户输入研究主题       │
-                              └──────────────┬──────────────┘
-                                             │
-                    ┌────────────────────────────────────────────────┐
-                    │               Planner (LLM 驱动)               │
-                    │                                                │
-                    │  ● 语义理解用户意图 → 生成 RoutePlan DAG       │
-                    │  ● 失败自动修复 → 确定性 Fallback 兜底         │
-                    │  ● 感知实验迭代状态 / 审稿结果 → 智能循环      │
-                    └───────────────���────────┬───────────────────────┘
-                                             │ RoutePlan
-                    ┌────────────────────────────────────────────────┐
-                    │              Executor (DAG 拓扑执行)            │
-                    │                                                │
-                    │  plan → execute → observe → replan (if needed) │
-                    └───────────────���────────┬───────────────────────┘
-                                             │
-              ┌──────────┬──────────┬────────┴────────┬──────────┬──────────┐
-              ▼          ▼          ▼                  ▼          ▼          ▼
-         ┌─────────┐┌─────────┐┌───────────┐   ┌──────────┐┌─────────┐┌─────────┐
-         │conductor││researcher││experimenter│   │ analyst  ││ writer  ││reviewer │
-         │ 规划    ││ 检索    ││  实验      │   │ 分析    ││ 写作   ││ 审阅   │
-         └────┬────┘└────┬────┘└─────┬─────┘   └────┬─────┘└────┬────┘└────┬────┘
-              │          │           │               │           │          │
-              ▼          ▼           ▼               ▼           ▼          ▼
-           Skills     Skills      Skills          Skills      Skills     Skills
-              │          │           │               │           │          │
-              ▼          ▼           ▼               ▼           ▼          ▼
-           Tools      Tools       Tools           Tools       Tools      Tools
-         (mcp.llm) (mcp.search) (mcp.exec)     (mcp.llm)  (mcp.llm)  (mcp.llm)
-```
-
-### 决策权分布
-
-| 决策 | 由谁决定 | 机制 |
-|------|---------|------|
-| 选择角色和技能 | **LLM** | Planner 语义分析用户请求 |
-| 是否做实验 | **LLM** | Planner 判断用户意图 |
-| 指标优化方向 | **LLM** | design_experiment 输出 metric_directions |
-| 论文结构 | **LLM** | draft_report 自由设计章节 |
-| 何时终止 | **LLM** | Planner 设置 terminate=true |
-| DAG 执行顺序 | 确定性 | 拓扑排序 |
-| 预算/超时控制 | 确定性 | PolicyEngine 阈值检查 |
-| 审稿通过阈值 | 配置 | weighted_score >= threshold |
-| 实验早停 | 配置 | patience + min_improvement |
-
-### 实验迭代闭环
-
-```
-design_experiment ──→ run_experiment ──→ optimize_experiment
-       ▲                                        │
-       │          should_continue=true           │
-       └────────────────────────────────────────┘
-                  should_continue=false
-                         │
-                         ▼
-              analyze_metrics / aggregate_results
-                         │
-                         ▼
-              generate_figures → draft_report → review_artifact
-                                                      │
-                                          verdict=needs_revision
-                                                      │
-                                                      ▼
-                                               draft_report (修订)
-```
-
-## 🔧 技能系统
-
-### 18 个内置技能
-
-| 角色 | 技能 | 输入 | 输出 |
-|------|------|------|------|
-| **conductor** | `plan_research` | — | TopicBrief, SearchPlan |
-| **researcher** | `search_papers` | SearchPlan | SourceSet |
-| | `fetch_fulltext` | SourceSet | SourceSet |
-| | `extract_notes` | SourceSet | PaperNotes |
-| | `build_evidence_map` | PaperNotes, SourceSet | EvidenceMap, GapMap |
-| | `analyze_trends` | PaperNotes, SourceSet | TrendAnalysis |
-| **experimenter** | `design_experiment` | — (可选: EvidenceMap) | ExperimentPlan |
-| | `run_experiment` | ExperimentPlan | ExperimentResults |
-| | `create_skill` | — | SkillCreation |
-| | `optimize_skill` | ReflectionReport | SkillPatch |
-| **analyst** | `analyze_metrics` | ExperimentResults | ExperimentAnalysis, PerformanceMetrics |
-| | `aggregate_results` | ExperimentResults | ExperimentAnalysis, PerformanceMetrics |
-| | `optimize_experiment` | ExperimentResults | ExperimentIteration |
-| | `compare_methods` | PaperNotes, EvidenceMap | MethodComparison |
-| | `generate_figures` | ExperimentResults, EvidenceMap | FigureSet |
-| | `reflect_on_failure` | — | ReflectionReport |
-| **writer** | `draft_report` | EvidenceMap, ExperimentAnalysis... | ResearchReport |
-| **reviewer** | `review_artifact` | ResearchReport | ReviewVerdict |
-
-> 另有 `skills/`（用户自定义）和 `evolved_skills/`（LLM 进化生成）两个目录，运行时自动发现。
-
-### 技能生命周期
-
-```
-磁盘扫描 → 加载 skill.yaml + run.py → 注册到 SkillRegistry
-                                              │
-                    Planner 规划 DAG ──────────┘
-                                              │
-                    NodeRunner 执行技能 → 记录 utility_score
-                                              │
-                          失败? → reflect_on_failure → create_skill / optimize_skill
-                                              │
-                                    新技能写入 evolved_skills/ → Registry 自动刷新
-```
-
-**三个技能目录**：
-- `src/dynamic_os/skills/builtins/` — 系统内置（18 个）
-- `{workspace}/skills/` — 用户自定义
-- `{workspace}/evolved_skills/` — LLM 进化生成
-
-每个技能 = 一个目录：`skill.yaml`（契约）+ `run.py`（实现）+ `skill.md`（文档）
-
-### 通用实验模板（注册表架构）
-
-```
-generic/
-├── registry.py              ← 组件注册表核心
-├── configs/hparams.yaml     ← 指定 dataset / model / metrics 名称
-├── datasets/__init__.py     ← 数据集注册（LLM 可添加新数据集）
-├── models/__init__.py       ← 模型注册（LLM 可添加 Transformer 等）
-├── metrics/__init__.py      ← 指标注册（LLM 可添加 BLEU 等）
-├── train.py                 ← 通用训练循环（通过注册表查找组件）
-└── evaluate.py              ← 通用评估脚本
-```
-
-LLM 根据研究课题在注册表中添加组件，6 个文件全部可重写。
+所有 sub-agent 通过 `outputs/<run_id>/` 下的标准文件互通：`plan.md` / `sources.json` / `evidence.json` / `analysis.md` / `report.md` / `review.md` / `critique.md` / `experiments/exp_<NNN>/result.json`。完整命名约定写在 `CLAUDE.md` + `AGENTS.md`。
 
 ## 🚀 快速开始
 
-### Docker（推荐）
+### 前置条件
 
-```bash
-git clone https://github.com/szaaaaaa/MambaResearch.git
-cd MambaResearch
-
-cp .env.example .env
-# 编辑 .env 填入 API key
-
-docker compose up --build
-# → http://localhost:8000
-```
+- Python 3.10+ / Node.js 20+
+- 装好至少一个：`claude` CLI（Claude Pro/Max 订阅）或 `codex` CLI（ChatGPT Plus/Pro 订阅）
+- 各自完成 OAuth 登录
 
 ### 本地开发
 
 ```bash
-# 依赖：Python 3.10+ / Node.js 20+ / pdflatex（可选）
-
 git clone https://github.com/szaaaaaa/MambaResearch.git
 cd MambaResearch
 
 pip install -e .
 cd frontend && npm ci && cd ..
 
-cp .env.example .env
-# 编辑 .env 填入 API key
-
 # 启动
 python app.py              # 后端 → http://127.0.0.1:8000
 cd frontend && npm run dev  # 前端 → http://localhost:3000
 ```
 
-### API Key 获取
+启动后流程：Home（项目选择）→ 选 / 建 project → 进入 IDE。
 
-| 供应商 | 获取地址 | 说明 |
-|--------|---------|------|
-| OpenRouter | https://openrouter.ai/keys | **推荐**，一个 key 访问所有主流模型 |
-| OpenAI | https://platform.openai.com/api-keys | GPT-4o / GPT-5.4 |
-| Google | https://aistudio.google.com/apikey | Gemini 系列 |
-| SerpAPI | https://serpapi.com/manage-api-key | 搜索增强（可选） |
+### Codex sub-agent 同步
 
-## 📡 API 端点
+修改 `.claude/agents/*.md` 后跑：
 
-### 研究运行
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/run` | 启动研究任务（SSE 流式返回） |
-| `POST` | `/api/run/stop` | 停止运行中的任务 |
-| `GET` | `/api/runs` | 历史运行列表 |
-| `GET` | `/api/runs/{id}/state` | 运行状态和产物 |
-| `GET` | `/api/runs/{id}/artifacts` | 产物列表 |
-| `GET` | `/api/runs/{id}/artifacts/{aid}` | 产物详情 |
-| `POST` | `/api/runs/{id}/hitl` | 提交人类指导 |
-
-### 输出下载
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/runs/{id}/report.pdf` | PDF 论文 |
-| `GET` | `/api/runs/{id}/report.tex` | LaTeX 源文件 |
-| `GET` | `/api/runs/{id}/references.bib` | BibTeX 引用 |
-| `GET` | `/api/runs/{id}/latex.zip` | LaTeX 压缩包 |
-
-### 技能管理
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/skills` | 全部已注册技能（含指标） |
-| `GET` | `/api/skills/{id}` | 技能详情（含文档） |
-| `GET` | `/api/skills/metrics` | 全部执行指标 |
-| `DELETE` | `/api/skills/{id}` | 删除进化生成的技能 |
-
-### 配置 & 模型
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET/POST` | `/api/config` | 获取/保存配置 |
-| `GET/POST` | `/api/credentials` | 凭证状态/保存 |
-| `GET` | `/api/openrouter/models` | OpenRouter 模型列表 |
-| `GET` | `/api/openai/models` | OpenAI 模型列表 |
-| `GET` | `/api/gemini/models` | Gemini 模型列表 |
-| `GET` | `/api/siliconflow/models` | SiliconFlow 模型列表 |
-| `GET` | `/api/codex/models` | Codex 模型列表 |
-| `GET` | `/api/knowledge-graph/status` | 知识图谱状态 |
-| `GET` | `/api/knowledge-graph/nodes` | 知识图谱节点 |
-
-## ⚙ 推荐配置
-
-### 角色模型差异化配置
-
-```yaml
-llm:
-  role_models:
-    conductor:    { provider: openrouter, model: google/gemini-2.0-flash-001 }    # 便宜即可
-    researcher:   { provider: openrouter, model: google/gemini-3-pro-preview }    # 需要准确提取
-    experimenter: { provider: openrouter, model: google/gemini-2.0-flash-001 }    # 代码生成
-    analyst:      { provider: openrouter, model: google/gemini-3-pro-preview }    # 数据分析
-    writer:       { provider: openrouter, model: openai/gpt-5.4 }                # 最强模型
-    reviewer:     { provider: openrouter, model: google/gemini-3-pro-preview }    # 批判性判断
+```bash
+python scripts/sync_subagents.py
 ```
 
-### 实验配置
+会把 8 个 .md 同步成 `.codex/agents/*.toml`，让 Codex CLI 也能 spawn 同一组 sub-agent。
 
-```yaml
-agent:
-  max_iterations: 15              # planner 最大规划轮数
-  experiment_plan:
-    max_iterations: 6             # 单个实验最大迭代轮数
-    workspace:
-      template: generic           # 通用注册表模板
-    stopping:
-      patience: 3                 # 连续无改进 N 轮后早停
-      min_improvement: 0.001
-```
+## 📦 6 个可视化域
 
-### 预算控制
+| 域 | 做什么 |
+|---|---|
+| 工作台（Workbench） | Claude / Codex 会话主界面，含 slash 命令、HITL、CLI 切换 |
+| 技能 | 列出 `.claude/skills/` 下所有 pipeline SKILL.md |
+| Agent 角色 | 占位（后续可扩展为 sub-agent 配置面板） |
+| 4 bucket（实验/文献/数据集/灵感） | 项目文件按 LLM 增量分类的 4 个虚拟视图 |
+| MCP 功能 | 5 子视图：servers / tools / 调用历史 / sandbox 试调 / 配置编辑 |
+| 情境性 tab | VSCode 风格 ephemeral：开 PDF 开文献 tab，跑实验开执行 tab，关掉消失 |
 
-```yaml
-budget_guard:
-  max_tokens: 500000
-  max_api_calls: 1000
-  max_wall_time_sec: 3600
-```
+## 🔌 内置 MCP Servers
 
-## 📁 项目结构
+由 `src/server/integrations/*/mcp_server.py` 自动注入到 Claude / Codex SDK：
+
+- **workspace.\*** — 文件分类索引读写
+- **zotero.\*** — Zotero Web API 客户端
+- **colab.\*** — Drive Desktop 元数据 → Colab URL
+- **experiment.\*** — 本地 Python 子进程 + metric 流（`outputs/<run_id>/experiments/<exp_id>/result.json`）
+- **paper_search.\*** — 6 source（arXiv / Semantic Scholar / OpenAlex / Crossref / DOAJ / IEEE 部分）
+
+## 🧰 项目结构
 
 ```
 MambaResearch/
 ├── app.py                          # FastAPI 入口
 ├── configs/agent.yaml              # 主配置
+├── .claude/
+│   ├── agents/                     # 8 个 sub-agent 真相源（.md）
+│   └── skills/                     # 7 + 1 个 SKILL.md（pipeline + classify-workspace）
+├── .codex/
+│   └── agents/                     # 8 个 .toml（由 sync_subagents.py 生成）
 ├── src/
-│   ├── dynamic_os/
-│   │   ├── runtime.py              # 运行时入口
-│   │   ├── planner/                # DAG 规划器（LLM + Fallback + 修复）
-│   │   ├── executor/               # DAG 执行器 + NodeRunner
-│   │   ├── experiment/             # 实验工作区 + 模板（default / generic 注册表）
-│   │   ├── roles/                  # 7 个角色定义
-│   │   ├── skills/builtins/        # 18 个内置技能
-│   │   ├── tools/                  # MCP 工具网关 + 发现 + 注册
-│   │   ├── contracts/              # 类型契约（Pydantic frozen models）
-│   │   ├── policy/                 # 预算 + 权限引擎
-│   │   └── storage/                # SQLite / 知识图谱 / 技能指标 / 用户记忆
-│   └── server/routes/              # API（runs / skills / config / models）
-├── frontend/src/
-│   ├── components/
-│   │   ├── tabs/RunTab.tsx         # 运行监控
-│   │   ├── tabs/HistoryTab.tsx     # 历史记录
-│   │   ├── tabs/SkillsTab.tsx      # 技能浏览与管理
-│   │   ├── ExperimentProgress.tsx  # 实验迭代进度面板
-│   │   ├── ReviewStatus.tsx        # 审稿评分面板
-│   │   ├── RouteGraph.tsx          # DAG 可视化
-│   │   ├── RawTerminalPanel.tsx    # 原始终端输出
-│   │   ├── BehaviorTimeline.tsx    # 事件时间线
-│   │   ├── HitlModal.tsx           # 人类介入弹窗
-│   │   └── settings/              # 设置面板（11 个分区）
-│   └── store.tsx                   # 全局状态（Zustand）
-├── scripts/                        # CLI + MCP 服务器
-├── data/outputs/                   # 运行产出（PDF / LaTeX / BibTeX）
-└── tests/                          # 测试套件
+│   ├── server/
+│   │   ├── projects/               # 项目注册表 + active project env
+│   │   ├── workspace/              # 分类索引 + workspace MCP
+│   │   ├── claude_code/            # Claude Code SDK 会话编排
+│   │   ├── codex/                  # Codex app-server 会话编排
+│   │   ├── integrations/           # zotero / colab / experiment MCP servers
+│   │   ├── mcp/                    # MCP server registry
+│   │   ├── bridge/                 # auto-compact 兜底 + cross-CLI continues 桥
+│   │   └── routes/                 # FastAPI 路由
+│   └── common/                     # 共享 utils
+├── frontend/src/                   # React 19 + Tailwind + Zustand
+└── scripts/
+    └── sync_subagents.py           # .md → .toml 同步
 ```
+
+## ⚙ 配置
+
+`configs/agent.yaml` v3 只剩跟 paper_search 与 Codex / Claude provider profile 相关的少量配置；不再有 LLM routing / role_models / dynamic_os runtime 段。常见调整：
+
+```yaml
+sources:
+  arxiv:
+    enabled: true
+    max_results_per_query: 30
+  semantic_scholar:
+    enabled: true
+    max_results_per_query: 30
+mcp:
+  servers:
+    - server_id: paper_search
+      command: [${python}, -m, paper_search_mcp.server]
+      env:
+        PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY: ''
+```
+
+`paths.outputs_dir` 决定 `outputs/<run_id>/` 写到哪（默认 `${project.data_dir}/outputs`）。
 
 ## 🔁 自动化开发流程（/pipeline）
 
@@ -374,56 +198,24 @@ MambaResearch/
 
 详见 [docs/pipeline-usage.md](docs/pipeline-usage.md)。
 
-## 💡 常见问题
+## 📚 版本演进
 
-<details>
-<summary><b>搜索不到论文？</b></summary>
-
-确认 `configs/agent.yaml` 中 `sources.arxiv.enabled: true` 和 `sources.semantic_scholar.enabled: true`。中文主题会自动翻译为英文搜索词。
-</details>
-
-<details>
-<summary><b>PDF 中引用显示为 <code>?</code>？</b></summary>
-
-需要安装 `pdflatex` 和 `bibtex`。系统会自动从 SourceSet 生成 `references.bib` 并编译三遍。
-</details>
-
-<details>
-<summary><b>实验迭代没改善就停了？</b></summary>
-
-早停机制生效。调大 `experiment_plan.stopping.patience`（默认 3）或 `experiment_plan.max_iterations`（默认 6）。
-</details>
-
-<details>
-<summary><b>如何自定义实验模板？</b></summary>
-
-在 `configs/agent.yaml` 中设置 `workspace.template: custom` 和 `workspace.custom_path: /你的模板路径`。模板需包含 `train.py` 和 `evaluate.py`，评估脚本输出 `METRIC name=value` 格式。
-</details>
-
-<details>
-<summary><b>如何添加自定义技能？</b></summary>
-
-在 `skills/` 目录下创建子目录，包含 `skill.yaml`（契约）、`run.py`（实现 `async def run(ctx) -> SkillOutput`）和 `skill.md`（文档）。系统启动时自动发现。
-</details>
-
-<details>
-<summary><b>如何在 Overleaf 编辑？</b></summary>
-
-下载 LaTeX 压缩包，上传到 Overleaf。可将 `\documentclass{article}` 替换为会议模板。
-</details>
+- [v3.0 — MambaResearch as Claude Code / Codex shell](docs/releases/v3.0-mamba-as-claude-code-shell.md)
+- [v2.x — multi-subscription（双订阅工作流）](docs/releases/v2.x-multi-subscription.md)
+- [v2.x — multi-model（多 provider Workbench）](docs/releases/v2.x-multi-model.md)
+- 历史里程碑：v0.1 LangGraph → v0.5 3-agent → v0.9 6-agent → v1.0 dynamic-os（已删除）
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
 | 后端 | Python 3.10+ / FastAPI / uvicorn / SSE |
-| 前端 | React 19 / TypeScript / Vite / Tailwind CSS / Zustand |
-| LLM | OpenRouter / OpenAI / Gemini / SiliconFlow / Codex |
-| 检索 | arXiv / Semantic Scholar / ChromaDB / FAISS / BM25 + Reranking |
-| 工具通信 | MCP stdio（5 个服务器：llm / search / retrieval / exec / paper_search） |
-| 实验 | 沙箱执行 / 注册表模板（default + generic）/ 快照回滚 |
-| 持久化 | SQLite / 知识图谱 / 技能指标 / 跨 run 用户记忆 |
-| 输出 | LaTeX + BibTeX + pdflatex |
+| 前端 | React 19 / TypeScript / Vite / Tailwind CSS |
+| LLM 出口 | Claude Code CLI（Pro/Max 订阅）或 Codex CLI（ChatGPT 订阅） |
+| 跨 CLI 桥 | continues v4.0.12 |
+| MCP servers | workspace / zotero / colab / experiment / paper_search |
+| 持久化 | `~/.mambaresearch/mamba.db` + `<project>/.mambaresearch/*.db` |
+| 项目记忆 | `<project>/.mambaresearch/memory/*.md` + `@import` 双侧暴露给 CLAUDE.md / AGENTS.md |
 
 ## 许可证
 
@@ -432,5 +224,5 @@ MIT License
 ---
 
 <div align="center">
-<sub>Built with Claude Code + Dynamic DAG Planning</sub>
+<sub>Built as a thin shell on top of Claude Code / Codex CLI</sub>
 </div>

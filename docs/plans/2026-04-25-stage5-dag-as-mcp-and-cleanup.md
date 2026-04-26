@@ -215,7 +215,7 @@
   - `python -c "import src.dynamic_os"` 报 ModuleNotFoundError
   - `python app.py` 启动不报 import error
 
-### [TODO] 9. 文档收尾
+### [DONE] 9. 文档收尾
 
 - **What**: README + release note + plan 文件 + CLAUDE.md / AGENTS.md 全面对齐 v3。
 - **Files**:
