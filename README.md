@@ -24,10 +24,11 @@
 MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
 
 - 提供 6 个研究向可视化域（工作台、技能、Agent 角色、4 bucket 文件管理、MCP 功能、情境性 tab）
-- 项目级会话编排 + 跨 backend (Claude ↔ Codex) 桥接（用 `continues`）
+- **多对话并行**：每条 conversation 绑死一个 backend（Claude 或 Codex），永不切换；不同 backend 的对话在 sidebar 上并列共存
+- 跨对话引用通过 `mamba_history` MCP tool 按需取（backend 主动调，懒拉不预 push）
 - LLM 智能完全交给已订阅的 Claude Code / Codex CLI
 - 自定义研究流程通过 **8 个 sub-agent**（`.claude/agents/*.md`）+ **7 个 pipeline SKILL.md**（`.claude/skills/`）沉淀
-- 自定义工具通过 **MCP servers** 接入（`workspace` / `zotero` / `colab` / `experiment` / `paper_search`）
+- 自定义工具通过 **MCP servers** 接入（`workspace` / `mamba_history` / `zotero` / `colab` / `experiment` / `paper_search`）
 
 > 上一代版本拥有自建 `dynamic_os` 多 agent runtime（21 builtin skill + 7 role + planner + executor + policy + tool gateway），v3.0 完全删除——细节见 [v3.0 release note](docs/releases/v3.0-mamba-as-claude-code-shell.md)。
 
@@ -162,7 +163,7 @@ MambaResearch/
 │   │   ├── codex/                  # Codex app-server 会话编排
 │   │   ├── integrations/           # zotero / colab / experiment MCP servers
 │   │   ├── mcp/                    # MCP server registry
-│   │   ├── bridge/                 # auto-compact 兜底 + cross-CLI continues 桥
+│   │   ├── bridge/                 # cross-CLI continues 桥（v3.2 hybrid MT 已撤回）
 │   │   └── routes/                 # FastAPI 路由
 │   └── common/                     # 共享 utils
 ├── frontend/src/                   # React 19 + Tailwind + Zustand
