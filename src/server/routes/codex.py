@@ -116,8 +116,9 @@ async def _maybe_run_compact_codex(
 ) -> None:
     """v3.2 完整版触发钩子 for Codex（_run_turn finally 内调用，session.lock 持有）。
 
-    跟 claude 路径对偶 — 加载配置、check should_trigger、enabled 时跑 compact，
-    disabled 时仅发推荐 marker。
+    Tracker 语义见 ``claude_code.py::_maybe_run_compact`` 的 docstring；这里
+    保持与 claude 路径完全对偶：success → reset_session；failure / 异常 →
+    mark_triggered（5 分钟冷却防 thrash）。
     """
     try:
         cfg = load_auto_compact_config(CONFIG_PATH)
@@ -138,6 +139,8 @@ async def _maybe_run_compact_codex(
                 result = await run_compact_for_codex(session, conversation_id, cfg)
             except Exception as exc:
                 logger.exception("codex compact runner failed")
+                # 异常路径也必须 mark_triggered，否则下个 turn 立即重试 = thrash
+                tracker.mark_triggered(session.id)
                 emit("codex_compact_done", {"success": False, "error": str(exc)})
                 return
             if result.success:

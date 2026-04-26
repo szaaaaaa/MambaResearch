@@ -153,7 +153,9 @@ async def run_compact_for_claude(
     Returns
     -------
     CompactResult
-        success=False 时调用方应跳过 mark_triggered（让阈值仍然触发，下次再试）。
+        success=True  → 调用方应 reset_session（token 计数清零）。
+        success=False → 调用方应 mark_triggered（启动 5 分钟冷却避免下个
+        turn 立刻再次触发同一失败操作 thrash）。
     """
     msgs = messages_store.list_by_conversation(conversation_id)
     to_compact = select_messages_to_compact(msgs, config)

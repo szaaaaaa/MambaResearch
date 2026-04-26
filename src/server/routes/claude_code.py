@@ -564,14 +564,24 @@ async def _maybe_run_compact(
 ) -> None:
     """v3.2 完整版触发钩子（在 _run_turn finally 内调用，session.lock 仍持有）。
 
+    Tracker 语义（来自 ``auto_compact.py``）::
+      - reset_session  →  total_tokens 清零，下轮要重新累计才再 trigger
+      - mark_triggered →  启动 5 分钟冷却，期间 should_trigger 永远 False
+      - 都不调          →  下个 turn 立即再次满足阈值，会立刻重跑
+
+    所以"成功 reset / 失败也 mark_triggered" 是唯一不会 thrash 的策略：
+    LLM 调用失败时不让下个 turn 立即再触发同一个失败操作，5 分钟冷却给
+    upstream 恢复时间；用户手动开新对话仍可绕过冷却。
+
     流程：
     1. 加载用户配置（每次都重读，让用户在 Settings 改阈值后立即生效）
     2. tracker.should_trigger 用配置的 threshold + Claude context window
-    3. enabled=True 且触发 → emit cc_compact_started → run_compact_for_claude
-       → emit cc_compact_done + reset_session
+    3. enabled=True 且触发 →
+         - try run_compact_for_claude
+         - success=True：reset_session（token 清零）
+         - success=False / 异常：mark_triggered（5 分钟冷却防 thrash）
     4. enabled=False 但触发 → 仅 emit cc_auto_compact_recommended（信息性）
        + mark_triggered（启动冷却避免连发）
-    任何异常都吞掉——压缩失败不能影响主对话流；下个 turn 仍会再次评估。
     """
     try:
         cfg = load_auto_compact_config(CONFIG_PATH)
@@ -593,6 +603,8 @@ async def _maybe_run_compact(
                 result = await run_compact_for_claude(session, conversation_id, cfg)
             except Exception as exc:
                 logger.exception("compact runner failed")
+                # 异常路径也必须 mark_triggered，否则下个 turn 立即重试 = thrash
+                tracker.mark_triggered(session.id)
                 emit("cc_compact_done", {"success": False, "error": str(exc)})
                 return
             if result.success:
