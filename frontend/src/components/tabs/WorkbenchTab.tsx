@@ -20,6 +20,7 @@ import { PermissionsPanel } from '../workbench/panels/PermissionsPanel';
 import { McpStatusPanel } from '../workbench/panels/McpStatusPanel';
 import { SLASH_COMMANDS } from '../workbench/slash/registry';
 import { SessionsPanel } from '../workbench/shell/activities/SessionsPanel';
+import { ClassifyHintBar } from '../workbench/ClassifyHintBar';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -745,20 +746,132 @@ export const WorkbenchTab: React.FC = () => {
   // 当前后端：根据 session.provider 推断；无 session 时默认 claude（首次发送时会创建）
   const currentBackend: 'claude' | 'codex' = session?.provider === 'codex' ? 'codex' : 'claude';
 
+  // Stage 3 Task 7 — 跨 CLI 桥用：当前会话所属的 conversation_id（首次切换时
+  // 在后端 lazily 创建并写第一段 segment）。无切换时为 null，对话照常进行。
+  const conversationIdRef = React.useRef<string | null>(null);
+
   /**
-   * 切换后端 = 用 target provider 新建一个 session。
-   * 旧 session 仍在 DB 中可通过"会话列表"找回；当前 UI items 会被清空。
+   * 切换后端 — Stage 3 Task 7 接通跨 CLI 桥。
+   *
+   * 流程：
+   * 1. 当前有 SDK session → 走 conversation_switch 端点拿 handoff first_prompt
+   *    1a. 若还没建过 conversation：先 POST /api/conversations 建 + 把当前 session
+   *        作为第一段 segment 入库
+   *    1b. POST /api/conversations/{id}/switch 关旧段 + 拿 first_prompt
+   *    1c. handleCreateSession(target) 起新 SDK session
+   *    1d. POST /api/conversations/{id}/segments 写新段（cli_session_id=新 session id）
+   *    1e. push 一条 segment_boundary 到 timeline，sendToBackend(first_prompt)
+   * 2. 否则走原直接路径——首次"创会话"不需要桥
    */
   const handleBackendSwitch = (target: 'claude' | 'codex') => {
     if (currentBackend === target) return;
     if (isRunning) return;
-    if (session || items.length > 0) {
-      const ok = window.confirm(
-        `切换到 ${target === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} 将开启新会话。当前会话仍保留在会话列表中，可随时切回。确定？`,
-      );
-      if (!ok) return;
+
+    const hasActiveSession = sessionRef.current !== null;
+    if (!hasActiveSession) {
+      void handleCreateSession(target === 'codex' ? 'codex' : null);
+      return;
     }
-    void handleCreateSession(target === 'codex' ? 'codex' : null);
+
+    if (
+      !window.confirm(
+        `切换到 ${target === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} 会用 \`continues\` 工具压缩当前会话作为 handoff 注入新会话。继续？`,
+      )
+    ) {
+      return;
+    }
+
+    void (async () => {
+      const oldSession = sessionRef.current!;
+      try {
+        // 1a. 拿 active project，懒建 conversation + 第一段 segment
+        let convId = conversationIdRef.current;
+        if (!convId) {
+          const projResp = await fetch(`${API_BASE}/api/projects/active`);
+          if (!projResp.ok) {
+            pushError('无 active project，无法建立会话编排');
+            return;
+          }
+          const proj = await projResp.json();
+          const convResp = await fetch(`${API_BASE}/api/conversations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: proj.id }),
+          });
+          if (!convResp.ok) {
+            pushError(`创建 conversation 失败：${await convResp.text()}`);
+            return;
+          }
+          const conv = await convResp.json();
+          convId = conv.id as string;
+          // 写第一段 segment（即当前 session）
+          const segResp = await fetch(
+            `${API_BASE}/api/conversations/${convId}/segments`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                backend: currentBackend,
+                cli_session_id: oldSession.id,
+              }),
+            },
+          );
+          if (!segResp.ok) {
+            pushError(`写入第一段 segment 失败：${await segResp.text()}`);
+            return;
+          }
+          conversationIdRef.current = convId;
+        }
+
+        // 1b. 调 switch 端点
+        const switchResp = await fetch(
+          `${API_BASE}/api/conversations/${convId}/switch`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_backend: target }),
+          },
+        );
+        if (!switchResp.ok) {
+          pushError(`切换 backend 失败：${await switchResp.text()}`);
+          return;
+        }
+        const switchBody = await switchResp.json();
+        const firstPrompt = String(switchBody.first_prompt || '');
+        const handoffPath = String(switchBody.handoff_path || '');
+        const usedFallback = Boolean(switchBody.used_fallback);
+
+        // 1c. 起新 SDK session（target backend）
+        await handleCreateSession(target === 'codex' ? 'codex' : null);
+        const newSession = sessionRef.current;
+        if (!newSession) {
+          pushError('新 backend session 创建失败');
+          return;
+        }
+
+        // 1d. 写新段
+        await fetch(`${API_BASE}/api/conversations/${convId}/segments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            backend: target,
+            cli_session_id: newSession.id,
+            handoff_prompt_path: handoffPath,
+          }),
+        }).catch(() => {});
+
+        // 1e. timeline marker + 注入 first_prompt
+        const markerText = usedFallback
+          ? `已切换到 ${target === 'claude' ? 'claude' : 'codex'}（continues 不可用，走兜底 handoff）`
+          : `已切换到 ${target === 'claude' ? 'claude' : 'codex'}（continues handoff）`;
+        ccAppendItem({ type: 'segment_boundary', text: markerText });
+        if (firstPrompt) {
+          await sendToBackend(firstPrompt);
+        }
+      } catch (err) {
+        pushError(`backend 切换失败：${String(err)}`);
+      }
+    })();
   };
 
   return (
@@ -885,6 +998,13 @@ export const WorkbenchTab: React.FC = () => {
           </div>
         </>
       ) : null}
+
+      <ClassifyHintBar
+        onAccept={(text) => {
+          setPrompt(text);
+          setAutocompleteDismissed(true);
+        }}
+      />
 
       <div className="rb-chat-body">
         <div ref={scrollRef} className="rb-chat-stream">

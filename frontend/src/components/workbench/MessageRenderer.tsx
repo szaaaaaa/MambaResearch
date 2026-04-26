@@ -98,6 +98,19 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     return <UserPromptLine text={text} />;
   }
 
+  if (type === 'segment_boundary') {
+    // Stage 3 Task 7 — 跨 CLI 桥切换标记。视觉与 CLI "─── system info ───" 对齐：
+    // 居中 dim 文字，让用户在 timeline 上看清"这里发生了 backend 切换"。
+    const text = typeof payload.text === 'string' ? payload.text : '已切换 backend';
+    return (
+      <div className="my-3 flex items-center gap-3 text-xs text-slate-400">
+        <div className="flex-1 border-t border-dashed border-slate-200" />
+        <span className="font-mono whitespace-nowrap">──── {text} ────</span>
+        <div className="flex-1 border-t border-dashed border-slate-200" />
+      </div>
+    );
+  }
+
   if (type === 'error_local') {
     const text = typeof payload.text === 'string' ? payload.text : '';
     return <div className="my-1 font-mono text-sm text-rose-600">{text}</div>;
