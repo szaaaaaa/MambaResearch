@@ -119,6 +119,20 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     return <div className="my-1 font-mono text-sm text-rose-600">{text}</div>;
   }
 
+  // Codex 后端的合并 assistant 文本——store 的 ccAppendCodexDelta 把多个
+  // item/agentMessage/delta 帧累积进同一个 item 的 text 字段。视觉跟 Claude
+  // assistant 的 TextBlock 对齐：左侧蓝色 ●，右侧整段连续文本。
+  if (type === 'codex_assistant') {
+    const text = typeof payload.text === 'string' ? payload.text : '';
+    if (!text) return null;
+    return (
+      <div className="my-1 flex items-start gap-2">
+        <span className="mt-[6px] font-mono text-[10px] leading-none text-emerald-600">●</span>
+        <div className="min-w-0 flex-1 whitespace-pre-wrap text-[14px] text-slate-800">{text}</div>
+      </div>
+    );
+  }
+
   if (type === 'assistant') {
     // SDK 约束：AssistantMessage.content ∈ {TextBlock, ThinkingBlock, ToolUseBlock}
     // 不含 ToolResultBlock（那是 UserMessage 的事）

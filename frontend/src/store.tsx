@@ -945,6 +945,7 @@ interface AppContextType {
   toggleAdvancedMode: () => void;
   ccSetSession: (session: ClaudeCodeSessionInfo | null) => void;
   ccAppendItem: (payload: unknown) => void;
+  ccAppendCodexDelta: (delta: string) => void;
   ccSetRunning: (running: boolean) => void;
   ccSetRawEventsVisible: (visible: boolean) => void;
   ccSetTurnStartAt: (at: number | null) => void;
@@ -2067,6 +2068,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  // 把 Codex 流式 delta 合并进当前 turn 的 codex_assistant item。最后一项是
+  // codex_assistant 时追加 text；否则起一个新 item。这样 9 个 delta 帧渲染成
+  // 一段连续文本，而不是 9 个独立 bullet。
+  const ccAppendCodexDelta = (delta: string) => {
+    if (!delta) return;
+    setState((prev) => {
+      const items = prev.claudeCode.items;
+      const last = items[items.length - 1];
+      const lastPayload = last?.payload as { type?: string; text?: string } | undefined;
+      if (lastPayload && lastPayload.type === 'codex_assistant') {
+        const updated: ClaudeCodeStreamItem = {
+          ...last,
+          payload: { type: 'codex_assistant', text: (lastPayload.text ?? '') + delta },
+        };
+        return {
+          ...prev,
+          claudeCode: {
+            ...prev.claudeCode,
+            items: [...items.slice(0, -1), updated],
+          },
+        };
+      }
+      const fresh: ClaudeCodeStreamItem = {
+        id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        payload: { type: 'codex_assistant', text: delta },
+      };
+      return {
+        ...prev,
+        claudeCode: { ...prev.claudeCode, items: [...items, fresh] },
+      };
+    });
+  };
+
   const ccSetRunning = (running: boolean) => {
     setState((prev) => ({ ...prev, claudeCode: { ...prev.claudeCode, isRunning: running } }));
   };
@@ -2279,6 +2313,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleAdvancedMode,
         ccSetSession,
         ccAppendItem,
+        ccAppendCodexDelta,
         ccSetRunning,
         ccSetRawEventsVisible,
         ccSetTurnStartAt,

@@ -65,6 +65,7 @@ export const WorkbenchTab: React.FC = () => {
     state,
     ccSetSession,
     ccAppendItem,
+    ccAppendCodexDelta,
     ccSetRunning,
     ccSetRawEventsVisible,
     ccSetTurnStartAt,
@@ -315,8 +316,21 @@ export const WorkbenchTab: React.FC = () => {
           return;
         }
         if (frame.event === 'codex_message') {
-          // 原始 JSON-RPC 通知帧——5c 阶段整帧塞进 items 做基本可见性，
-          // 5d 会根据实测发现决定是否做精细化拆分
+          // Codex SSE pass-through 是 JSON-RPC 通知逐帧发的（包括逐 token
+          // delta）。把 item/agentMessage/delta 单独合并成一个连续的
+          // codex_assistant item；其余帧仍保留 codex_raw 形态供"显示原始
+          // 事件"开关查看（turn 生命周期、mcpServer/* 等）。
+          if (parsed && typeof parsed === 'object') {
+            const inner = parsed as Record<string, unknown>;
+            if (inner.method === 'item/agentMessage/delta') {
+              const params = (inner.params ?? {}) as Record<string, unknown>;
+              const delta = typeof params.delta === 'string' ? params.delta : '';
+              if (delta) {
+                ccAppendCodexDelta(delta);
+                return;
+              }
+            }
+          }
           ccAppendItem({ type: 'codex_raw', payload: parsed });
           return;
         }
