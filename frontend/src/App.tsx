@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Database, Lightbulb, Users, Plug } from 'lucide-react';
+import { FileText, Database, Lightbulb, FlaskConical, Users, Plug } from 'lucide-react';
 import { AppProvider, useAppContext } from './store';
 import { MambaSidebar, NavId } from './components/MambaSidebar';
 import { PlaceholderView } from './components/PlaceholderView';
@@ -9,8 +9,14 @@ import { SkillsTab } from './components/tabs/SkillsTab';
 import { WorkbenchTab } from './components/tabs/WorkbenchTab';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { UiPreferences } from './components/settings/types';
+import { HomeScreen } from './components/home/HomeScreen';
+import { TopBar } from './components/layout/TopBar';
+import { BucketContainer } from './components/buckets/BucketContainer';
+import { McpTab } from './components/mcp/McpTab';
+import { getActiveProject, Project } from './api/projects';
 
 const UI_PREFERENCES_KEY = 'research-agent-ui-preferences';
+const LAST_NAV_KEY = 'mamba_last_nav';
 
 const DEFAULT_UI_PREFERENCES: UiPreferences = {
   theme: 'system',
@@ -33,6 +39,28 @@ function loadUiPreferences(): UiPreferences {
   }
 }
 
+// Stage 1 — 把旧的 'exp' nav（指向 RunTab，多 LLM DAG 入口）映射为 'runs'，
+// 给"实验 bucket"留出 'exp' 这个语义键，避免 Stage 5 删 RunTab 时再做迁移。
+function loadLastNav(): Exclude<NavId, 'set'> {
+  if (typeof window === 'undefined') return 'bench';
+  const raw = window.localStorage.getItem(LAST_NAV_KEY);
+  if (!raw) return 'bench';
+  if (raw === 'exp') return 'runs'; // 旧值映射
+  const valid: Exclude<NavId, 'set'>[] = [
+    'exp',
+    'pap',
+    'data',
+    'idea',
+    'skill',
+    'roles',
+    'mcp',
+    'bench',
+    'hist',
+    'runs',
+  ];
+  return (valid as string[]).includes(raw) ? (raw as Exclude<NavId, 'set'>) : 'bench';
+}
+
 // 清除旧版 react-resizable-panels 持久化的布局数据，避免和新 grid 布局冲突
 if (typeof window !== 'undefined') {
   for (const key of Object.keys(window.localStorage)) {
@@ -41,6 +69,8 @@ if (typeof window !== 'undefined') {
     }
   }
 }
+
+type AppView = 'home' | 'ide';
 
 const AppContent: React.FC = () => {
   const {
@@ -54,15 +84,42 @@ const AppContent: React.FC = () => {
   } = useAppContext();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(() => loadUiPreferences());
-  /**
-   * activeNav 默认 'exp'（实验），匹配截图中的"研究对话"主入口；
-   * 'set' 不参与 activeNav，只触发 SettingsModal。
-   */
-  const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>('exp');
+  const [appView, setAppView] = React.useState<AppView>('home');
+  const [activeProject, setActiveProject] = React.useState<Project | null>(null);
+  const [bootstrapping, setBootstrapping] = React.useState(true);
+  const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>(() => loadLastNav());
 
   React.useEffect(() => {
     window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
   }, [uiPreferences]);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(LAST_NAV_KEY, activeNav);
+  }, [activeNav]);
+
+  // 启动时尝试恢复 active project；有就直接进 IDE，无就停在 Home
+  React.useEffect(() => {
+    let cancelled = false;
+    getActiveProject()
+      .then((p) => {
+        if (cancelled) return;
+        if (p) {
+          setActiveProject(p);
+          setAppView('ide');
+        } else {
+          setAppView('home');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAppView('home');
+      })
+      .finally(() => {
+        if (!cancelled) setBootstrapping(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ExperimentPlan "在工作台运行"按钮 → store.launchWorkbenchExperiment
   // pendingWorkbenchLaunch 非 null 即切到 bench；WorkbenchTab 自管 consume。
@@ -82,18 +139,39 @@ const AppContent: React.FC = () => {
 
   const handleSelectConversation = (id: string) => {
     selectConversation(id);
-    setActiveNav('exp');
+    setActiveNav('runs');
   };
 
   const handleCreateConversation = () => {
     createConversation();
-    setActiveNav('exp');
+    setActiveNav('runs');
+  };
+
+  const handleProjectActivated = (project: Project) => {
+    setActiveProject(project);
+    setAppView('ide');
+  };
+
+  const handleBackToHome = () => {
+    setAppView('home');
+    setActiveProject(null);
   };
 
   const renderMain = () => {
     switch (activeNav) {
-      case 'exp':
+      case 'runs':
         return <RunTab uiPreferences={uiPreferences} />;
+      case 'exp':
+        return (
+          <BucketContainer
+            bucket="experiment"
+            title="实验"
+            description="该项目尚未建立分类索引。"
+            icon={FlaskConical}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onNavigateToWorkbench={() => setActiveNav('bench')}
+          />
+        );
       case 'bench':
         return <WorkbenchTab />;
       case 'skill':
@@ -102,29 +180,35 @@ const AppContent: React.FC = () => {
         return <HistoryTab compact={false} />;
       case 'pap':
         return (
-          <PlaceholderView
-            icon={FileText}
+          <BucketContainer
+            bucket="literature"
             title="文献"
-            description="集中管理研究中检索到的论文与笔记。后端 paper_search MCP 已具备六个搜索源（arXiv / Semantic Scholar / PubMed / OpenAlex / CrossRef / Google Scholar），UI 还未落地。"
-            plannedSource="计划接入：MCP paper_search 工具检索 + 已收藏论文列表 + 单篇详情阅读视图。在工作台或实验对话中通过 @ 文献 引用。"
+            description="该项目尚未建立分类索引。"
+            icon={FileText}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onNavigateToWorkbench={() => setActiveNav('bench')}
           />
         );
       case 'data':
         return (
-          <PlaceholderView
-            icon={Database}
+          <BucketContainer
+            bucket="dataset"
             title="数据集"
-            description="实验中产生与引用的数据资产。当前 artifact 系统已支持 RunArtifact 存储，独立的数据集视图尚未拆分。"
-            plannedSource="计划接入：从 artifact 系统中筛选 kind=data 的产物 + 数据集元信息 + 在工作台中以路径引用。"
+            description="该项目尚未建立分类索引。"
+            icon={Database}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onNavigateToWorkbench={() => setActiveNav('bench')}
           />
         );
       case 'idea':
         return (
-          <PlaceholderView
-            icon={Lightbulb}
+          <BucketContainer
+            bucket="idea"
             title="灵感"
-            description="未结构化的研究问题、假设、TODO。完全未实现——目前用户用对话窗口承载这些。"
-            plannedSource="计划接入：本地 markdown 笔记本 + 标签 + 一键发起新研究会话。"
+            description="该项目尚未建立分类索引。"
+            icon={Lightbulb}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onNavigateToWorkbench={() => setActiveNav('bench')}
           />
         );
       case 'roles':
@@ -137,33 +221,50 @@ const AppContent: React.FC = () => {
           />
         );
       case 'mcp':
-        return (
-          <PlaceholderView
-            icon={Plug}
-            title="MCP 工具"
-            description="已连接的 MCP 服务器列表与工具清单。后端已具备 paper_search MCP 集成（含协议探测），UI 暂在工作台 /mcp 命令内。"
-            plannedSource="计划接入：把 frontend/src/components/workbench/panels/McpStatusPanel 提为顶层视图 + 添加 / 移除 MCP server 的配置入口。"
-          />
-        );
+        return <McpTab />;
     }
   };
 
+  if (bootstrapping) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="text-sm text-slate-500">加载中…</div>
+      </div>
+    );
+  }
+
+  if (appView === 'home') {
+    return <HomeScreen onProjectActivated={handleProjectActivated} />;
+  }
+
+  if (!activeProject) {
+    // 防御性兜底——理论上 ide 状态必有 project
+    return <HomeScreen onProjectActivated={handleProjectActivated} />;
+  }
+
   return (
     <div className="ds-scope" style={{ height: '100vh', overflow: 'hidden' }}>
-      <div className="rb-app" style={{ height: '100%' }}>
-        <MambaSidebar
-          active={activeNav}
-          onNav={handleNav}
-          conversations={state.conversations}
-          activeConversationId={state.activeConversationId}
-          onSelectConversation={handleSelectConversation}
-          onCreateConversation={handleCreateConversation}
-          onRenameConversation={renameConversation}
-          onDuplicateConversation={duplicateConversation}
-          onArchiveConversation={archiveConversation}
-          onDeleteConversation={deleteConversation}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <TopBar
+          project={activeProject}
+          onBackToHome={handleBackToHome}
+          onOpenSettings={() => setIsSettingsOpen(true)}
         />
-        <main style={{ minWidth: 0, height: '100%', overflow: 'hidden' }}>{renderMain()}</main>
+        <div className="rb-app" style={{ flex: 1, minHeight: 0 }}>
+          <MambaSidebar
+            active={activeNav}
+            onNav={handleNav}
+            conversations={state.conversations}
+            activeConversationId={state.activeConversationId}
+            onSelectConversation={handleSelectConversation}
+            onCreateConversation={handleCreateConversation}
+            onRenameConversation={renameConversation}
+            onDuplicateConversation={duplicateConversation}
+            onArchiveConversation={archiveConversation}
+            onDeleteConversation={deleteConversation}
+          />
+          <main style={{ minWidth: 0, height: '100%', overflow: 'hidden' }}>{renderMain()}</main>
+        </div>
       </div>
 
       {isSettingsOpen ? (
