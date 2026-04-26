@@ -33,9 +33,12 @@ _REPO_CLAUDE = ROOT / ".claude" / "agents"
 _REPO_CODEX = ROOT / ".codex" / "agents"
 _EXPECTED_NAMES = {
     "analyzer",
+    "conductor",
     "critic",
     "evidence-extractor",
+    "experimenter",
     "paper-searcher",
+    "reviewer",
     "writer",
 }
 
@@ -45,11 +48,11 @@ _EXPECTED_NAMES = {
 # ---------------------------------------------------------------------------
 
 
-def test_converter_produces_expected_five_files(tmp_path: Path):
-    """源目录 5 个 .md 跑 converter → 恰好生成 5 个 .toml。"""
+def test_converter_produces_expected_eight_files(tmp_path: Path):
+    """源目录 8 个 .md 跑 converter → 恰好生成 8 个 .toml。"""
     dst = tmp_path / "codex_agents"
     written = sync_subagents.sync_directory(_REPO_CLAUDE, dst)
-    assert len(written) == 5
+    assert len(written) == 8
     assert {p.stem for p in written} == _EXPECTED_NAMES
     assert {p.name for p in dst.glob("*.toml")} == {
         f"{n}.toml" for n in _EXPECTED_NAMES

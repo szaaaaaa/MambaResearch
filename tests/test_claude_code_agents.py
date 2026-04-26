@@ -30,8 +30,8 @@ REPO_AGENTS = ROOT / ".claude" / "agents"
 # ---------------------------------------------------------------------------
 
 
-def test_repo_defines_five_subagents():
-    """确认 repo 下 .claude/agents/ 有且只有计划里要求的 5 个文件。"""
+def test_repo_defines_eight_subagents():
+    """确认 repo 下 .claude/agents/ 有且只有 v3 Stage 5 要求的 8 个文件。"""
     registry = load_subagents_from_directory(REPO_AGENTS)
     assert set(registry.keys()) == {
         "paper-searcher",
@@ -39,6 +39,9 @@ def test_repo_defines_five_subagents():
         "analyzer",
         "writer",
         "critic",
+        "conductor",
+        "experimenter",
+        "reviewer",
     }
 
 
@@ -50,10 +53,13 @@ def test_repo_defines_five_subagents():
         ("analyzer", "sonnet"),
         ("writer", "sonnet"),
         ("critic", "opus"),
+        ("conductor", "sonnet"),
+        ("experimenter", "sonnet"),
+        ("reviewer", "sonnet"),
     ],
 )
 def test_model_assignment_uses_aliases(name: str, expected_model: str):
-    """模型字段应为别名而非完整 ID；分配符合 plan 的分档（Task 3 AC2）。"""
+    """模型字段应为别名而非完整 ID；分配符合 plan 的分档。"""
     registry = load_subagents_from_directory(REPO_AGENTS)
     assert registry[name].model == expected_model
 
@@ -192,6 +198,9 @@ def test_build_client_injects_agents_into_options(monkeypatch, tmp_path):
         "analyzer",
         "writer",
         "critic",
+        "conductor",
+        "experimenter",
+        "reviewer",
     }
     # setting_sources 仍为 ["user"]——DP1 的前提，不该被 fallback 改掉
     assert getattr(opts, "setting_sources", None) == ["user"]
