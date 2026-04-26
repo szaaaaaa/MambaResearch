@@ -111,7 +111,6 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
     这是 programmatic config——没有"配置文件路径"概念，``config_paths`` 标
     ``<programmatic>``。延迟 import 避免本模块被启动期 IO 拖慢。
     """
-    from src.mcp_bridge import default_mcp_config as bridge_default_mcp_config
     from src.server.integrations.colab.mcp_server import (
         default_mcp_config as colab_default_mcp_config,
     )
@@ -127,7 +126,6 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
 
     items: list[McpServerInfo] = []
     for func in (
-        bridge_default_mcp_config,
         workspace_default_mcp_config,
         zotero_default_mcp_config,
         colab_default_mcp_config,

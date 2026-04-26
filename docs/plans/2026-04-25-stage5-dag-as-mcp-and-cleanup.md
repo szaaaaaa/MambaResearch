@@ -197,7 +197,7 @@
   - HistoryTab 渲染 conversations + experiment_runs 两类（即使其中一类为空也不崩）
   - 不再引用任何 runs / dag_runs API
 
-### [TODO] 8. 删 src/dynamic_os/ + 60 个测试
+### [DONE] 8. 删 src/dynamic_os/ + 60 个测试
 
 - **What**: 大动作但纯删。先 grep 所有 dynamic_os import 链，确认本 stage 之前所有 task 都没遗留依赖。
 - **预期 import 链断点**:

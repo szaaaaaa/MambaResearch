@@ -32,64 +32,44 @@ If you find yourself about to write code without having invoked the applicable o
 
 按风险等级执行对应规则。
 
-## 🔴 禁区 — 改之前必须告知用户并获得同意
-
-被大量文件依赖，改动会级联故障。
-
-- `src/dynamic_os/contracts/` 下所有文件（route_plan.py, artifact.py, skill_io.py, observation.py, events.py, policy.py, skill_spec.py, role_spec.py）
-- `src/dynamic_os/artifact_refs.py`
-
-规则：先说明改什么和为什么 → 列受影响文件 → 等用户确认 → 改完必跑 `pytest tests/`
-
 ## 🟠 高风险 — 改完必须跑测试
 
-核心流程文件，改动可能影响上下游。
-
-- `src/dynamic_os/runtime.py`
-- `src/dynamic_os/executor/`
-- `src/dynamic_os/planner/`
-- `src/dynamic_os/policy/engine.py`
-- `src/dynamic_os/tools/gateway/`
-- `src/dynamic_os/tools/registry.py`
-- `src/dynamic_os/roles/registry.py`
-
-Stage 1+ 引入的新核心模块（被 routes / MCP / tests 共享）：
+被 routes / MCP / tests 共享的核心模块，改动可能影响上下游。
 
 - `src/server/projects/registry.py` — active project 单例 + 进程级 env 管理；改动会影响所有 session 创建路径与 MCP 子进程启动
 - `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
 - `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
+- `src/server/claude_code/session_manager.py` — Claude Code SDK 会话编排；改完跑 `pytest tests/test_claude_code_session*`
+- `src/server/codex/session_manager.py` — Codex app-server 会话编排；同上对应测试
 
 规则：改完运行 `pytest tests/`；失败必须修复。
 
 ## 🟢 安全区 — 可直接修改
 
-- `src/dynamic_os/skills/builtins/` 下单个技能
-- `src/dynamic_os/storage/` 存储实现
 - `frontend/src/` 前端代码
 - `configs/agent.yaml` 配置调整
 - `scripts/`、`docs/`
+- `.claude/agents/*.md`、`.claude/skills/*/SKILL.md`（pipeline / sub-agent 蒸馏文档）
 
 # 架构约定 — 新功能加在哪
 
 | 类型 | 位置 | 注册方式 |
 |------|------|----------|
-| 新技能 | `src/dynamic_os/skills/builtins/<name>/`（skill.yaml + skill.md + run.py） | 自动发现 |
+| 新 pipeline | `.claude/skills/<pipeline-name>/SKILL.md` | Claude/Codex 主 agent 自动发现 |
+| 新 sub-agent | `.claude/agents/<role>.md`（frontmatter + 系统提示） | `scripts/sync_subagents.py` 同步 .codex/agents/*.toml |
 | 新 API | `src/server/routes/` 新文件 | `app.py` 里 `include_router()` |
 | 新前端组件 | `frontend/src/components/*.tsx` | 父组件引用 |
-| 新角色 | `roles/roles.yaml` + `contracts/route_plan.py` RoleId 枚举 | 第2步属🔴，必须先确认 |
-| 新工具 | MCP 配置声明，工具 ID `mcp.{server_id}.{tool_name}` | 自动发现 |
-
-技能 run.py 签名：`async def run(ctx: SkillContext) -> SkillOutput`
+| 新 MCP server | `src/server/integrations/<name>/mcp_server.py` 写 `default_mcp_config()` | `src/server/mcp/registry.py:_read_builtin_helpers` 注册 |
 
 # 测试原则
 
 **核心：只测"坏了看不见但后果严重"的东西。** 冗余测试用假数据制造"全绿"假象，反而掩盖问题。
 
-必须测：数据模型拒绝无效输入；权限/安全边界；存储读写一致性；核心执行流跑通+失败恢复；HITL 暂停/恢复。
+必须测：数据模型拒绝无效输入；权限/安全边界；存储读写一致性；核心执行流跑通+失败恢复。
 
 不要测：第三方 API 对接细节；LLM 输出纠错每种场景；显示层小逻辑；一次性验证。
 
-编写规则：测真实行为不测 mock 配合；同一逻辑 1-2 个测试即可；新功能非强制带测；改 🔴🟠 必须保证现有测试通过；前端不写测试，`tsc --noEmit` + 构建通过即可。
+编写规则：测真实行为不测 mock 配合；同一逻辑 1-2 个测试即可；新功能非强制带测；改 🟠 区必须保证现有测试通过；前端不写测试，`tsc --noEmit` + 构建通过即可。
 
 # 代码风格
 

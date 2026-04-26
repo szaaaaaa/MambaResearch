@@ -926,7 +926,6 @@ interface AppContextType {
   saveProjectConfig: () => Promise<void>;
   refreshCodexStatus: () => Promise<AppState['codexStatus']>;
   refreshCodexCatalog: () => Promise<AppState['codexCatalog']>;
-  verifyCodexModel: (model: string) => Promise<string>;
   startCodexLogin: () => Promise<string>;
   completeCodexLogin: (callbackInput: string) => Promise<string>;
   logoutCodex: () => Promise<string>;
@@ -1228,41 +1227,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.error('Failed to save config', err);
     }
-  };
-
-  const verifyCodexModel = async (model: string) => {
-    const status = await refreshCodexStatus();
-    const catalog = await refreshCodexCatalog();
-    const resolvedModel =
-      String(model || '').trim() ||
-      getFirstModelForProvider('openai_codex', { ...catalogsRef.current, codexCatalog: catalog });
-
-    if (!status.logged_in) {
-      return `状态已刷新，但当前 profile ${status.active_profile || status.default_profile} 尚未登录 ChatGPT OAuth，暂时无法验证。`;
-    }
-    if (!catalog.modelCount) {
-      if (catalog.error) {
-        return `状态已刷新，但模型目录加载失败：${catalog.error}`;
-      }
-      return '状态已刷新，但当前未发现可用的 OpenAI OAuth 模型。';
-    }
-    if (!resolvedModel) {
-      return '状态已刷新，但还没有可验证的 OpenAI OAuth 模型。';
-    }
-
-    const response = await fetch(`${API_BASE}/api/codex/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: resolvedModel }),
-    });
-    if (response.status === 405) {
-      throw new Error('当前后端进程未加载 /api/codex/verify，请完全重启 python app.py 后再试。');
-    }
-    if (!response.ok) {
-      throw new Error(await readErrorDetail(response));
-    }
-    const data = await response.json();
-    return String((isRecord(data) ? data.message : '') || 'OpenAI OAuth 实调用验证通过。');
   };
 
   const startCodexLogin = async () => {
@@ -2314,7 +2278,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveProjectConfig,
         refreshCodexStatus,
         refreshCodexCatalog,
-        verifyCodexModel,
         startCodexLogin,
         completeCodexLogin,
         logoutCodex,

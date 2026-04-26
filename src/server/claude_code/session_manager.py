@@ -28,8 +28,6 @@ from claude_agent_sdk import (
     PermissionResultDeny,
 )
 
-from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
-from src.mcp_bridge import default_mcp_config
 from src.server.integrations.colab.mcp_server import (
     default_mcp_config as default_colab_mcp_config,
 )
@@ -48,9 +46,7 @@ from src.server.claude_code.providers import (
     build_env_for_provider,
     get_provider_registry,
 )
-from src.server.claude_code.results_hook import finalize_workbench_session
 from src.server.claude_code.storage import ClaudeCodeStore
-from src.server.settings import CONFIG_PATH, ROOT
 
 # 仓库根——用于给 MCP bridge 子进程传 --root / cwd
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -542,8 +538,6 @@ class SessionManager:
             # 已崩溃/已断开的会话 disconnect 可能再次抛错——注册表必须清理成功，
             # 不 raise 让路由能返回成功，但留日志便于事后排查
             logger.exception("disconnect failed for session %s", session.id)
-        # Task 12: Workbench 绑定会话收尾时读 results.json，回挂 ExperimentResults
-        _run_workbench_finalize_hook(session)
         return True
 
     async def interrupt(self, session_id: str) -> bool:
@@ -701,8 +695,6 @@ class SessionManager:
                 await session.client.disconnect()
             except Exception:
                 logger.exception("disconnect failed during idle eviction for %s", session.id)
-            # Task 12: Workbench 绑定会话收尾时读 results.json，回挂 ExperimentResults
-            _run_workbench_finalize_hook(session)
 
     async def shutdown(self) -> None:
         """进程关停时取消 sweeper 并统一断开所有会话。"""
@@ -793,18 +785,18 @@ async def _build_client(
         provider_env = build_env_for_provider(provider_config)
         # Stage 1 — env override 替换式语义会丢掉 MAMBA_ACTIVE_PROJECT_PATH（MCP
         # 子进程依赖此 env 定位 active project）。这里显式 propagate；其他对
-        # MCP 必要的 env（PYTHONPATH 等已在 default_mcp_config 注入子进程层面）。
+        # MCP 必要的 env（PYTHONPATH 等已在各 mcp_server 模块的 default_mcp_config
+        # 注入子进程层面）。
         mamba_active = os.environ.get("MAMBA_ACTIVE_PROJECT_PATH")
         if mamba_active:
             provider_env.setdefault("MAMBA_ACTIVE_PROJECT_PATH", mamba_active)
         options_kwargs["env"] = provider_env
-    # 默认挂载 ResearchAgent 内置 MCP servers：
-    #   - research_agent: dynamic_os 21 个 skill 的桥（mcp_bridge）
-    #   - mamba_workspace: 文件分类索引 server（Stage 2）
+    # 默认挂载 MambaResearch 内置 MCP servers：
+    #   - mamba_workspace: 文件分类索引 server
+    #   - zotero / colab / experiment: Stage 4 三个外部集成
     # overrides 里的 mcp_servers 与之合并，同名键由 overrides 胜出，便于测试
     # 关闭 / 替换某一个 server。
     bridge_config: dict[str, Any] = {}
-    bridge_config.update(default_mcp_config(_REPO_ROOT))
     bridge_config.update(default_workspace_mcp_config(_REPO_ROOT))
     bridge_config.update(default_zotero_mcp_config(_REPO_ROOT))
     bridge_config.update(default_colab_mcp_config(_REPO_ROOT))
@@ -875,48 +867,6 @@ def _cancel_pending_permissions(session: ClaudeSession) -> None:
     for fut in pending:
         if not fut.done():
             fut.set_result({"decision": "deny", "message": "session closed"})
-
-
-def _run_workbench_finalize_hook(session: ClaudeSession) -> None:
-    """Task 12 会话收尾钩子——仅对绑定了 Workbench 元数据的会话执行。
-
-    非 Workbench 会话（``original_run_id is None``）直接跳过；任何异常只记录日志，
-    不冒泡——session delete / idle evict 路径必须保证干净退出。
-
-    outputs_dir 的解析：从 ``configs/agent.yaml`` 的 ``paths.outputs_dir`` 字段读，
-    未配置或读失败时回落到 ``<ROOT>/outputs``，绝不因 config 异常把整条 finalize
-    路径吞掉（否则所有实验的 results.json 都会永久丢失）。解析内联在这里而不是复用
-    ``routes.runs._get_outputs_dir``——避免 session_manager ↔ routes.runs 循环依赖。
-    """
-    if session.original_run_id is None:
-        return
-    default_outputs = (Path(ROOT) / "outputs").resolve()
-    try:
-        config = load_yaml(CONFIG_PATH) if CONFIG_PATH.exists() else {}
-        raw = get_by_dotted(config if isinstance(config, dict) else {}, "paths.outputs_dir")
-        if raw:
-            outputs_dir = resolve_path(ROOT, str(raw), config if isinstance(config, dict) else {})
-        else:
-            outputs_dir = default_outputs
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "workbench finalize hook: outputs_dir resolution failed for %s; "
-            "falling back to %s",
-            session.id,
-            default_outputs,
-        )
-        outputs_dir = default_outputs
-    try:
-        finalize_workbench_session(
-            session_id=session.id,
-            workspace_path=session.cwd,
-            original_run_id=session.original_run_id,
-            bound_artifact_id=session.bound_artifact_id,
-            plan_goal=session.plan_goal or "",
-            outputs_dir=outputs_dir,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("workbench finalize hook failed for session %s", session.id)
 
 
 _DEFAULT_DB_PATH = Path(".tmp") / "claude_code" / "sessions.db"

@@ -20,7 +20,7 @@ def fake_repo(tmp_path: Path) -> Path:
     """构造一个伪 repo：含 .codex/config.toml + 可选 .mcp.json。
 
     builtin helpers 仍读真 _REPO_ROOT，所以测试环境会拿到真 helpers 输出
-    （research_agent + mamba_workspace）。这刚好验证 helpers 与 toml 共存的去重。
+    （4 个 mamba_* server）。这刚好验证 helpers 与 toml 共存的去重。
     """
     (tmp_path / ".codex").mkdir()
     return tmp_path
@@ -30,7 +30,6 @@ def test_list_servers_includes_builtin_helpers(fake_repo: Path, tmp_path: Path):
     """无任何 toml/json，registry 应至少返回 builtin helpers 注册的 servers。"""
     servers = registry.list_servers(repo_root=fake_repo, codex_home=tmp_path / "codex_home")
     names = {s.name for s in servers}
-    assert "research_agent" in names
     assert "mamba_workspace" in names
     assert "mamba_zotero" in names
     assert "mamba_colab" in names
@@ -45,10 +44,6 @@ def test_codex_project_toml_merges_into_existing(fake_repo: Path, tmp_path: Path
     _write(
         fake_repo / ".codex" / "config.toml",
         """
-[mcp_servers.research_agent]
-command = "python"
-args = ["-m", "src.mcp_bridge.server"]
-
 [mcp_servers.mamba_workspace]
 command = "python"
 args = ["-m", "src.server.workspace.mcp_server"]
@@ -56,10 +51,10 @@ args = ["-m", "src.server.workspace.mcp_server"]
     )
     servers = registry.list_servers(repo_root=fake_repo, codex_home=tmp_path / "codex_home")
     by_name = {s.name: s for s in servers}
-    assert "builtin_helper" in by_name["research_agent"].sources
-    assert "codex_project" in by_name["research_agent"].sources
+    assert "builtin_helper" in by_name["mamba_workspace"].sources
+    assert "codex_project" in by_name["mamba_workspace"].sources
     # config_paths 也累加
-    assert any(".codex" in p for p in by_name["research_agent"].config_paths)
+    assert any(".codex" in p for p in by_name["mamba_workspace"].config_paths)
 
 
 def test_unknown_server_in_toml_added(fake_repo: Path, tmp_path: Path):
@@ -113,7 +108,7 @@ def test_corrupt_toml_silently_skipped(fake_repo: Path, tmp_path: Path):
     """坏 toml 不应让整个 registry 崩溃——builtin helpers 仍可用。"""
     _write(fake_repo / ".codex" / "config.toml", "this is not [valid toml")
     servers = registry.list_servers(repo_root=fake_repo, codex_home=tmp_path / "codex_home")
-    assert any(s.name == "research_agent" for s in servers)
+    assert any(s.name == "mamba_workspace" for s in servers)
 
 
 def test_get_server_returns_none_for_missing(fake_repo: Path, tmp_path: Path):

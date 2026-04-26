@@ -13,7 +13,6 @@ from src.common.openai_codex import (
     openai_codex_login_status,
     start_openai_codex_login,
 )
-from src.dynamic_os.tools.backends import ConfiguredLLMClient
 from src.server.settings import APP_RUNTIME_MODE, CONFIG_PATH, CREDENTIAL_KEYS, ENV_PATH
 
 
@@ -219,39 +218,6 @@ async def complete_codex_login(request: Request):
     return {
         "message": "OpenAI Codex OAuth login has been completed.",
         "status": status,
-    }
-
-
-@router.post("/api/codex/verify")
-async def verify_codex_runtime(request: Request):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="verification payload must be an object")
-    model = str(payload.get("model") or "").strip()
-    if not model:
-        raise HTTPException(status_code=400, detail="model is required")
-
-    client = ConfiguredLLMClient(
-        saved_env=_read_env_file(),
-        workspace_root=CONFIG_PATH.parent.parent,
-        config=_read_config_file(),
-    )
-    try:
-        result = client.complete(
-            provider="openai_codex",
-            model=model,
-            messages=[{"role": "user", "content": "Reply with exactly OK"}],
-            temperature=0.0,
-            max_tokens=16,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"codex verification failed: {exc}") from exc
-
-    return {
-        "message": "OpenAI Codex OAuth verification succeeded.",
-        "model": model,
-        "response_text": result.text,
-        "usage": result.usage,
     }
 
 

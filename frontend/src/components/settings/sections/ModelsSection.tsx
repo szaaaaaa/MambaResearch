@@ -30,7 +30,6 @@ export const ModelsSection: React.FC = () => {
     saveProjectConfig,
     refreshCodexStatus,
     refreshCodexCatalog,
-    verifyCodexModel,
     startCodexLogin,
     completeCodexLogin,
     logoutCodex,
@@ -342,37 +341,36 @@ export const ModelsSection: React.FC = () => {
                           try {
                             await refreshCodexStatus();
                             const nextCodexCatalog = await refreshCodexCatalog();
-                            const verifiedModel =
+                            const refreshedModel =
                               modelOptions.some((option) => option.value === roleConfig.model) && roleConfig.model
                                 ? roleConfig.model
                                 : getFirstModelForProvider('openai_codex', {
                                     ...catalogs,
                                     codexCatalog: nextCodexCatalog,
                                   });
-                            if (!verifiedModel) {
+                            if (!refreshedModel) {
                               setCodexActionMessage(
                                 nextCodexCatalog.error
                                   ? `加载 OpenAI OAuth 模型失败：${nextCodexCatalog.error}`
-                                  : '当前没有可验证的 OpenAI OAuth 模型，请先完成登录并刷新。',
+                                  : '当前没有可用的 OpenAI OAuth 模型，请先完成登录并刷新。',
                               );
                               return;
                             }
-                            if (verifiedModel !== roleConfig.model) {
-                              target.update({ model: verifiedModel });
+                            if (refreshedModel !== roleConfig.model) {
+                              target.update({ model: refreshedModel });
                             }
-                            const message = await verifyCodexModel(verifiedModel);
-                            setCodexActionMessage(message);
+                            setCodexActionMessage(`已刷新 Codex 状态与模型目录（当前模型：${refreshedModel}）。`);
                           } catch (error) {
                             try {
                               await refreshCodexStatus();
                             } catch {}
-                            setCodexActionMessage(`刷新或验证失败：${String(error)}`);
+                            setCodexActionMessage(`刷新失败：${String(error)}`);
                           } finally {
                             setIsCodexActionPending(false);
                           }
                         }}
                       >
-                        刷新并验证
+                        刷新
                       </Button>
                       <Button
                         size="sm"

@@ -20,38 +20,6 @@ providers:
     backend: default_retriever
 mcp:
   servers:
-  - server_id: llm
-    command:
-    - ${python}
-    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
-    - --root
-    - ${workspace_root}
-    - --server-id
-    - llm
-  - server_id: search
-    command:
-    - ${python}
-    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
-    - --root
-    - ${workspace_root}
-    - --server-id
-    - search
-  - server_id: retrieval
-    command:
-    - ${python}
-    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
-    - --root
-    - ${workspace_root}
-    - --server-id
-    - retrieval
-  - server_id: exec
-    command:
-    - ${python}
-    - ${workspace_root}/scripts/dynamic_os_mcp_server.py
-    - --root
-    - ${workspace_root}
-    - --server-id
-    - exec
   - server_id: paper_search
     command:
     - ${python}
@@ -205,9 +173,6 @@ agent:
     - memory
     - theorem
     - proof
-  memory:
-    max_findings_for_context: 20
-    max_context_chars: 10000
   evidence:
     min_per_rq: 2
     allow_graceful_degrade: true
@@ -308,11 +273,3 @@ paths:
 metadata_store:
   backend: sqlite
   sqlite_path: ${project.data_dir}/metadata.db
-budget_guard:
-  max_tokens: 1000000
-  max_api_calls: 1000
-  max_wall_time_sec: 3600
-knowledge_graph:
-  persistence_mode: sqlite
-  sqlite_path: ''
-  cross_run_mode: manual

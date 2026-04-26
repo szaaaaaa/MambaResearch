@@ -1,33 +1,24 @@
 import React from 'react';
 import { ModalShell } from './ModalShell';
 import { API_BASE } from '../../../store';
-import type { SkillInfo } from '../../../types';
 
 interface AgentsPanelProps {
   onClose: () => void;
 }
 
-const SOURCE_LABEL: Record<SkillInfo['source'], string> = {
-  builtin: '内建',
-  user: '用户',
-  evolved: '进化',
-};
-
-const SOURCE_CLASS: Record<SkillInfo['source'], string> = {
-  builtin: 'bg-slate-100 text-slate-600',
-  user: 'bg-sky-50 text-sky-700',
-  evolved: 'bg-violet-50 text-violet-700',
-};
+interface SkillSummary {
+  name: string;
+  path: string;
+  summary: string;
+}
 
 /**
- * /agents 面板：拉取 ``GET /api/skills`` 并按来源分组展示。
- *
- * Workbench 语义上 Claude Code 的 "agents" 对应本项目里的 skill 概念——
- * 都是可被 planner 选择去执行一段具体工作的单元。因此直接复用已有的技能列表，
- * 不再引入第二套注册表。
+ * /agents 面板（v3）：拉取 ``GET /api/skills`` 列出 ``.claude/skills/`` 下
+ * 的 pipeline SKILL.md。dynamic_os 删除后，没有"自建 skill 注册表"，可见的
+ * 研究流程入口就是这些 markdown 文件——主 agent 读到关键词时会触发对应 SKILL。
  */
 export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onClose }) => {
-  const [skills, setSkills] = React.useState<SkillInfo[] | null>(null);
+  const [skills, setSkills] = React.useState<SkillSummary[] | null>(null);
   const [error, setError] = React.useState<string>('');
 
   React.useEffect(() => {
@@ -36,7 +27,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onClose }) => {
       try {
         const res = await fetch(`${API_BASE}/api/skills`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { skills: SkillInfo[] };
+        const data = (await res.json()) as { skills: SkillSummary[] };
         if (!cancelled) setSkills(data.skills);
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -48,41 +39,26 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onClose }) => {
   }, []);
 
   return (
-    <ModalShell title="已注册 Skill" subtitle="/agents" widthClass="max-w-2xl" onClose={onClose}>
+    <ModalShell title="Pipeline SKILL.md" subtitle="/agents" widthClass="max-w-2xl" onClose={onClose}>
       {error ? (
         <div className="rounded-lg bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700">加载失败：{error}</div>
       ) : skills === null ? (
         <div className="text-[13px] text-slate-500">加载中…</div>
       ) : skills.length === 0 ? (
-        <div className="text-[13px] text-slate-500">尚未发现任何 skill。</div>
+        <div className="text-[13px] text-slate-500">未发现 .claude/skills/ 下的 SKILL.md。</div>
       ) : (
         <ul className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto">
           {skills.map((skill) => (
-            <li key={skill.id} className="flex items-start gap-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[12.5px] font-semibold text-slate-900">{skill.id}</span>
-                  <span className="text-[11px] text-slate-400">v{skill.version}</span>
-                </div>
-                <div className="mt-0.5 truncate text-[12px] text-slate-600">{skill.description}</div>
-                {skill.applicable_roles.length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {skill.applicable_roles.map((role) => (
-                      <span
-                        key={role}
-                        className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600"
-                      >
-                        {role}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
+            <li key={skill.name} className="flex flex-col gap-1 py-2.5">
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-[12.5px] font-semibold text-slate-900">{skill.name}</span>
+                <span className="font-mono text-[10.5px] text-slate-400">{skill.path}</span>
               </div>
-              <span
-                className={`shrink-0 rounded px-1.5 py-0.5 text-[10.5px] ${SOURCE_CLASS[skill.source]}`}
-              >
-                {SOURCE_LABEL[skill.source]}
-              </span>
+              {skill.summary ? (
+                <div className="text-[12px] leading-5 text-slate-600">{skill.summary}</div>
+              ) : (
+                <div className="text-[12px] italic text-slate-400">无摘要</div>
+              )}
             </li>
           ))}
         </ul>
