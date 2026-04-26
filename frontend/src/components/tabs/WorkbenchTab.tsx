@@ -710,6 +710,10 @@ export const WorkbenchTab: React.FC = () => {
   // 在后端 lazily 创建并写第一段 segment）。无切换时为 null，对话照常进行。
   const conversationIdRef = React.useRef<string | null>(null);
 
+  // 切换中状态——continues handoff 通常 1-2s，UI 需要 loading 反馈而不是
+  // 看起来"按钮没反应"。这条独立于 isRunning，因为切换流程内不算"在跑对话"。
+  const [isSwitching, setIsSwitching] = React.useState(false);
+
   /**
    * 切换后端 — Stage 3 Task 7 接通跨 CLI 桥。
    *
@@ -719,17 +723,22 @@ export const WorkbenchTab: React.FC = () => {
    *        作为第一段 segment 入库
    *    1b. POST /api/conversations/{id}/switch 关旧段 + 拿 first_prompt
    *    1c. handleCreateSession(target) 起新 SDK session
-   *    1d. POST /api/conversations/{id}/segments 写新段（cli_session_id=新 session id）
+   *    1d. POST /api/conversations/{id}/segments 写新段（fire-and-forget）
    *    1e. push 一条 segment_boundary 到 timeline，sendToBackend(first_prompt)
    * 2. 否则走原直接路径——首次"创会话"不需要桥
+   *
+   * 兜底：try/finally 保证 isSwitching 一定 reset，避免按钮永久锁。
    */
   const handleBackendSwitch = (target: 'claude' | 'codex') => {
     if (currentBackend === target) return;
-    if (isRunning) return;
+    if (isRunning || isSwitching) return;
 
     const hasActiveSession = sessionRef.current !== null;
     if (!hasActiveSession) {
-      void handleCreateSession(target === 'codex' ? 'codex' : null);
+      setIsSwitching(true);
+      void handleCreateSession(target === 'codex' ? 'codex' : null).finally(() => {
+        setIsSwitching(false);
+      });
       return;
     }
 
@@ -741,6 +750,7 @@ export const WorkbenchTab: React.FC = () => {
       return;
     }
 
+    setIsSwitching(true);
     void (async () => {
       const oldSession = sessionRef.current!;
       try {
@@ -764,8 +774,8 @@ export const WorkbenchTab: React.FC = () => {
           }
           const conv = await convResp.json();
           convId = conv.id as string;
-          // 写第一段 segment（即当前 session）
-          const segResp = await fetch(
+          // 写第一段 segment（fire-and-forget，UI 不等数据库 ack）
+          void fetch(
             `${API_BASE}/api/conversations/${convId}/segments`,
             {
               method: 'POST',
@@ -775,15 +785,11 @@ export const WorkbenchTab: React.FC = () => {
                 cli_session_id: oldSession.id,
               }),
             },
-          );
-          if (!segResp.ok) {
-            pushError(`写入第一段 segment 失败：${await segResp.text()}`);
-            return;
-          }
+          ).catch(() => {});
           conversationIdRef.current = convId;
         }
 
-        // 1b. 调 switch 端点
+        // 1b. 调 switch 端点（必须 await：要拿 first_prompt）
         const switchResp = await fetch(
           `${API_BASE}/api/conversations/${convId}/switch`,
           {
@@ -809,8 +815,8 @@ export const WorkbenchTab: React.FC = () => {
           return;
         }
 
-        // 1d. 写新段
-        await fetch(`${API_BASE}/api/conversations/${convId}/segments`, {
+        // 1d. 写新段（fire-and-forget——UI 已经切到新 session，不等 DB）
+        void fetch(`${API_BASE}/api/conversations/${convId}/segments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -830,6 +836,9 @@ export const WorkbenchTab: React.FC = () => {
         }
       } catch (err) {
         pushError(`backend 切换失败：${String(err)}`);
+      } finally {
+        // 兜底：无论成功 / 失败 / 抛错，按钮一定恢复可点
+        setIsSwitching(false);
       }
     })();
   };
@@ -881,8 +890,8 @@ export const WorkbenchTab: React.FC = () => {
                 type="button"
                 className={`rb-backend-tab ${currentBackend === 'claude' ? 'on' : ''}`}
                 onClick={() => handleBackendSwitch('claude')}
-                disabled={isRunning}
-                title="切换到 Claude Code CLI（新建会话）"
+                disabled={isRunning || isSwitching}
+                title={isSwitching ? '正在切换…' : '切换到 Claude Code CLI（新建会话）'}
               >
                 <Terminal size={12} />
                 <span>claude code cli</span>
@@ -892,14 +901,19 @@ export const WorkbenchTab: React.FC = () => {
                 type="button"
                 className={`rb-backend-tab ${currentBackend === 'codex' ? 'on' : ''}`}
                 onClick={() => handleBackendSwitch('codex')}
-                disabled={isRunning}
-                title="切换到 Codex CLI（新建会话）"
+                disabled={isRunning || isSwitching}
+                title={isSwitching ? '正在切换…' : '切换到 Codex CLI（新建会话）'}
               >
                 <Terminal size={12} />
                 <span>codex cli</span>
                 {currentBackend === 'codex' && session ? <em>●</em> : null}
               </button>
             </div>
+            {isSwitching ? (
+              <span className="rb-backend-status" style={{ marginLeft: 8, fontSize: 11, color: 'var(--muted-fg)' }}>
+                切换中…（continues handoff）
+              </span>
+            ) : null}
           </div>
           {session && !isRunning ? (
             <button
