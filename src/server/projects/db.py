@@ -87,6 +87,30 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_mcp_calls_session
         ON mcp_calls(cli_session_id, started_at DESC);
     """,
+    # v3: experiment_runs — Stage 4 Task 3，本地实验子进程的薄登记表
+    """
+    CREATE TABLE IF NOT EXISTS experiment_runs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT,                 -- 可空：sandbox 直调 / 未关联 project
+        conversation_id TEXT,
+        segment_id TEXT,
+        cli_session_id TEXT,
+        script_path TEXT NOT NULL,
+        args_json TEXT NOT NULL,         -- JSON 字符串，list[str]
+        env_json TEXT,                   -- JSON 字符串，dict[str,str]，敏感字段写前已 redact
+        cwd TEXT,                        -- 子进程 cwd；默认 script 所在目录
+        status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'done', 'error', 'cancelled')),
+        pid INTEGER,
+        exit_code INTEGER,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_exp_runs_proj
+        ON experiment_runs(project_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_exp_runs_session
+        ON experiment_runs(cli_session_id, started_at DESC);
+    """,
 ]
 
 

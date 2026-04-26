@@ -34,6 +34,7 @@ def test_list_servers_includes_builtin_helpers(fake_repo: Path, tmp_path: Path):
     assert "mamba_workspace" in names
     assert "mamba_zotero" in names
     assert "mamba_colab" in names
+    assert "mamba_experiment" in names
     # builtin helper 来源标签
     for s in servers:
         assert "builtin_helper" in s.sources

@@ -53,3 +53,14 @@ args = [
   "-m",
   "src.server.integrations.colab.mcp_server",
 ]
+
+# Stage 4 Task 3 — 本地实验执行 server。
+# 暴露 run_local / status / logs / metrics / cancel 五个工具；
+# 子进程独立 process group + redact 敏感 env；薄登记到 mamba.db
+# experiment_runs 表（schema v3）。
+[mcp_servers.mamba_experiment]
+command = "python"
+args = [
+  "-m",
+  "src.server.integrations.experiment.mcp_server",
+]

@@ -115,6 +115,9 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
     from src.server.integrations.colab.mcp_server import (
         default_mcp_config as colab_default_mcp_config,
     )
+    from src.server.integrations.experiment.mcp_server import (
+        default_mcp_config as experiment_default_mcp_config,
+    )
     from src.server.integrations.zotero.mcp_server import (
         default_mcp_config as zotero_default_mcp_config,
     )
@@ -128,6 +131,7 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
         workspace_default_mcp_config,
         zotero_default_mcp_config,
         colab_default_mcp_config,
+        experiment_default_mcp_config,
     ):
         config = func(_REPO_ROOT)
         for name, raw in config.items():
