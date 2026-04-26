@@ -239,10 +239,11 @@ def test_session_manager_shutdown_clears_all(fake_sdk, tmp_path):
 
 def test_create_session_requires_cwd_under_root(fake_sdk, tmp_path):
     client = TestClient(app_module.app)
-    # tmp_path 在项目根之外 → 400
+    # tmp_path 在 active project（默认 = 项目根）之外 → 400
     resp = client.post("/api/claude-code/sessions", json={"cwd": str(tmp_path)})
     assert resp.status_code == 400
-    assert "within project root" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "within active project" in detail or "within project root" in detail
 
 
 def test_create_session_default_cwd_is_project_root(fake_sdk):

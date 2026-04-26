@@ -207,7 +207,8 @@ def test_command_add_dir_rejects_path_outside_root(fake_sdk, tmp_path):
             json={"command": "add-dir", "args": {"path": str(tmp_path)}},
         )
         assert resp.status_code == 400
-        assert "project root" in resp.json()["detail"]
+        detail = resp.json()["detail"]
+        assert "project root" in detail or "active project" in detail
     finally:
         client.delete(f"/api/claude-code/sessions/{sid}")
 
