@@ -111,6 +111,33 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_exp_runs_session
         ON experiment_runs(cli_session_id, started_at DESC);
     """,
+    # v4: messages — Hybrid Master Transcript Task 1
+    # MambaResearch 拥有的 canonical conversation message 真相源。Backend 的
+    # ~/.claude/projects/*.jsonl 仍生成（SDK 副作用）但不再是真相源。切换 backend
+    # 时从此表序列化出 prior history 作为新 session 首条消息。
+    """
+    CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,                 -- uuid4
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL
+            CHECK (role IN ('user', 'assistant', 'system')),
+        text TEXT NOT NULL,                  -- 主内容（assistant 可能含 markdown）
+        served_by TEXT NOT NULL
+            CHECK (served_by IN (
+                'claude',                    -- assistant 由 Claude backend 产出
+                'codex',                     -- assistant 由 Codex backend 产出
+                'user',                      -- 用户输入
+                'system',                    -- segment_boundary 等系统标记
+                'mambaresearch_compact'      -- v3.2 auto-compact 产物（rolling summary）
+            )),
+        tool_use_summary TEXT,               -- 跨 backend 时文本化的 tool 摘要；同 backend 内为 NULL
+        raw_payload TEXT,                    -- 原始 SSE payload JSON（debug + 升级路径）
+        compacted INTEGER NOT NULL DEFAULT 0,-- v3.2 auto-compact 用：0=全文, 1=已被 summary 替代
+        created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_conversation
+        ON messages(conversation_id, created_at);
+    """,
 ]
 
 
