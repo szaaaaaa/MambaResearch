@@ -29,6 +29,7 @@ class Conversation:
     id: str
     project_id: str
     title: str | None
+    backend: str  # 'claude' | 'codex'，v3.3 起绑死，永不切换
     created_at: int
     last_active_at: int
 
@@ -37,6 +38,7 @@ class Conversation:
             "id": self.id,
             "project_id": self.project_id,
             "title": self.title,
+            "backend": self.backend,
             "created_at": self.created_at,
             "last_active_at": self.last_active_at,
         }
@@ -70,20 +72,32 @@ def _db() -> MambaDb:
     return get_db()
 
 
-def create_conversation(*, project_id: str, title: str | None = None) -> Conversation:
+def create_conversation(
+    *, project_id: str, title: str | None = None, backend: str = "claude"
+) -> Conversation:
+    if backend not in ("claude", "codex"):
+        raise ValueError(f"backend must be 'claude' or 'codex', got {backend!r}")
     now = int(time.time())
     conv = Conversation(
         id=uuid.uuid4().hex,
         project_id=project_id,
         title=title,
+        backend=backend,
         created_at=now,
         last_active_at=now,
     )
     with _db().cursor() as cur:
         cur.execute(
-            "INSERT INTO conversations (id, project_id, title, created_at, last_active_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (conv.id, conv.project_id, conv.title, conv.created_at, conv.last_active_at),
+            "INSERT INTO conversations (id, project_id, title, backend, created_at, last_active_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                conv.id,
+                conv.project_id,
+                conv.title,
+                conv.backend,
+                conv.created_at,
+                conv.last_active_at,
+            ),
         )
     return conv
 
@@ -91,7 +105,7 @@ def create_conversation(*, project_id: str, title: str | None = None) -> Convers
 def list_by_project(project_id: str) -> list[Conversation]:
     with _db().cursor() as cur:
         cur.execute(
-            "SELECT id, project_id, title, created_at, last_active_at "
+            "SELECT id, project_id, title, backend, created_at, last_active_at "
             "FROM conversations WHERE project_id = ? "
             "ORDER BY last_active_at DESC",
             (project_id,),
@@ -102,6 +116,7 @@ def list_by_project(project_id: str) -> list[Conversation]:
             id=row["id"],
             project_id=row["project_id"],
             title=row["title"],
+            backend=row["backend"],
             created_at=row["created_at"],
             last_active_at=row["last_active_at"],
         )
@@ -112,7 +127,7 @@ def list_by_project(project_id: str) -> list[Conversation]:
 def get_conversation(conversation_id: str) -> Conversation | None:
     with _db().cursor() as cur:
         cur.execute(
-            "SELECT id, project_id, title, created_at, last_active_at "
+            "SELECT id, project_id, title, backend, created_at, last_active_at "
             "FROM conversations WHERE id = ?",
             (conversation_id,),
         )
@@ -123,6 +138,7 @@ def get_conversation(conversation_id: str) -> Conversation | None:
         id=row["id"],
         project_id=row["project_id"],
         title=row["title"],
+        backend=row["backend"],
         created_at=row["created_at"],
         last_active_at=row["last_active_at"],
     )

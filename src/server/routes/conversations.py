@@ -46,7 +46,17 @@ async def post_conversation(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="project_id is required")
     title_raw = payload.get("title")
     title = title_raw.strip() if isinstance(title_raw, str) and title_raw.strip() else None
-    conv = create_conversation(project_id=project_id_raw.strip(), title=title)
+    # v3.3 multi-conversation：每条 conversation 绑定一个 backend，永不切换。
+    # 入参可省（默认 'claude'），方便老客户端不报错；新前端会显式传。
+    backend_raw = payload.get("backend")
+    backend = backend_raw.strip() if isinstance(backend_raw, str) and backend_raw.strip() else "claude"
+    if backend not in ("claude", "codex"):
+        raise HTTPException(
+            status_code=400, detail=f"backend must be 'claude' or 'codex', got {backend!r}"
+        )
+    conv = create_conversation(
+        project_id=project_id_raw.strip(), title=title, backend=backend
+    )
     return conv.to_dict()
 
 
@@ -91,16 +101,14 @@ def list_conv_segments(conversation_id: str) -> dict:
 
 @router.get("/api/conversations/{conversation_id}/messages")
 def list_conv_messages(conversation_id: str) -> dict:
-    """Hybrid Master Transcript T3 — 暴露 messages 表给前端读。
+    """暴露 messages 表 mirror 给前端读（v3.3 multi-conversation）。
 
     用途：
-    - WorkbenchTab mount 时用此端点 hydrate 历史（刷新页面不丢对话）
-    - handleBackendSwitch 在切换前拉全量 messages 序列化为 prior history
-      作为新 backend session 首条消息
+    - WorkbenchTab mount 时 hydrate 历史（刷新页面不丢对话 UI）
+    - 跨 conversation 引用（mamba_history MCP tool 内部也走同样数据）
 
-    返回按 created_at 升序，包含已被 compact 标记的消息（前端按 compacted
-    字段决定是否在 UI 隐藏；prior history 序列化时按 compacted 字段决定
-    用原文还是相邻 compact_segment）。
+    返回按 created_at 升序；老对话残留的 ``compacted=1`` / ``mambaresearch_compact``
+    段照常返回，前端可按需展示。
     """
     if get_conversation(conversation_id) is None:
         raise HTTPException(status_code=404, detail="conversation not found")

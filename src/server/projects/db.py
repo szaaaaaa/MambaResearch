@@ -111,10 +111,9 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_exp_runs_session
         ON experiment_runs(cli_session_id, started_at DESC);
     """,
-    # v4: messages — Hybrid Master Transcript Task 1
-    # MambaResearch 拥有的 canonical conversation message 真相源。Backend 的
-    # ~/.claude/projects/*.jsonl 仍生成（SDK 副作用）但不再是真相源。切换 backend
-    # 时从此表序列化出 prior history 作为新 session 首条消息。
+    # v4: messages — 原 Hybrid Master Transcript 真相源；v3.3 起降级为 read-only
+    # mirror（真相源回到 backend 自己的 JSONL）。schema 不动，仅语义变更：
+    # ``mambaresearch_compact`` / ``compacted`` 字段保留兼容老对话，新对话不写。
     """
     CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,                 -- uuid4
@@ -128,15 +127,22 @@ MIGRATIONS: list[str] = [
                 'codex',                     -- assistant 由 Codex backend 产出
                 'user',                      -- 用户输入
                 'system',                    -- segment_boundary 等系统标记
-                'mambaresearch_compact'      -- v3.2 auto-compact 产物（rolling summary）
+                'mambaresearch_compact'      -- v3.2 auto-compact 遗留段（兼容老对话）
             )),
-        tool_use_summary TEXT,               -- 跨 backend 时文本化的 tool 摘要；同 backend 内为 NULL
-        raw_payload TEXT,                    -- 原始 SSE payload JSON（debug + 升级路径）
-        compacted INTEGER NOT NULL DEFAULT 0,-- v3.2 auto-compact 用：0=全文, 1=已被 summary 替代
+        tool_use_summary TEXT,               -- mamba_history MCP tool 用作可读上下文
+        raw_payload TEXT,                    -- 原始 SSE payload JSON（debug 用）
+        compacted INTEGER NOT NULL DEFAULT 0,-- v3.2 auto-compact 遗留字段（兼容老对话）
         created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversation_id, created_at);
+    """,
+    # v5: conversation 绑定 backend（v3.3 multi-conversation 模型）
+    # 每条 conversation 创建时确定 backend，永不切换。老对话默认 'claude'。
+    """
+    ALTER TABLE conversations
+        ADD COLUMN backend TEXT NOT NULL DEFAULT 'claude'
+        CHECK (backend IN ('claude', 'codex'));
     """,
 ]
 

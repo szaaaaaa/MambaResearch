@@ -738,7 +738,7 @@ export const WorkbenchTab: React.FC = () => {
         const convResp = await fetch(`${API_BASE}/api/conversations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project_id: proj.id }),
+          body: JSON.stringify({ project_id: proj.id, backend }),
         });
         if (!convResp.ok) {
           throw new Error(`create conversation: ${await convResp.text()}`);
