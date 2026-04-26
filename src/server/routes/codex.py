@@ -45,6 +45,8 @@ from src.server.codex.session_manager import (
     CodexAuthError,
     codex_session_manager,
 )
+from src.server.mcp.call_logger import McpCallContext, get_call_logger
+from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
 
 router = APIRouter()
@@ -55,20 +57,42 @@ def _sse_frame(event: str, payload: dict[str, Any]) -> str:
 
 
 def _resolve_cwd(cwd_raw: str | None) -> str:
-    """入参 cwd → 项目根下的绝对路径，越界拒绝。与 claude_code 共享策略。"""
-    cwd = (cwd_raw or "").strip() or str(ROOT)
-    if not os.path.isdir(cwd):
-        raise HTTPException(status_code=400, detail=f"cwd does not exist: {cwd}")
-    root_resolved = pathlib.Path(ROOT).resolve()
-    cwd_resolved = pathlib.Path(cwd).resolve()
+    """入参 cwd → active project 路径或其子目录；与 claude_code 共享策略。
+
+    无 active project 时 fallback 到 ROOT（保持旧测试不破）。普通会话路径在
+    ``create_session`` 入口显式拦截无 active project 的情况，给清晰 409。
+    """
+    active = get_registry().get_active()
+    base_path = pathlib.Path(active.path) if active is not None else pathlib.Path(ROOT)
+    base_resolved = base_path.resolve()
+    raw = (cwd_raw or "").strip() or str(base_resolved)
+    cwd_path = pathlib.Path(raw)
+    if not cwd_path.is_absolute():
+        cwd_path = base_resolved / cwd_path
+    if not cwd_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"cwd does not exist: {raw}")
+    cwd_resolved = cwd_path.resolve()
     try:
-        cwd_resolved.relative_to(root_resolved)
+        cwd_resolved.relative_to(base_resolved)
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"cwd must be within project root ({root_resolved}): {cwd}",
+            detail=(
+                f"cwd must be within active project ({base_resolved}): {raw}"
+                if active is not None
+                else f"cwd must be within project root ({base_resolved}): {raw}"
+            ),
         ) from exc
     return str(cwd_resolved)
+
+
+def _require_active_project_for_session() -> None:
+    """Codex 普通会话也必须先有 active project。"""
+    if get_registry().get_active() is None:
+        raise HTTPException(
+            status_code=409,
+            detail="no active project — create or activate one before opening a session",
+        )
 
 
 async def _parse_json_body(request: Request) -> dict[str, Any]:
@@ -101,6 +125,8 @@ async def create_session(request: Request):
     ``~/.codex/auth.json`` 不存在或空 → 401（非 500）让前端引导用户 `codex login`。
     """
     payload = await _parse_json_body(request)
+
+    _require_active_project_for_session()
 
     cwd_raw = payload.get("cwd")
     cwd = _resolve_cwd(cwd_raw if isinstance(cwd_raw, str) else None)
@@ -262,8 +288,18 @@ async def send_message(session_id: str, request: Request):
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+    mcp_ctx = McpCallContext(cli_session_id=session.id)
+    mcp_logger = get_call_logger()
+
     def _emit(event: str, data: dict[str, Any]) -> None:
         queue.put_nowait(_sse_frame(event, data))
+        # Stage 3 Task 2 — MCP 调用历史观测；codex_message 是 JSON-RPC notification，
+        # logger 内部按宽容策略扫整帧找 tool_use / tool_result。
+        if event == "codex_message":
+            try:
+                mcp_logger.observe_codex_event(data, mcp_ctx)
+            except Exception:
+                pass
 
     async def _run_turn() -> None:
         async with session.lock:

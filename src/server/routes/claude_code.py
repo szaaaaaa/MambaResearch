@@ -27,7 +27,9 @@ from fastapi.responses import StreamingResponse
 
 from src.server.claude_code import serialize_message
 from src.server.claude_code.providers import get_provider_registry
+from src.server.mcp.call_logger import McpCallContext, get_call_logger
 from src.server.claude_code.session_manager import VALID_PERMISSION_MODES, session_manager
+from src.server.projects.registry import get_registry
 from src.server.settings import ROOT
 
 router = APIRouter()
@@ -47,20 +49,51 @@ def _sse_frame(event: str, payload: dict[str, Any]) -> str:
 
 
 def _resolve_cwd(cwd_raw: str | None) -> str:
-    """将入参 cwd 解析到项目根下的绝对路径，防止本地 HTTP 被滥用于任意目录。"""
-    cwd = (cwd_raw or "").strip() or str(ROOT)
-    if not os.path.isdir(cwd):
-        raise HTTPException(status_code=400, detail=f"cwd does not exist: {cwd}")
-    root_resolved = pathlib.Path(ROOT).resolve()
-    cwd_resolved = pathlib.Path(cwd).resolve()
+    """解析 session cwd。
+
+    优先级：
+    1. 如果有 active project，cwd 默认 active project 路径；显式 cwd 必须等于
+       active project 路径或其子目录。
+    2. 无 active project：fallback 到旧行为——cwd 默认 ROOT，且必须在 ROOT 下。
+       前端 Home Picker 应保证正常路径下 active project 始终存在；此分支只是
+       兜底，避免 Stage 1 之前的旧测试 / 调试场景被破坏。
+
+    无 active project 且无显式 cwd 也允许（兜底走 ROOT）——409 由 ``create_session``
+    在确定要建普通会话时显式拦截，让错误信息更明确。
+    """
+    active = get_registry().get_active()
+    base_path = pathlib.Path(active.path) if active is not None else pathlib.Path(ROOT)
+    base_resolved = base_path.resolve()
+    raw = (cwd_raw or "").strip() or str(base_resolved)
+    # 相对路径相对于 active project 解析，而不是进程 CWD（更直觉、与 add-dir
+    # 等命令的"项目内子目录"语义一致）
+    cwd_path = pathlib.Path(raw)
+    if not cwd_path.is_absolute():
+        cwd_path = base_resolved / cwd_path
+    if not cwd_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"cwd does not exist: {raw}")
+    cwd_resolved = cwd_path.resolve()
     try:
-        cwd_resolved.relative_to(root_resolved)
+        cwd_resolved.relative_to(base_resolved)
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"cwd must be within project root ({root_resolved}): {cwd}",
+            detail=(
+                f"cwd must be within active project ({base_resolved}): {raw}"
+                if active is not None
+                else f"cwd must be within project root ({base_resolved}): {raw}"
+            ),
         ) from exc
     return str(cwd_resolved)
+
+
+def _require_active_project_for_session() -> None:
+    """非 workbench 实验路径下，普通会话创建必须有 active project。"""
+    if get_registry().get_active() is None:
+        raise HTTPException(
+            status_code=409,
+            detail="no active project — create or activate one before opening a session",
+        )
 
 
 async def _parse_json_body(request: Request) -> dict[str, Any]:
@@ -116,6 +149,9 @@ async def create_session(request: Request):
         )
 
     cwd_raw = payload.get("cwd")
+    if not is_workbench:
+        # 普通会话——必须有 active project 才能继续
+        _require_active_project_for_session()
     cwd: str | None
     if is_workbench and not cwd_raw:
         # Workbench 路径——让 session_manager 按 session_id 自行分配工作区
@@ -548,8 +584,11 @@ async def send_message(session_id: str, request: Request):
 
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+    mcp_ctx = McpCallContext(cli_session_id=session.id)
+    mcp_logger = get_call_logger()
+
     def _emit(event: str, data: dict[str, Any]) -> None:
-        """SSE 帧入队 + 同步落 DB。
+        """SSE 帧入队 + 同步落 DB + MCP 调用历史观测。
         can_use_tool 桥也通过它推 cc_permission_request 帧——权限请求也落库，
         保证刷新后回灌历史里能看到过去的授权瞬间。
         """
@@ -559,6 +598,13 @@ async def send_message(session_id: str, request: Request):
         except Exception:
             # 落库失败不影响 SSE 流——DB 不可用时会话仍可继续，next turn 会再次尝试
             pass
+        # Stage 3 Task 2 — 观测 MCP tool_use / tool_result 落库
+        if event == "cc_message":
+            try:
+                mcp_logger.observe_claude_event(data, mcp_ctx)
+            except Exception:
+                # logger 异常吞掉，绝不影响主对话
+                pass
 
     async def _run_turn() -> None:
         # 同一会话的 query/receive_response 不能交错，用会话锁串行化
