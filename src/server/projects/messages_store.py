@@ -154,6 +154,29 @@ def count_by_conversation(conversation_id: str) -> int:
     return int(n)
 
 
+def mark_compacted(message_ids: list[str]) -> int:
+    """把指定 messages 标记为已被 compact summary 替代。
+
+    v3.2 完整版 — compact 完成后调：原始 N 条 messages 标 compacted=1，
+    序列化 prior history 时跳过；新写入的 mambaresearch_compact 段成为它们的
+    "代表"。**不删原文**——便于后续回溯 / 人工 review compact 质量。
+
+    Returns
+    -------
+    int
+        实际更新的行数。
+    """
+    if not message_ids:
+        return 0
+    placeholders = ",".join("?" for _ in message_ids)
+    with _db().cursor() as cur:
+        cur.execute(
+            f"UPDATE messages SET compacted = 1 WHERE id IN ({placeholders})",
+            message_ids,
+        )
+        return cur.rowcount
+
+
 def lookup_conversation_by_session(cli_session_id: str) -> str | None:
     """从 ``cli_session_id`` 反查所属 ``conversation_id``。
 

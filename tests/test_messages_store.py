@@ -194,3 +194,36 @@ def test_estimate_tokens_mixed_text() -> None:
 
     # "Hello 世界" = 6 ASCII (含空格) + 2 CJK = ceil(6/4) + 2 = 2 + 2 = 4
     assert estimate_tokens("Hello 世界") == 4
+
+
+# ---------------------------------------------------------------------------
+# mark_compacted (v3.2 完整版)
+# ---------------------------------------------------------------------------
+
+
+def test_mark_compacted_flips_flag(temp_db: MambaDb) -> None:
+    from src.server.projects.messages_store import mark_compacted
+
+    a = append_message(conversation_id="c1", role="user", text="一", served_by="user")
+    b = append_message(conversation_id="c1", role="assistant", text="一回", served_by="claude")
+    c = append_message(conversation_id="c1", role="user", text="二", served_by="user")
+    # mark a + b 为已 compacted；c 保持 compacted=False
+    n = mark_compacted([a.id, b.id])
+    assert n == 2
+    listed = list_by_conversation("c1")
+    by_id = {m.id: m for m in listed}
+    assert by_id[a.id].compacted is True
+    assert by_id[b.id].compacted is True
+    assert by_id[c.id].compacted is False
+
+
+def test_mark_compacted_empty_list_noop(temp_db: MambaDb) -> None:
+    from src.server.projects.messages_store import mark_compacted
+
+    assert mark_compacted([]) == 0
+
+
+def test_mark_compacted_unknown_ids_returns_zero(temp_db: MambaDb) -> None:
+    from src.server.projects.messages_store import mark_compacted
+
+    assert mark_compacted(["never-existed", "still-no"]) == 0
