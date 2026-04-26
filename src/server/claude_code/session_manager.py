@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,6 +30,9 @@ from claude_agent_sdk import (
 
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.mcp_bridge import default_mcp_config
+from src.server.workspace.mcp_server import (
+    default_mcp_config as default_workspace_mcp_config,
+)
 from src.server.claude_code.agents import load_subagents_from_directory
 from src.server.claude_code.providers import (
     ProviderConfig,
@@ -777,10 +781,22 @@ async def _build_client(
     # 多 provider 支持（Task 1b）——传入 provider_config 时按其 base_url + api_key_env
     # 解析值写入 SDK 子进程 env。未传则 options_kwargs 不带 env，走 Anthropic 默认。
     if provider_config is not None:
-        options_kwargs["env"] = build_env_for_provider(provider_config)
-    # 默认挂载 ResearchAgent MCP 桥；overrides 里的 mcp_servers 与之合并，
-    # 同名键由 overrides 胜出，便于测试关闭或替换桥。
-    bridge_config = default_mcp_config(_REPO_ROOT)
+        provider_env = build_env_for_provider(provider_config)
+        # Stage 1 — env override 替换式语义会丢掉 MAMBA_ACTIVE_PROJECT_PATH（MCP
+        # 子进程依赖此 env 定位 active project）。这里显式 propagate；其他对
+        # MCP 必要的 env（PYTHONPATH 等已在 default_mcp_config 注入子进程层面）。
+        mamba_active = os.environ.get("MAMBA_ACTIVE_PROJECT_PATH")
+        if mamba_active:
+            provider_env.setdefault("MAMBA_ACTIVE_PROJECT_PATH", mamba_active)
+        options_kwargs["env"] = provider_env
+    # 默认挂载 ResearchAgent 内置 MCP servers：
+    #   - research_agent: dynamic_os 21 个 skill 的桥（mcp_bridge）
+    #   - mamba_workspace: 文件分类索引 server（Stage 2）
+    # overrides 里的 mcp_servers 与之合并，同名键由 overrides 胜出，便于测试
+    # 关闭 / 替换某一个 server。
+    bridge_config: dict[str, Any] = {}
+    bridge_config.update(default_mcp_config(_REPO_ROOT))
+    bridge_config.update(default_workspace_mcp_config(_REPO_ROOT))
     if bridge_config:
         options_kwargs["mcp_servers"] = dict(bridge_config)
     if options_overrides:

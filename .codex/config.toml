@@ -18,3 +18,16 @@ args = [
   "-m",
   "src.mcp_bridge.server",
 ]
+
+# Stage 2 — 文件分类索引 server。
+# 暴露 scan / classify_one / list / set_user_override / stats 五个工具；
+# 通过 ``MAMBA_ACTIVE_PROJECT_PATH`` env 定位 active project（每次 tools/call
+# 都重新读，支持运行时切 project）。Claude Code 侧由
+# ``src/server/workspace/mcp_server.py:default_mcp_config`` 注入到 SDK；
+# Codex 这里直接走项目级 config——cwd=<repo_root> 启动时自动加载。
+[mcp_servers.mamba_workspace]
+command = "python"
+args = [
+  "-m",
+  "src.server.workspace.mcp_server",
+]

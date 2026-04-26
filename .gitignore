@@ -65,3 +65,8 @@ frontend/dist/
 
 # continues (cli-continues) cross-tool handoff file — regenerated per resume
 .continues-handoff.md
+
+# MambaResearch project meta — `<project>/.mambaresearch/` is created in any
+# directory registered as an active project. The 主仓库 itself is occasionally
+# used as a project (debugging / dev-mode), so ignore the dir at repo root too.
+.mambaresearch/
