@@ -14,6 +14,17 @@ interface ZoteroItem {
   creators: Array<Record<string, unknown>>;
 }
 
+function formatCreator(creators: Array<Record<string, unknown>> | undefined): string {
+  if (!Array.isArray(creators) || creators.length === 0) return '—';
+  const first = creators[0] ?? {};
+  const name = first.name;
+  if (typeof name === 'string' && name.length > 0) return name;
+  const firstName = typeof first.firstName === 'string' ? first.firstName : '';
+  const lastName = typeof first.lastName === 'string' ? first.lastName : '';
+  const combined = `${firstName} ${lastName}`.trim();
+  return combined || '—';
+}
+
 /**
  * Stage 4 Task 9 — Zotero 远端 library 浏览器（独立顶层 nav）。
  *
@@ -165,14 +176,7 @@ export const LibraryTab: React.FC = () => {
                 <tr key={it.key} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="max-w-md truncate px-3 py-2 text-slate-800">{it.title || '(no title)'}</td>
                   <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.itemType}</td>
-                  <td className="px-3 py-2 text-slate-600">
-                    {Array.isArray(it.creators) && it.creators.length > 0
-                      ? (it.creators[0] as Record<string, unknown>).name ??
-                        `${(it.creators[0] as Record<string, unknown>).firstName ?? ''} ${
-                          (it.creators[0] as Record<string, unknown>).lastName ?? ''
-                        }`
-                      : '—'}
-                  </td>
+                  <td className="px-3 py-2 text-slate-600">{formatCreator(it.creators)}</td>
                   <td className="px-3 py-2 font-mono text-[11px] text-slate-400">
                     {String(it.key).slice(0, 10)}
                   </td>

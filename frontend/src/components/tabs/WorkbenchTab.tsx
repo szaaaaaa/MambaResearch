@@ -1,7 +1,7 @@
 import React from 'react';
 import { LogOut, MessagesSquare, Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
-import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo, PendingWorkbenchLaunch } from '../../types';
+import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
 import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
 import { PermissionModal } from '../workbench/PermissionModal';
@@ -80,7 +80,6 @@ export const WorkbenchTab: React.FC = () => {
     ccHydrateHistory,
     ccReset,
     ccSetActiveActivity,
-    consumePendingWorkbenchLaunch,
   } = useAppContext();
   const {
     session,
@@ -252,57 +251,6 @@ export const WorkbenchTab: React.FC = () => {
     hydrateAttemptedRef.current = true;
     void loadSessionById(lastId);
   }, [state.claudeCode.session, loadSessionById]);
-
-  // Task 12 实验联动：消费 pendingWorkbenchLaunch —— 创建绑定 session + 发送 plan.goal。
-  // guard 存"已处理过的 launch 对象"而非一次性 bool；StrictMode 双跑第二次比对同一对象
-  // 引用命中 return；第二次真实 launch 必然是新对象，不会被 guard 误吞。
-  const processedLaunchRef = React.useRef<PendingWorkbenchLaunch | null>(null);
-  React.useEffect(() => {
-    const pending = state.pendingWorkbenchLaunch;
-    if (pending === null) return;
-    if (processedLaunchRef.current === pending) return;
-    processedLaunchRef.current = pending;
-    const launch = consumePendingWorkbenchLaunch();
-    if (launch === null) return;
-    void (async () => {
-      try {
-        // 先显式销毁当前 session（如有），避免 plan.goal 被注入到不相关对话
-        if (sessionRef.current !== null) {
-          await fetch(`${API_BASE}/api/claude-code/sessions/${sessionRef.current.id}`, {
-            method: 'DELETE',
-          }).catch(() => {});
-          ccReset();
-          sessionRef.current = null;
-        }
-        // 调 POST /sessions 传实验联动元数据——后端自动分配 workspace 目录
-        const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            permission_mode: 'default',
-            bound_artifact_id: launch.boundArtifactId,
-            original_run_id: launch.originalRunId,
-            plan_goal: launch.planGoal,
-          }),
-        });
-        if (!response.ok) {
-          const detail = await response.text().catch(() => '');
-          pushError(`创建工作台会话失败: ${detail || response.status}`);
-          return;
-        }
-        const info = (await response.json()) as ClaudeCodeSessionInfo;
-        sessionRef.current = info;
-        ccSetSession(info);
-        writeLastSessionId(info.id);
-        // 首条用户消息 = plan.goal —— 直接走 sendToBackend 路径
-        await sendToBackend(launch.planGoal);
-      } catch (exc) {
-        pushError(`工作台启动失败: ${(exc as Error).message || exc}`);
-      }
-    })();
-    // 依赖 state.pendingWorkbenchLaunch 让本 effect 在 launch 到达时触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.pendingWorkbenchLaunch]);
 
   const sendToBackend = async (text: string) => {
     const turnStart = Date.now();

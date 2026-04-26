@@ -170,13 +170,6 @@ class ClaudeSession:
     # 多 provider 支持（Task 1b）——None 表示"未选择 provider，走 Anthropic 默认零变更"。
     # 字符串为 registry 里的 provider 名（如 "anthropic" / "deepseek"），仅此外不回传 api_key。
     provider: str | None = None
-    # Task 12 — Workbench 实验联动：当会话由 ExperimentPlan "在工作台运行"按钮创建时，
-    # 这三个字段被填充；会话收尾（delete / idle evict）时调 results_hook 把
-    # workspace/results.json 封装为 ExperimentResults 挂回原 run 的 artifact 列表。
-    # 非 Workbench 会话全部为 None——hook 分支直接跳过。
-    bound_artifact_id: str | None = None  # ExperimentPlan.artifact_id (血缘)
-    original_run_id: str | None = None  # 承载 ExperimentPlan 的原 run id
-    plan_goal: str | None = None  # ExperimentPlan.payload.goal (写回 ExperimentResults)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -187,8 +180,6 @@ class ClaudeSession:
             "created_at": self.created_at,
             "add_dirs": list(self.add_dirs),
             "provider": self.provider,
-            "bound_artifact_id": self.bound_artifact_id,
-            "original_run_id": self.original_run_id,
         }
 
 
@@ -228,25 +219,19 @@ class SessionManager:
 
     async def create(
         self,
-        cwd: str | Path | None = None,
+        cwd: str | Path,
         *,
         model: str | None = None,
         permission_mode: str = "default",
         options_overrides: dict[str, Any] | None = None,
         provider: str | None = None,
-        bound_artifact_id: str | None = None,
-        original_run_id: str | None = None,
-        plan_goal: str | None = None,
     ) -> ClaudeSession:
         """新建并 ``connect`` 一个 SDK 会话。
 
         Parameters
         ----------
-        cwd : str, Path, or None
-            子进程工作目录。普通会话必须显式传入；路由层负责合法性校验。
-            Workbench 实验联动路径可传 ``None``——本方法会按 ``session_id`` 在
-            ``data/experiments/workbench/<session_id>/workspace`` 下分配独立工作区，
-            保证目录名与 SDK 会话 id 一一对应便于排障与清理。
+        cwd : str or Path
+            子进程工作目录。路由层负责合法性校验。
         model : str or None
             可选模型覆盖。
         permission_mode : str
@@ -258,9 +243,6 @@ class SessionManager:
             registry 里的 provider 名；``None`` 表示不走 registry，沿用 Anthropic 默认
             env（零变更路径）。非 ``None`` 时查 ``get_provider_registry()`` 决议 env 注入；
             未知名 raise ValueError。``api_key_env`` 对应的 env 未设置也 raise。
-        bound_artifact_id / original_run_id / plan_goal : str or None
-            Task 12 Workbench 实验联动元数据——见 ``ClaudeSession`` 字段注释。
-            ``cwd`` 为 ``None`` 时 ``bound_artifact_id`` 必须给，否则 raise ValueError。
         """
         if permission_mode not in VALID_PERMISSION_MODES:
             raise ValueError(
@@ -272,19 +254,6 @@ class SessionManager:
 
         session_id = uuid.uuid4().hex
         permission_state = PermissionState()
-
-        if cwd is None:
-            # Workbench 实验联动路径——按 session_id 分配独立工作区
-            if bound_artifact_id is None:
-                raise ValueError(
-                    "cwd is required unless bound_artifact_id is provided "
-                    "(workbench experiment path)"
-                )
-            workspace = (
-                _REPO_ROOT / "data" / "experiments" / "workbench" / session_id / "workspace"
-            )
-            workspace.mkdir(parents=True, exist_ok=True)
-            cwd = str(workspace.resolve())
 
         client = await _build_client(
             session_id=session_id,
@@ -310,9 +279,6 @@ class SessionManager:
             add_dirs=[],
             permission_state=permission_state,
             provider=provider,
-            bound_artifact_id=bound_artifact_id,
-            original_run_id=original_run_id,
-            plan_goal=plan_goal,
         )
         async with self._lock:
             self._sessions[session.id] = session

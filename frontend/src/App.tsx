@@ -136,14 +136,6 @@ const AppContent: React.FC = () => {
     };
   }, []);
 
-  // ExperimentPlan "在工作台运行"按钮 → store.launchWorkbenchExperiment
-  // pendingWorkbenchLaunch 非 null 即切到 bench；WorkbenchTab 自管 consume。
-  React.useEffect(() => {
-    if (state.pendingWorkbenchLaunch !== null && activeNav !== 'bench') {
-      setActiveNav('bench');
-    }
-  }, [state.pendingWorkbenchLaunch, activeNav]);
-
   const handleNav = (id: NavId) => {
     if (id === 'set') {
       setIsSettingsOpen(true);

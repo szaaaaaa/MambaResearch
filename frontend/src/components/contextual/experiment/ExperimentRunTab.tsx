@@ -6,6 +6,10 @@ const POLL_INTERVAL_MS = 1500;
 const SERVER = 'mamba_experiment';
 const COLORS = ['#0284c7', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0d9488'];
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export interface ExperimentRunTabProps {
   /** experiment.* MCP run_id */
   runId: string;
@@ -69,12 +73,12 @@ export const ExperimentRunTab: React.FC<ExperimentRunTabProps> = ({ runId, scrip
           ]);
           if (cancelled) return;
           if (s.is_error) {
-            setError(s.text || '查询 status 失败');
+            setError(s.error || '查询 status 失败');
             return;
           }
-          const sBody = (s.structured_content ?? {}) as Partial<RunStatus>;
-          const lBody = (l.structured_content ?? {}) as { lines?: string[] };
-          const mBody = (m.structured_content ?? {}) as { metrics?: MetricSample[] };
+          const sBody = (isPlainObject(s.output) ? s.output : {}) as Partial<RunStatus>;
+          const lBody = (isPlainObject(l.output) ? l.output : {}) as { lines?: string[] };
+          const mBody = (isPlainObject(m.output) ? m.output : {}) as { metrics?: MetricSample[] };
           setStatus(sBody as RunStatus);
           setLogs(lBody.lines ?? []);
           setMetrics(mBody.metrics ?? []);
@@ -99,7 +103,7 @@ export const ExperimentRunTab: React.FC<ExperimentRunTabProps> = ({ runId, scrip
     setCancelling(true);
     try {
       const resp = await sandboxCall(SERVER, 'cancel', { run_id: runId });
-      if (resp.is_error) setError(resp.text || 'cancel 失败');
+      if (resp.is_error) setError(resp.error || 'cancel 失败');
     } catch (err) {
       setError(String((err as Error)?.message ?? err));
     } finally {
