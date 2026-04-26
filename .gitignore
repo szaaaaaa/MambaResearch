@@ -44,13 +44,15 @@ frontend/dist/
 *.bin
 
 # Claude Code — exclude .claude/ children (worktrees, hooks, local state)
-# but keep .claude/agents/ — subagent definitions are project assets checked
-# into the repo (see src/server/claude_code/agents.py loader + Task 3 plan).
+# but keep .claude/agents/ (subagent defs) and .claude/skills/ (project-local
+# pipeline SKILL.md, e.g. Stage 5 v3 7 pipelines + Stage 2 classify-workspace).
 # Use `.claude/*` (not `.claude/`) so git can still descend into the dir and
-# apply the negation for subagent files below.
+# apply the negations for subagent / skill files below.
 .claude/*
 !.claude/agents/
 !.claude/agents/**
+!.claude/skills/
+!.claude/skills/**
 
 # Codex — exclude .codex/ children (local state, history, cache) but keep
 # .codex/agents/ (auto-generated from .claude/agents/ via scripts/sync_subagents.py)
