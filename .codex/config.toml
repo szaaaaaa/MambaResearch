@@ -31,3 +31,15 @@ args = [
   "-m",
   "src.server.workspace.mcp_server",
 ]
+
+# Stage 4 Task 1c — Zotero Web API integration server。
+# 暴露 search / list_collections / get_item / add_tag / upload_pdf 五个工具；
+# 凭据走 ``ZOTERO_USER_ID`` + ``ZOTERO_API_KEY`` env / 仓库根 .env，
+# 缺失时 tool 直接返回 ``isError: true`` + 引导。
+# Codex CLI 在 cwd=<repo_root> 启动时自动加载本段。
+[mcp_servers.mamba_zotero]
+command = "python"
+args = [
+  "-m",
+  "src.server.integrations.zotero.mcp_server",
+]
