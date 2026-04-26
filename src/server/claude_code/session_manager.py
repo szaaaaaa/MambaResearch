@@ -30,6 +30,9 @@ from claude_agent_sdk import (
 
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.mcp_bridge import default_mcp_config
+from src.server.integrations.colab.mcp_server import (
+    default_mcp_config as default_colab_mcp_config,
+)
 from src.server.integrations.zotero.mcp_server import (
     default_mcp_config as default_zotero_mcp_config,
 )
@@ -801,6 +804,7 @@ async def _build_client(
     bridge_config.update(default_mcp_config(_REPO_ROOT))
     bridge_config.update(default_workspace_mcp_config(_REPO_ROOT))
     bridge_config.update(default_zotero_mcp_config(_REPO_ROOT))
+    bridge_config.update(default_colab_mcp_config(_REPO_ROOT))
     if bridge_config:
         options_kwargs["mcp_servers"] = dict(bridge_config)
     if options_overrides:

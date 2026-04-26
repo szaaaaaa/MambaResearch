@@ -112,6 +112,9 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
     ``<programmatic>``。延迟 import 避免本模块被启动期 IO 拖慢。
     """
     from src.mcp_bridge import default_mcp_config as bridge_default_mcp_config
+    from src.server.integrations.colab.mcp_server import (
+        default_mcp_config as colab_default_mcp_config,
+    )
     from src.server.integrations.zotero.mcp_server import (
         default_mcp_config as zotero_default_mcp_config,
     )
@@ -124,6 +127,7 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
         bridge_default_mcp_config,
         workspace_default_mcp_config,
         zotero_default_mcp_config,
+        colab_default_mcp_config,
     ):
         config = func(_REPO_ROOT)
         for name, raw in config.items():

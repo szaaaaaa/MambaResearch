@@ -43,3 +43,13 @@ args = [
   "-m",
   "src.server.integrations.zotero.mcp_server",
 ]
+
+# Stage 4 Task 2 — Colab URL 生成 server。
+# 暴露 url_for（本地 .ipynb → drive_id 反查 / fallback URL）+ url_for_github
+# （github 路径直接拼）两个工具。无凭据需求。
+[mcp_servers.mamba_colab]
+command = "python"
+args = [
+  "-m",
+  "src.server.integrations.colab.mcp_server",
+]
