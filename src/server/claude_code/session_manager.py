@@ -252,7 +252,12 @@ class SessionManager:
 
         provider_config = _resolve_provider_or_raise(provider)
 
-        session_id = uuid.uuid4().hex
+        # Claude Agent SDK 严格要求 session_id 是带连字符的标准 UUID 格式
+        # （`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）；用 .hex 拿到的 32 字符
+        # 无连字符串 SDK 子进程会立刻报 "Invalid session ID. Must be a valid
+        # UUID." 然后 exit 1，整条 create_session 路径 500。改用 str(uuid.uuid4())
+        # 拿标准格式。
+        session_id = str(uuid.uuid4())
         permission_state = PermissionState()
 
         client = await _build_client(
