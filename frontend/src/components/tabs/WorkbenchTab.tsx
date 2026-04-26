@@ -755,8 +755,10 @@ export const WorkbenchTab: React.FC = () => {
       ccSetTurnStartAt(null);
     }
 
-    const hasActiveSession = sessionRef.current !== null;
-    if (!hasActiveSession) {
+    // 用 state.session 而非 sessionRef.current——React 渲染时 state 是即时
+    // 一致的，ref 同步是 useEffect 异步路径，刚创建的 session 可能 ref 还没追上。
+    const activeSession = session ?? sessionRef.current;
+    if (activeSession === null) {
       setIsSwitching(true);
       void handleCreateSession(target === 'codex' ? 'codex' : null).finally(() => {
         setIsSwitching(false);
@@ -764,17 +766,13 @@ export const WorkbenchTab: React.FC = () => {
       return;
     }
 
-    if (
-      !window.confirm(
-        `切换到 ${target === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} 会用 \`continues\` 工具压缩当前会话作为 handoff 注入新会话。继续？`,
-      )
-    ) {
-      return;
-    }
-
+    // 不再用 window.confirm——某些浏览器环境（嵌入 webview / 弹窗拦截 / 扩展
+    // 干预等）会让 confirm 静默返回 false，用户感觉"按钮没反应"。改成直接
+    // 切换 + 顶部 segment_boundary 标记，handoff 进度通过 isSwitching loading
+    // chip 反馈。
     setIsSwitching(true);
     void (async () => {
-      const oldSession = sessionRef.current!;
+      const oldSession = activeSession;
       try {
         // 1a. 拿 active project，懒建 conversation + 第一段 segment
         let convId = conversationIdRef.current;
