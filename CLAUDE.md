@@ -53,6 +53,12 @@ If you find yourself about to write code without having invoked the applicable o
 - `src/dynamic_os/tools/registry.py`
 - `src/dynamic_os/roles/registry.py`
 
+Stage 1+ 引入的新核心模块（被 routes / MCP / tests 共享）：
+
+- `src/server/projects/registry.py` — active project 单例 + 进程级 env 管理；改动会影响所有 session 创建路径与 MCP 子进程启动
+- `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
+- `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
+
 规则：改完运行 `pytest tests/`；失败必须修复。
 
 ## 🟢 安全区 — 可直接修改
