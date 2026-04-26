@@ -37,6 +37,9 @@ import { useContextualTabs } from '../../store/contextual';
  * 不再 DELETE 也不再 abort，保证"切走 → 切回"之前的对话完整还原。
  */
 const CC_LAST_SESSION_KEY = 'cc_last_session_id';
+// Hybrid Master Transcript T5 — 持久化 conversation_id 用于刷新后从 messages
+// 表回灌历史（session 级 hydrate 失败时的 fallback；session 已 evict 也能复原）
+const CC_LAST_CONV_KEY = 'cc_last_conversation_id';
 
 /**
  * Task 5c — 按 session.provider 分派 REST 端点前缀。
@@ -64,6 +67,23 @@ const writeLastSessionId = (id: string | null) => {
   }
 };
 
+const readLastConvId = (): string | null => {
+  try {
+    return window.localStorage.getItem(CC_LAST_CONV_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const writeLastConvId = (id: string | null) => {
+  try {
+    if (id) window.localStorage.setItem(CC_LAST_CONV_KEY, id);
+    else window.localStorage.removeItem(CC_LAST_CONV_KEY);
+  } catch {
+    /* 同上 */
+  }
+};
+
 export const WorkbenchTab: React.FC = () => {
   const {
     state,
@@ -82,6 +102,7 @@ export const WorkbenchTab: React.FC = () => {
     ccSetMarkdownEnabled,
     ccSetThinkingDefaultCollapsed,
     ccClearItems,
+    ccHydrateFromMessages,
     ccHydrateHistory,
     ccReset,
     ccSetActiveActivity,
@@ -247,15 +268,52 @@ export const WorkbenchTab: React.FC = () => {
 
   // 刷新恢复：挂载时若 state 无 session 且 localStorage 记着上次 id 就回灌一次。
   // Tab 切换路径不触发——state.session 在 AppProvider 上下文里保留。
+  //
+  // Hybrid Master Transcript T5：增加 conversation-level hydrate 兜底。
+  // 路径：
+  // 1. 优先尝试 session-level hydrate（loadSessionById）—— SDK 仍活时拿到的
+  //    cc_message events 包含 thinking blocks / tool_use / permission 等 UI 状态
+  //    完整度最高
+  // 2. session 已 evict / 被删 → loadSessionById 返 false → fall back 到
+  //    conversation messages 表 hydrate（getConversationMessages +
+  //    ccHydrateFromMessages）。complete fidelity 没有，但对话文本不丢
+  // 3. 两者都没 → 空白起步
   const hydrateAttemptedRef = React.useRef(false);
   React.useEffect(() => {
     if (hydrateAttemptedRef.current) return;
     if (state.claudeCode.session) return;
-    const lastId = readLastSessionId();
-    if (!lastId) return;
     hydrateAttemptedRef.current = true;
-    void loadSessionById(lastId);
-  }, [state.claudeCode.session, loadSessionById]);
+    const lastSid = readLastSessionId();
+    const lastConvIdLocal = readLastConvId();
+    void (async () => {
+      if (lastSid) {
+        const ok = await loadSessionById(lastSid);
+        if (ok) {
+          // session 还在 → 顺便把 conv id 同步到 ref（切换路径用）
+          if (lastConvIdLocal) {
+            conversationIdRef.current = lastConvIdLocal;
+          }
+          return;
+        }
+      }
+      // session-level hydrate 失败 → 走 conversation messages 表
+      if (lastConvIdLocal) {
+        try {
+          const messages = await getConversationMessages(lastConvIdLocal);
+          if (messages.length > 0) {
+            ccHydrateFromMessages(messages);
+            conversationIdRef.current = lastConvIdLocal;
+          } else {
+            // conversation 空（已被删 / messages 全部清空）→ 清 localStorage
+            writeLastConvId(null);
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('conversation-level hydrate failed', err);
+        }
+      }
+    })();
+  }, [state.claudeCode.session, loadSessionById, ccHydrateFromMessages]);
 
   const sendToBackend = async (text: string) => {
     const turnStart = Date.now();
@@ -688,6 +746,7 @@ export const WorkbenchTab: React.FC = () => {
         const conv = await convResp.json();
         convId = conv.id as string;
         conversationIdRef.current = convId;
+        writeLastConvId(convId);
       }
       // 注册新 segment：把 session 与 conversation 关联——后续 SSE handler
       // 调 lookup_conversation_by_session(session.id) 才能找到 conv_id 写入

@@ -959,6 +959,14 @@ interface AppContextType {
   ccSetMarkdownEnabled: (enabled: boolean) => void;
   ccSetThinkingDefaultCollapsed: (collapsed: boolean) => void;
   ccClearItems: () => void;
+  ccHydrateFromMessages: (
+    messages: Array<{
+      id: string;
+      role: string;
+      text: string;
+      served_by: string;
+    }>,
+  ) => void;
   ccHydrateHistory: (
     session: ClaudeCodeSessionInfo,
     items: Array<{ sequence: number; event_type: string; payload: unknown }>,
@@ -2202,6 +2210,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   /**
+   * Hybrid Master Transcript T5 — 从 messages 表（真相源）回灌对话。
+   *
+   * 跟 ccHydrateHistory 区别：后者从 ``stored events``（per-session SSE 历史）
+   * 重建，session 被 idle evict 后不可用。本函数从 conversation messages 表
+   * 重建，跨 session、跨 backend 都能复原对话——浏览器刷新 / 切 backend /
+   * session 已 evict 等场景的兜底。
+   *
+   * 映射规则（保持视觉一致）：
+   * - role=user, served_by=user → ``{type: 'user_local', text}``
+   * - role=assistant, served_by=claude → ``{type: 'assistant', content:
+   *   [{type: 'text', text}]}``（模仿 SDK serialize 输出）
+   * - role=assistant, served_by=codex → ``{type: 'codex_assistant', text}``
+   *   （跟 ccAppendCodexDelta 累加产物同形态）
+   * - role=system, served_by=mambaresearch_compact → ``{type:
+   *   'segment_boundary', text: '[summary] ...'}``（v3.2 用，先按通用标记渲染）
+   * - 其他 system → ``{type: 'segment_boundary', text}``
+   */
+  const ccHydrateFromMessages = (
+    messages: Array<{
+      id: string;
+      role: string;
+      text: string;
+      served_by: string;
+    }>,
+  ) => {
+    const hydrated: ClaudeCodeStreamItem[] = [];
+    for (const m of messages) {
+      const id = `cc-msg-${m.id}`;
+      if (m.role === 'user') {
+        hydrated.push({ id, payload: { type: 'user_local', text: m.text } });
+        continue;
+      }
+      if (m.role === 'assistant') {
+        if (m.served_by === 'codex') {
+          hydrated.push({
+            id,
+            payload: { type: 'codex_assistant', text: m.text },
+          });
+        } else {
+          hydrated.push({
+            id,
+            payload: {
+              type: 'assistant',
+              content: [{ type: 'text', text: m.text }],
+            },
+          });
+        }
+        continue;
+      }
+      if (m.role === 'system') {
+        const prefix = m.served_by === 'mambaresearch_compact' ? '[summary] ' : '';
+        hydrated.push({
+          id,
+          payload: { type: 'segment_boundary', text: `${prefix}${m.text}` },
+        });
+      }
+    }
+    setState((prev) => ({
+      ...prev,
+      claudeCode: {
+        ...prev.claudeCode,
+        items: hydrated,
+        turnStartAt: null,
+        pendingPermissions: [],
+      },
+    }));
+  };
+
+  /**
    * 刷新/Tab 切换后从后端 DB 回灌历史：按 sequence 顺序把 stored events
    * 重建为 UI items。过滤 cc_permission_request / cc_finished（已失效或仅
    * 为 UI 标记），保留 cc_user_prompt / cc_message / cc_error。
@@ -2327,6 +2404,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ccSetMarkdownEnabled,
         ccSetThinkingDefaultCollapsed,
         ccClearItems,
+        ccHydrateFromMessages,
         ccHydrateHistory,
         ccReset,
         ccSetActiveActivity,
