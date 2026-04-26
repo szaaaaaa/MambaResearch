@@ -13,6 +13,7 @@ from src.server.routes.codex import router as codex_router
 from src.server.routes.config import router as config_router
 from src.server.routes.conversation_switch import router as conversation_switch_router
 from src.server.routes.conversations import router as conversations_router
+from src.server.routes.literature import router as literature_router
 from src.server.routes.mcp_calls import router as mcp_calls_router
 from src.server.routes.mcp_servers import router as mcp_servers_router
 from src.server.routes.models import router as model_router
@@ -53,6 +54,7 @@ app.include_router(claude_code_router)
 app.include_router(codex_router)
 app.include_router(mcp_servers_router)
 app.include_router(mcp_calls_router)
+app.include_router(literature_router)
 
 
 @app.on_event("startup")
