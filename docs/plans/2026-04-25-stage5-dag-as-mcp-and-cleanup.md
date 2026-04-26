@@ -228,7 +228,7 @@
   - v3.0 release note 列出：dynamic_os 删除 / 8 sub-agent / 7 pipeline SKILL / 6 可视化域全可用
   - CLAUDE.md 红区不再含 dynamic_os 路径
 
-### [TODO] 10. 验证（Stage 5 done = 整个枢转完成）
+### [PENDING-VERIFY] 10. 验证（Stage 5 done = 整个枢转完成）
 
 - **后端**:
   - `pytest tests/` 全绿（数量 ~479，dynamic_os 60 测 + research_dag 35 测删除是预期行为）
