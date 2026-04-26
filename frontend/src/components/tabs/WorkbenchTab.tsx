@@ -745,7 +745,15 @@ export const WorkbenchTab: React.FC = () => {
    */
   const handleBackendSwitch = (target: 'claude' | 'codex') => {
     if (currentBackend === target) return;
-    if (isRunning || isSwitching) return;
+    if (isSwitching) return;
+
+    // 切换前主动 abort 当前 turn——即便 isRunning 因为 SSE 异常 / finished 帧
+    // 丢失而卡住，用户也能切换。同时 ccSetRunning(false) 强制重置 UI 状态。
+    ccGetAbortController()?.abort();
+    if (isRunning) {
+      ccSetRunning(false);
+      ccSetTurnStartAt(null);
+    }
 
     const hasActiveSession = sessionRef.current !== null;
     if (!hasActiveSession) {
@@ -904,7 +912,7 @@ export const WorkbenchTab: React.FC = () => {
                 type="button"
                 className={`rb-backend-tab ${currentBackend === 'claude' ? 'on' : ''}`}
                 onClick={() => handleBackendSwitch('claude')}
-                disabled={isRunning || isSwitching}
+                disabled={isSwitching}
                 title={isSwitching ? '正在切换…' : '切换到 Claude Code CLI（新建会话）'}
               >
                 <Terminal size={12} />
@@ -915,7 +923,7 @@ export const WorkbenchTab: React.FC = () => {
                 type="button"
                 className={`rb-backend-tab ${currentBackend === 'codex' ? 'on' : ''}`}
                 onClick={() => handleBackendSwitch('codex')}
-                disabled={isRunning || isSwitching}
+                disabled={isSwitching}
                 title={isSwitching ? '正在切换…' : '切换到 Codex CLI（新建会话）'}
               >
                 <Terminal size={12} />
