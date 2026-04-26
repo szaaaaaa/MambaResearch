@@ -2,10 +2,7 @@ import React from 'react';
 import { LogOut, MessagesSquare, Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
 import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
-import {
-  getConversationMessages,
-  serializeHistoryForBackend,
-} from '../../api/conversations';
+import { getConversationMessages } from '../../api/conversations';
 import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
 import { PermissionModal } from '../workbench/PermissionModal';
@@ -377,78 +374,6 @@ export const WorkbenchTab: React.FC = () => {
           ccSetTurnStartAt(null);
           return;
         }
-        // v3.2 衔接：后端在 token 累计接近 backend context window 上限（默认 80%）时
-        // 推 auto_compact_recommended 帧。前端把它落成一条可见的 system marker，
-        // 让用户知道接下来切 backend 时 first-message 注入可能撞上限——可以手动
-        // 开新对话或等 v3.2 完整 LLM compact 实现自动化。
-        if (
-          frame.event === 'cc_auto_compact_recommended' ||
-          frame.event === 'codex_auto_compact_recommended'
-        ) {
-          let ratioPct = '?';
-          let used = '?';
-          let total = '?';
-          if (parsed && typeof parsed === 'object') {
-            const r = parsed as Record<string, unknown>;
-            const ratio = typeof r.ratio === 'number' ? r.ratio : 0;
-            ratioPct = `${Math.round(ratio * 100)}%`;
-            used = String(r.used_tokens ?? '?');
-            total = String(r.context_window ?? '?');
-          }
-          ccAppendItem({
-            type: 'segment_boundary',
-            text: `⚠️ 上下文已用 ${ratioPct}（约 ${used}/${total} tokens）— 接近 backend 上限，建议开新对话或等待 v3.2 自动压缩落地`,
-          });
-          return;
-        }
-        // v3.2 完整版 T4：自动压缩开始/结束事件 — 渲染成 segment_boundary
-        // 让用户清楚看到"刚才那条 turn 触发了 compact"。
-        if (
-          frame.event === 'cc_compact_started' ||
-          frame.event === 'codex_compact_started'
-        ) {
-          let used = '?';
-          let total = '?';
-          if (parsed && typeof parsed === 'object') {
-            const r = parsed as Record<string, unknown>;
-            used = String(r.used_tokens ?? '?');
-            total = String(r.context_window ?? '?');
-          }
-          ccAppendItem({
-            type: 'segment_boundary',
-            text: `🔄 正在自动压缩历史…（已用 ${used}/${total} tokens）`,
-          });
-          return;
-        }
-        if (
-          frame.event === 'cc_compact_done' ||
-          frame.event === 'codex_compact_done'
-        ) {
-          let success = false;
-          let count = 0;
-          let excerpt = '';
-          let error = '';
-          if (parsed && typeof parsed === 'object') {
-            const r = parsed as Record<string, unknown>;
-            success = Boolean(r.success);
-            count = typeof r.compacted_count === 'number' ? r.compacted_count : 0;
-            excerpt = typeof r.summary_excerpt === 'string' ? r.summary_excerpt : '';
-            error = typeof r.error === 'string' ? r.error : '';
-          }
-          if (success) {
-            const tail = excerpt ? `；摘要开头："${excerpt}…"` : '';
-            ccAppendItem({
-              type: 'segment_boundary',
-              text: `✓ 已压缩 ${count} 条历史消息成 summary${tail}`,
-            });
-          } else {
-            ccAppendItem({
-              type: 'segment_boundary',
-              text: `⚠️ 自动压缩失败：${error || '未知错误'}（下一轮会重试）`,
-            });
-          }
-          return;
-        }
         if (frame.event === 'codex_message') {
           // Codex SSE pass-through 是 JSON-RPC 通知逐帧发的（包括逐 token
           // delta）。把 item/agentMessage/delta 单独合并成一个连续的
@@ -772,9 +697,9 @@ export const WorkbenchTab: React.FC = () => {
       setPrompt('');
       setAutocompleteDismissed(false);
 
-      // Hybrid Master Transcript T4 — ensure conversation + segment 注册
-      // 失败 fire-and-forget：messages 持久化失效是降级体验（同 backend 内
-      // 仍能对话），不应阻塞 session 创建本身
+      // ensure conversation + segment 注册 —— messages 表 mirror 写入需要
+      // session ↔ conversation 关联（lookup_conversation_by_session 用）。
+      // 失败 fire-and-forget：mirror 失效是降级体验，不阻塞 session 本身。
       void ensureConversationForSession(info, provider).catch((err) => {
         // eslint-disable-next-line no-console
         console.warn('ensureConversationForSession failed', err);
@@ -787,15 +712,18 @@ export const WorkbenchTab: React.FC = () => {
   );
 
   /**
-   * Hybrid Master Transcript T4 — 确保 session 关联到 conversation。
+   * 确保 session 关联到 conversation —— messages 表 mirror 写入路径必备。
    *
    * 流程：
    * 1. 已有 conversationIdRef → 仅追加新 segment，复用 conversation
    * 2. 否则：拿 active project → POST /api/conversations 建新 conv → 写第一段
    *    segment → conversationIdRef = conv.id
    *
+   * v3.3 multi-conversation：每条 conversation 绑死一个 backend，segment 表
+   * 仅作为 session ↔ conversation 的关联映射；不再用作"切换历史"。
+   *
    * 失败时 throw —— 调用方 fire-and-forget 抛 console.warn，不弹 pushError，
-   * 因为 messages 持久化失效不影响同 backend 对话本身。
+   * 因为 mirror 写入失效不影响同 backend 对话本身。
    */
   const ensureConversationForSession = React.useCallback(
     async (sessionInfo: ClaudeCodeSessionInfo, provider: string | null) => {
@@ -920,127 +848,12 @@ export const WorkbenchTab: React.FC = () => {
     }
   };
 
-  // 当前后端：根据 session.provider 推断；无 session 时默认 claude（首次发送时会创建）
+  // 当前后端：根据 session.provider 推断；无 session 时默认 claude（首次发送时会创建）。
+  // v3.3 multi-conversation：一条 conversation 绑死一个 backend，永不切换。
   const currentBackend: 'claude' | 'codex' = session?.provider === 'codex' ? 'codex' : 'claude';
 
-  // Stage 3 Task 7 — 跨 CLI 桥用：当前会话所属的 conversation_id（首次切换时
-  // 在后端 lazily 创建并写第一段 segment）。无切换时为 null，对话照常进行。
+  // 当前会话所属的 conversation_id（绑定 backend 后写入；mirror 写入 / hydrate 用）
   const conversationIdRef = React.useRef<string | null>(null);
-
-  // 切换中状态——continues handoff 通常 1-2s，UI 需要 loading 反馈而不是
-  // 看起来"按钮没反应"。这条独立于 isRunning，因为切换流程内不算"在跑对话"。
-  const [isSwitching, setIsSwitching] = React.useState(false);
-
-  /**
-   * 切换后端 — Hybrid Master Transcript T4。
-   *
-   * 流程（不再用 continues）：
-   * 1. 起新 backend session（handleCreateSession 自动 ensure conversation +
-   *    注册 segment，后续 SSE handler 能 lookup conv_id）
-   * 2. 从 messages 表拉本 conversation 全部历史 + serializeHistoryForBackend
-   *    序列化成 prior_history 文本块
-   * 3. 把 prior_history 作为新 session 首条消息发出去（internal: true，
-   *    后端跳过 messages 表持久化，不污染对话历史）
-   * 4. 等 cc_finished / codex_finished SSE 帧后 isSwitching=false
-   *
-   * 跟 v3 continues 路径相比：
-   * - 不需要 conversation.switch 端点（保留作为 fallback，目前没新触发路径）
-   * - 不跑 continues 的 LLM 压缩调用（省 1-2s 延迟）
-   * - prior history 是全文 lossless（不再压缩损失细节）
-   * - 切换瞬间 UI 看到的是 isSwitching loading chip + segment_boundary 标记
-   *
-   * 兜底：try/finally 保证 isSwitching 一定 reset，避免按钮永久锁。
-   */
-  const handleBackendSwitch = (target: 'claude' | 'codex') => {
-    if (currentBackend === target) return;
-    if (isSwitching) return;
-
-    // 切换前主动 abort 当前 turn——即便 isRunning 因为 SSE 异常 / finished 帧
-    // 丢失而卡住，用户也能切换。同时 ccSetRunning(false) 强制重置 UI 状态。
-    ccGetAbortController()?.abort();
-    if (isRunning) {
-      ccSetRunning(false);
-      ccSetTurnStartAt(null);
-    }
-
-    // 用 state.session 而非 sessionRef.current——React 渲染时 state 是即时
-    // 一致的，ref 同步是 useEffect 异步路径，刚创建的 session 可能 ref 还没追上。
-    const activeSession = session ?? sessionRef.current;
-    if (activeSession === null) {
-      // 无 active session：起新 session 即可，不需要历史注入
-      setIsSwitching(true);
-      void handleCreateSession(target === 'codex' ? 'codex' : null).finally(() => {
-        setIsSwitching(false);
-      });
-      return;
-    }
-
-    setIsSwitching(true);
-    void (async () => {
-      try {
-        // 1. 拉旧 conversation 的全部 messages 作为 prior history
-        //    注意此时还在用旧 conversationIdRef—— handleCreateSession 调
-        //    ensureConversationForSession 时会复用同一个 convId，新 segment 注册到
-        //    同一 conversation 下。
-        const convId = conversationIdRef.current;
-        let priorHistory = '';
-        if (convId) {
-          try {
-            const messages = await getConversationMessages(convId);
-            if (messages.length > 0) {
-              priorHistory = serializeHistoryForBackend(messages, target);
-            }
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.warn('failed to load prior history for switch', err);
-          }
-        }
-
-        // 2. 起新 backend session（自动 ensure conversation + 注册 segment）
-        //    切换路径不清 items——保持视觉连续性
-        await handleCreateSession(target === 'codex' ? 'codex' : null, {
-          clearItemsOnSuccess: false,
-        });
-        const newSession = sessionRef.current;
-        if (!newSession) {
-          pushError('新 backend session 创建失败');
-          return;
-        }
-
-        // 3. 顶部追加 segment_boundary marker
-        ccAppendItem({
-          type: 'segment_boundary',
-          text: `已切换到 ${target === 'claude' ? 'claude' : 'codex'}（注入 ${priorHistory ? '完整历史' : '空白'}）`,
-        });
-
-        // 4. 注入 prior history（internal=true 跳过 messages 持久化）
-        if (priorHistory) {
-          const prefix = sessionEndpointPrefix(target === 'codex' ? 'codex' : null);
-          await fetch(`${API_BASE}${prefix}/sessions/${newSession.id}/messages`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'text/event-stream',
-            },
-            body: JSON.stringify({
-              prompt: priorHistory,
-              internal: true,
-            }),
-            // 这一发只为了把 history 压进 backend 的 LLM context；不解析 SSE
-            // 流（让浏览器本身把响应体读完即可），用户在 UI 上不需要看到 ack
-          });
-          // 注意：这里没 await SSE 流读完，因为浏览器 fetch 完成已经意味着
-          // backend 处理完整个 turn（cc_finished / codex_finished 都已 emit）。
-          // 真要 await 流才能确认 ack 到达，但当前实现下 fetch resolve 就够用。
-        }
-      } catch (err) {
-        pushError(`backend 切换失败：${String(err)}`);
-      } finally {
-        // 兜底：无论成功 / 失败 / 抛错，按钮一定恢复可点
-        setIsSwitching(false);
-      }
-    })();
-  };
 
   return (
     <div className="rb-chat" style={{ position: 'relative' }}>
@@ -1084,35 +897,15 @@ export const WorkbenchTab: React.FC = () => {
           <RawEventsToggle value={rawEventsVisible} onChange={ccSetRawEventsVisible} />
           <div className="rb-backend">
             <span className="rb-backend-lbl">后端</span>
-            <div className="rb-backend-tabs">
-              <button
-                type="button"
-                className={`rb-backend-tab ${currentBackend === 'claude' ? 'on' : ''}`}
-                onClick={() => handleBackendSwitch('claude')}
-                disabled={isSwitching}
-                title={isSwitching ? '正在切换…' : '切换到 Claude Code CLI（新建会话）'}
-              >
-                <Terminal size={12} />
-                <span>claude code cli</span>
-                {currentBackend === 'claude' && session ? <em>●</em> : null}
-              </button>
-              <button
-                type="button"
-                className={`rb-backend-tab ${currentBackend === 'codex' ? 'on' : ''}`}
-                onClick={() => handleBackendSwitch('codex')}
-                disabled={isSwitching}
-                title={isSwitching ? '正在切换…' : '切换到 Codex CLI（新建会话）'}
-              >
-                <Terminal size={12} />
-                <span>codex cli</span>
-                {currentBackend === 'codex' && session ? <em>●</em> : null}
-              </button>
-            </div>
-            {isSwitching ? (
-              <span className="rb-backend-status" style={{ marginLeft: 8, fontSize: 11, color: 'var(--muted-fg)' }}>
-                切换中…（continues handoff）
-              </span>
-            ) : null}
+            <span
+              className="rb-cli-pill"
+              title="本对话绑定的 backend，不可切换；想换 backend 请新建对话"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
+              <Terminal size={12} />
+              {currentBackend === 'codex' ? 'codex cli' : 'claude code cli'}
+              {session ? <em style={{ marginLeft: 4 }}>●</em> : null}
+            </span>
           </div>
           {session && !isRunning ? (
             <button
@@ -1187,7 +980,7 @@ export const WorkbenchTab: React.FC = () => {
               <p style={{ color: 'var(--fg-3)', fontSize: 13.5, padding: '8px 10px', margin: 0 }}>
                 输入需求后按 Enter 发送；首次发送会自动创建{' '}
                 {currentBackend === 'codex' ? 'Codex' : 'Claude Code'} 会话，后续轮次共享上下文。
-                右上角"后端"切换 claude / codex 任意 CLI，左侧导航的所有视图都可以与之联动。
+                本对话绑定的 backend 在创建时确定，不可切换；想换 backend 请新建对话。
               </p>
             </div>
           ) : (
