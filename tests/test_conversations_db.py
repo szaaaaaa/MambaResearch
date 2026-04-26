@@ -159,6 +159,51 @@ def test_route_segments_returns_404_for_missing_conv(temp_db: MambaDb) -> None:
     assert resp.status_code == 404
 
 
+def test_route_messages_returns_404_for_missing_conv(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    resp = client.get("/api/conversations/nope/messages")
+    assert resp.status_code == 404
+
+
+def test_route_messages_returns_messages_in_order(temp_db: MambaDb) -> None:
+    """Hybrid Master Transcript T3 — GET /api/conversations/{id}/messages
+    返回该 conversation 的全部 messages，按 created_at 升序。"""
+    from src.server.projects.messages_store import append_message
+
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+
+    conv = create_conversation(project_id="proj-x", title="msgs")
+    append_message(
+        conversation_id=conv.id, role="user", text="hi", served_by="user"
+    )
+    append_message(
+        conversation_id=conv.id,
+        role="assistant",
+        text="hello",
+        served_by="claude",
+    )
+
+    resp = client.get(f"/api/conversations/{conv.id}/messages")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "messages" in body
+    msgs = body["messages"]
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["text"] == "hi"
+    assert msgs[0]["served_by"] == "user"
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["text"] == "hello"
+    assert msgs[1]["served_by"] == "claude"
+    # compacted 字段一定存在（前端 hydrate 用）
+    assert msgs[0]["compacted"] is False
+    assert msgs[1]["compacted"] is False
+
+
 def test_route_patch_title(temp_db: MambaDb) -> None:
     app = FastAPI()
     app.include_router(conv_router)

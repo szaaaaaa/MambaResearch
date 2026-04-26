@@ -26,6 +26,7 @@ from src.server.projects.conversations import (
     list_segments,
     update_title,
 )
+from src.server.projects.messages_store import list_by_conversation as list_messages
 
 
 router = APIRouter()
@@ -86,6 +87,25 @@ def list_conv_segments(conversation_id: str) -> dict:
         raise HTTPException(status_code=404, detail="conversation not found")
     rows = list_segments(conversation_id)
     return {"segments": [s.to_dict() for s in rows]}
+
+
+@router.get("/api/conversations/{conversation_id}/messages")
+def list_conv_messages(conversation_id: str) -> dict:
+    """Hybrid Master Transcript T3 — 暴露 messages 表给前端读。
+
+    用途：
+    - WorkbenchTab mount 时用此端点 hydrate 历史（刷新页面不丢对话）
+    - handleBackendSwitch 在切换前拉全量 messages 序列化为 prior history
+      作为新 backend session 首条消息
+
+    返回按 created_at 升序，包含已被 compact 标记的消息（前端按 compacted
+    字段决定是否在 UI 隐藏；prior history 序列化时按 compacted 字段决定
+    用原文还是相邻 compact_segment）。
+    """
+    if get_conversation(conversation_id) is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    msgs = list_messages(conversation_id)
+    return {"messages": [m.to_dict() for m in msgs]}
 
 
 async def _parse_json(request: Request) -> dict:
