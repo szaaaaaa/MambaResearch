@@ -711,7 +711,7 @@ export const WorkbenchTab: React.FC = () => {
   const handleCreateSession = React.useCallback(
     async (
       provider: string | null,
-      opts: { clearItemsOnSuccess?: boolean } = {},
+      opts: { clearItemsOnSuccess?: boolean; cwd?: string } = {},
     ) => {
     const clearItemsOnSuccess = opts.clearItemsOnSuccess ?? true;
     ccGetAbortController()?.abort();
@@ -728,12 +728,17 @@ export const WorkbenchTab: React.FC = () => {
       //   是"零变更"——不传 provider 让 SDK 走 claude CLI 的 OAuth 默认。
       // - 其它 registry 条目（如 deepseek 反代）：传 provider 触发 env 注入是
       //   正常用法。
+      // - cwd 可选：传给后端 _resolve_cwd 校验（必须在 active project 路径内或
+      //   其子目录）。不传则后端默认 active project 根。
       const body: Record<string, unknown> =
         provider === 'codex'
           ? { sandbox_mode: 'read-only' }
           : provider && provider !== 'anthropic'
           ? { permission_mode: permissionMode, provider }
           : { permission_mode: permissionMode };
+      if (opts.cwd && opts.cwd.trim()) {
+        body.cwd = opts.cwd.trim();
+      }
       const response = await fetch(`${API_BASE}${prefix}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -912,6 +917,56 @@ export const WorkbenchTab: React.FC = () => {
   // 当前会话所属的 conversation_id（绑定 backend 后写入；mirror 写入 / hydrate 用）
   const conversationIdRef = React.useRef<string | null>(null);
 
+  // 改 cwd modal — Claude SDK / Codex app-server 都不支持运行时改 cwd，
+  // 所以"改 cwd" = "起一条新对话用新 cwd"。modal 默认填 active project 根
+  // （这是后端允许的最大边界，cwd 必须在该路径内或其子目录）。
+  const [cwdModalOpen, setCwdModalOpen] = React.useState(false);
+  const [cwdDraft, setCwdDraft] = React.useState('');
+  const [cwdSubmitting, setCwdSubmitting] = React.useState(false);
+  const [cwdError, setCwdError] = React.useState<string | null>(null);
+
+  const openCwdModal = React.useCallback(async () => {
+    setCwdError(null);
+    setCwdSubmitting(false);
+    let initial = session?.cwd ?? '';
+    if (!initial) {
+      try {
+        const resp = await fetch(`${API_BASE}/api/projects/active`);
+        if (resp.ok) {
+          const proj = await resp.json();
+          if (typeof proj.path === 'string') initial = proj.path;
+        }
+      } catch {
+        /* ignore — modal 仍能用空值打开 */
+      }
+    }
+    setCwdDraft(initial);
+    setCwdModalOpen(true);
+  }, [session]);
+
+  const submitCwdChange = React.useCallback(async () => {
+    const next = cwdDraft.trim();
+    if (!next) {
+      setCwdError('cwd 不能为空');
+      return;
+    }
+    setCwdSubmitting(true);
+    setCwdError(null);
+    try {
+      // 复用当前 backend；新 session 走 active project 校验路径
+      await handleCreateSession(currentBackend === 'codex' ? 'codex' : null, {
+        cwd: next,
+      });
+      // session.cwd 在 ccSetSession 之后会刷新；handleCreateSession 失败时
+      // pushError 已经报错，这里 modal 仍关闭让用户看到顶部错误条
+      setCwdModalOpen(false);
+    } catch (err) {
+      setCwdError(String(err));
+    } finally {
+      setCwdSubmitting(false);
+    }
+  }, [cwdDraft, currentBackend, handleCreateSession]);
+
   /**
    * 点击顶栏 backend 按钮 — v3.3 语义：**回到该 backend 最近的对话**，找不到就起新。
    *
@@ -963,6 +1018,71 @@ export const WorkbenchTab: React.FC = () => {
       ) : null}
       {renderActivePanel()}
 
+      {cwdModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => {
+            if (!cwdSubmitting) setCwdModalOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="text-sm font-semibold text-slate-900">修改工作目录</h4>
+            <p className="mt-1 text-[12px] leading-5 text-slate-600">
+              Claude / Codex 都不支持运行中改 cwd——确认后会用新 cwd
+              <strong>起一条新对话</strong>，旧对话不动可从"会话列表"回去。
+              cwd 必须在当前 active project 路径内或其子目录。
+            </p>
+
+            <div className="mt-4 flex flex-col gap-1.5">
+              <label className="text-[12px] font-medium text-slate-700">cwd 路径</label>
+              <input
+                type="text"
+                value={cwdDraft}
+                onChange={(e) => setCwdDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !cwdSubmitting) {
+                    e.preventDefault();
+                    void submitCwdChange();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setCwdModalOpen(false);
+                  }
+                }}
+                autoFocus
+                disabled={cwdSubmitting}
+                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 font-mono text-[13px] text-slate-900 outline-none focus:border-slate-500 disabled:opacity-50"
+                placeholder="C:\path\to\dir 或子目录"
+              />
+              {cwdError ? (
+                <p className="text-[12px] text-rose-600">{cwdError}</p>
+              ) : null}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCwdModalOpen(false)}
+                disabled={cwdSubmitting}
+                className="rounded-md border border-slate-200 px-3 py-1 text-[12px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitCwdChange()}
+                disabled={cwdSubmitting || !cwdDraft.trim()}
+                className="rounded-md bg-slate-900 px-3 py-1 text-[12px] font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {cwdSubmitting ? '创建中…' : '用新 cwd 起新对话'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="rb-chat-head">
         <div className="rb-chat-title" style={{ minWidth: 0, flex: 1 }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -976,11 +1096,25 @@ export const WorkbenchTab: React.FC = () => {
               </span>
             ) : null}
             {session ? (
-              <span className="rb-cli-pill mono" title={session.cwd}>
+              <button
+                type="button"
+                className="rb-cli-pill mono"
+                title={`${session.cwd}\n点击修改工作目录（会起一条新对话）`}
+                onClick={() => void openCwdModal()}
+                style={{ cursor: 'pointer' }}
+              >
                 cwd={session.cwd.length > 28 ? `…${session.cwd.slice(-28)}` : session.cwd}
-              </span>
+              </button>
             ) : (
-              <span className="rb-cli-pill">基于 Claude Agent SDK · 首次发送创建会话</span>
+              <button
+                type="button"
+                className="rb-cli-pill"
+                onClick={() => void openCwdModal()}
+                style={{ cursor: 'pointer' }}
+                title="点击设置工作目录，新对话会用此 cwd"
+              >
+                基于 Claude Agent SDK · 首次发送创建会话
+              </button>
             )}
             <button
               type="button"
