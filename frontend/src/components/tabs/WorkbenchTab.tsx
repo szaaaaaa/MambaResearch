@@ -855,6 +855,21 @@ export const WorkbenchTab: React.FC = () => {
   // 当前会话所属的 conversation_id（绑定 backend 后写入；mirror 写入 / hydrate 用）
   const conversationIdRef = React.useRef<string | null>(null);
 
+  /**
+   * 点击顶栏 backend 按钮 — v3.3 语义：**新建**该 backend 对话（不切换）。
+   *
+   * - 当前 session 已是该 backend：no-op（已经在目标 backend 对话里）
+   * - 其它情况（没 session / 当前是另一 backend）：起新 session 并绑定 conversation。
+   *   清空 UI items（视觉上"开了一条新对话"），ensureConversationForSession
+   *   会自动建新 conversation 并把 backend 写到 conversations.backend 列。
+   *
+   * 想"切到现有的另一条对话"（不是新建）→ 点左侧"会话列表"按钮，从那里挑。
+   */
+  const handleBackendChoose = (target: 'claude' | 'codex') => {
+    if (currentBackend === target && session) return;
+    void handleCreateSession(target === 'codex' ? 'codex' : null);
+  };
+
   return (
     <div className="rb-chat" style={{ position: 'relative' }}>
       {activePermission ? (
@@ -897,15 +912,36 @@ export const WorkbenchTab: React.FC = () => {
           <RawEventsToggle value={rawEventsVisible} onChange={ccSetRawEventsVisible} />
           <div className="rb-backend">
             <span className="rb-backend-lbl">后端</span>
-            <span
-              className="rb-cli-pill"
-              title="本对话绑定的 backend，不可切换；想换 backend 请新建对话"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-            >
-              <Terminal size={12} />
-              {currentBackend === 'codex' ? 'codex cli' : 'claude code cli'}
-              {session ? <em style={{ marginLeft: 4 }}>●</em> : null}
-            </span>
+            <div className="rb-backend-tabs">
+              <button
+                type="button"
+                className={`rb-backend-tab ${currentBackend === 'claude' && session ? 'on' : ''}`}
+                onClick={() => handleBackendChoose('claude')}
+                title={
+                  currentBackend === 'claude' && session
+                    ? '当前对话即 Claude Code CLI'
+                    : '新建一条 Claude Code CLI 对话'
+                }
+              >
+                <Terminal size={12} />
+                <span>claude code cli</span>
+                {currentBackend === 'claude' && session ? <em>●</em> : null}
+              </button>
+              <button
+                type="button"
+                className={`rb-backend-tab ${currentBackend === 'codex' && session ? 'on' : ''}`}
+                onClick={() => handleBackendChoose('codex')}
+                title={
+                  currentBackend === 'codex' && session
+                    ? '当前对话即 Codex CLI'
+                    : '新建一条 Codex CLI 对话'
+                }
+              >
+                <Terminal size={12} />
+                <span>codex cli</span>
+                {currentBackend === 'codex' && session ? <em>●</em> : null}
+              </button>
+            </div>
           </div>
           {session && !isRunning ? (
             <button
@@ -980,7 +1016,7 @@ export const WorkbenchTab: React.FC = () => {
               <p style={{ color: 'var(--fg-3)', fontSize: 13.5, padding: '8px 10px', margin: 0 }}>
                 输入需求后按 Enter 发送；首次发送会自动创建{' '}
                 {currentBackend === 'codex' ? 'Codex' : 'Claude Code'} 会话，后续轮次共享上下文。
-                本对话绑定的 backend 在创建时确定，不可切换；想换 backend 请新建对话。
+                右上角点击 claude / codex 切到对应 backend 起新对话；想看历史对话点左上角"会话列表"。
               </p>
             </div>
           ) : (
