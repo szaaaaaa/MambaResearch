@@ -19,7 +19,7 @@ SourceLabel = Literal[
 class McpServerInfo:
     """单个 MCP server 的静态配置信息——不含运行时状态。
 
-    同一个 server name 可能出现在多个 source 里（例如 ``research_agent`` 同时
+    同一个 server name 可能出现在多个 source 里（例如 ``mamba_workspace`` 同时
     被 builtin helper 注册到 Claude SDK + 写在 .codex/config.toml 里）；registry
     按 name 去重，sources 字段累加。
     """

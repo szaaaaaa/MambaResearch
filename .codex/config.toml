@@ -12,13 +12,6 @@
 #
 # 详见 plan 决策：docs/plans/2026-04-23-multi-model-subagent.md Task 5d。
 
-[mcp_servers.research_agent]
-command = "python"
-args = [
-  "-m",
-  "src.mcp_bridge.server",
-]
-
 # Stage 2 — 文件分类索引 server。
 # 暴露 scan / classify_one / list / set_user_override / stats 五个工具；
 # 通过 ``MAMBA_ACTIVE_PROJECT_PATH`` env 定位 active project（每次 tools/call
@@ -63,4 +56,11 @@ command = "python"
 args = [
   "-m",
   "src.server.integrations.experiment.mcp_server",
+]
+
+[mcp_servers.mamba_history]
+command = "python"
+args = [
+  "-m",
+  "src.server.integrations.mamba_history.mcp_server",
 ]

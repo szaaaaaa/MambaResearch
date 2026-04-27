@@ -12,9 +12,9 @@
   ``MAMBA_ACTIVE_PROJECT_PATH`` env var——这样用户在同一个 shell 里激活了
   不同 project 后，长生命 MCP 子进程会自动跟上；env 缺失就返 clean error，
   让前端能区分"环境问题"vs"工具失败"
-* **NDJSON 协议**：与 ``src/mcp_bridge/server.py`` 同形——每条消息一行 JSON、
-  ``\n`` 结尾，与 Claude Code SDK / Codex CLI 的 stdio MCP transport 一致；
-  不要用 LSP 的 Content-Length 帧（那是 dynamic_os 内部 tool backend 协议）
+* **NDJSON 协议**：每条消息一行 JSON、``\n`` 结尾，与 Claude Code SDK /
+  Codex CLI 的 stdio MCP transport 一致；不要用 LSP 的 Content-Length 帧
+  （那是 dynamic_os 内部 tool backend 协议）
 
 工具暴露
 ~~~~~~~~
@@ -569,9 +569,9 @@ DEFAULT_SERVER_KEY = "mamba_workspace"
 def default_mcp_config(root: Path) -> dict[str, dict[str, Any]]:
     """返回供 Claude Agent SDK ``mcp_servers`` 用的默认配置——挂本 server。
 
-    与 ``src/mcp_bridge/__init__.py:default_mcp_config`` 同形式（同样的字段：
-    ``type / command / args / env``）。session_manager 应把两份配置合并后传给
-    ``ClaudeAgentOptions``。
+    返回 Claude Agent SDK ``mcp_servers`` 字段的标准形式（``type / command /
+    args / env``）。session_manager 把多个 builtin helper 的 default config
+    合并后传给 ``ClaudeAgentOptions``。
 
     设计要点
     --------

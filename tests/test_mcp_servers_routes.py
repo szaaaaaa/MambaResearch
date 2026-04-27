@@ -24,7 +24,7 @@ def test_get_servers_returns_at_least_two_builtin(client: TestClient):
     assert resp.status_code == 200
     body = resp.json()
     names = [s["name"] for s in body["servers"]]
-    assert "research_agent" in names
+    assert "mamba_history" in names
     assert "mamba_workspace" in names
 
 

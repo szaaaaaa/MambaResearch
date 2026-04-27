@@ -43,7 +43,7 @@ class McpConfigForbidden(McpConfigError):
 
 
 # 不可被 .mcp.json 覆盖的 builtin server name
-_BUILTIN_NAMES: frozenset[str] = frozenset({"research_agent", "mamba_workspace"})
+_BUILTIN_NAMES: frozenset[str] = frozenset({"mamba_workspace"})
 
 
 def _mcp_json_path(repo_root: Path | None = None) -> Path:

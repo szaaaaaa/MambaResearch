@@ -11,8 +11,8 @@
 ~~~~~~~~
 ``DANGEROUS_TOOLS`` 是手维护的 ``set[(server, tool)]``。在此列表里的工具调用
 要求 client 显式传 ``confirm=True``，否则返 ``need_confirm`` 错。本仓库当前
-所有 builtin server tool 都不在表中（mamba_workspace 仅写本地 DB；
-research_agent 的危险性由 dynamic_os 内部 policy 控）；机制留作未来用户接入
+所有 builtin server tool 都不在表中（mamba_workspace / mamba_history 仅写本地 DB；
+mamba_experiment 的运行边界由其内部 policy 控）；机制留作未来用户接入
 带 shell exec / fs write / 外发 HTTP 的第三方 server 时的护栏。
 """
 

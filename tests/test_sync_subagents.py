@@ -4,8 +4,9 @@
 
 1. 真实 5 份 ``.claude/agents/*.md`` → 生成 5 份 ``.codex/agents/*.toml``，
    且与仓库已 commit 的产物字节一致（保证脚本是幂等 + 同步正确的）。
-2. 字段映射正确（name / description / model=gpt-5.5 / tools / mcp_servers /
-   sandbox_mode 派生规则 / developer_instructions=body）。
+2. 字段映射正确（name / description / model=gpt-5.5 /
+   sandbox_mode 派生规则 / developer_instructions=body），并且不把 Claude-only
+   tools / mcpServers 透传到 Codex TOML。
 3. 源目录为空或不存在 → 返回空列表，不报错。
 4. frontmatter 缺 name（非法） → 抛 ``AgentDefinitionError``。
 """
@@ -94,8 +95,8 @@ def test_field_mapping_paper_searcher_readonly(tmp_path: Path):
     assert data["name"] == "paper-searcher"
     assert data["model"] == "gpt-5.5"
     assert data["sandbox_mode"] == "read-only"
-    assert data["tools"] == ["Read", "WebSearch", "WebFetch", "Grep", "Glob"]
-    assert data["mcp_servers"] == []
+    assert "tools" not in data
+    assert "mcp_servers" not in data
     # developer_instructions 是从 markdown body 透传的非空字符串
     assert isinstance(data["developer_instructions"], str)
     assert "论文搜索专员" in data["developer_instructions"]
@@ -111,8 +112,8 @@ def test_field_mapping_analyzer_workspace_write(tmp_path: Path):
     assert data["name"] == "analyzer"
     assert data["model"] == "gpt-5.5"
     assert data["sandbox_mode"] == "workspace-write"
-    assert set(data["tools"]) >= {"Write", "Edit", "Bash"}
-    assert data["mcp_servers"] == []
+    assert "tools" not in data
+    assert "mcp_servers" not in data
 
 
 def test_field_mapping_writer_workspace_write_via_tools(tmp_path: Path):
@@ -121,8 +122,8 @@ def test_field_mapping_writer_workspace_write_via_tools(tmp_path: Path):
     sync_subagents.sync_directory(_REPO_CLAUDE, dst)
     data = _load_toml(dst / "writer.toml")
     assert data["sandbox_mode"] == "workspace-write"
-    assert "exec" not in data["mcp_servers"]
-    assert {"Write", "Edit"} <= set(data["tools"])
+    assert "mcp_servers" not in data
+    assert "tools" not in data
 
 
 def test_all_toml_are_valid_and_have_required_keys(tmp_path: Path):
@@ -133,8 +134,6 @@ def test_all_toml_are_valid_and_have_required_keys(tmp_path: Path):
         "name",
         "description",
         "model",
-        "tools",
-        "mcp_servers",
         "sandbox_mode",
         "developer_instructions",
     }

@@ -10,7 +10,7 @@ import {
 /**
  * 编辑 .mcp.json 里的自定义 server。
  *
- * Builtin server（research_agent / mamba_workspace）不可改——后端校验并返 403；
+ * Builtin server（mamba_workspace）不可改——后端校验并返 403；
  * 这里只展示用户加进去的自定义 server。
  */
 export const ConfigEditView: React.FC = () => {
@@ -111,7 +111,7 @@ export const ConfigEditView: React.FC = () => {
       </div>
 
       <div className="text-xs text-slate-500 mb-3">
-        本视图编辑 <code>.mcp.json</code>。Builtin server（research_agent / mamba_workspace）由
+        本视图编辑 <code>.mcp.json</code>。Builtin server（mamba_workspace）由
         程序代码维护，无法在此修改 / 删除。
       </div>
 

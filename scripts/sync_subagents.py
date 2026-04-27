@@ -20,9 +20,9 @@ name         name                              scalar string
 description  description                       scalar string
 model        model = "gpt-5.5"                 硬编码（plan 决定：Codex 侧
                                                 不做 haiku/sonnet/opus 分档）
-tools        tools = [...]                     数组透传
-mcpServers   mcp_servers = [...]               TOML snake_case 命名
-(derived)    sandbox_mode                      从 mcpServers / tools 推导
+tools        (not emitted)                     used only to derive sandbox_mode
+mcpServers   (not emitted)                     used only to derive sandbox_mode
+(derived)    sandbox_mode                      derived from mcpServers / tools
 body         developer_instructions            multi-line string
 ============ ================================= ===========================
 
@@ -101,8 +101,6 @@ class ConvertedAgent:
             "name": self.name,
             "description": self.description,
             "model": self.model,
-            "tools": self.tools,
-            "mcp_servers": self.mcp_servers,
             "sandbox_mode": self.sandbox_mode,
             "developer_instructions": self.developer_instructions,
         }

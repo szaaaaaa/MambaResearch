@@ -46,7 +46,7 @@ def logger(db: MambaDb) -> McpCallLogger:
 
 
 def test_parse_mcp_tool_name_simple():
-    assert _parse_mcp_tool_name("mcp__research_agent__plan") == ("research_agent", "plan")
+    assert _parse_mcp_tool_name("mcp__mamba_history__list") == ("mamba_history", "list")
 
 
 def test_parse_mcp_tool_name_underscore_in_server():

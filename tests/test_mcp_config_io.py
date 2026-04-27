@@ -66,11 +66,6 @@ def test_invalid_transport_rejected(tmp_path: Path):
 def test_builtin_name_forbidden(tmp_path: Path):
     with pytest.raises(McpConfigForbidden):
         add_custom_server(
-            {"name": "research_agent", "transport": "stdio", "command": "fake"},
-            repo_root=tmp_path,
-        )
-    with pytest.raises(McpConfigForbidden):
-        add_custom_server(
             {"name": "mamba_workspace", "transport": "stdio", "command": "fake"},
             repo_root=tmp_path,
         )
