@@ -127,6 +127,7 @@ export const HomeScreen: React.FC<Props> = ({ onProjectActivated }) => {
         <CreateProjectModal
           onCancel={() => setCreating(false)}
           onCreate={handleCreate}
+          existingProjects={projects}
         />
       ) : null}
     </div>
