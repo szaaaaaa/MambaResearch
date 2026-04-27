@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Circle, MoreHorizontal } from 'lucide-react';
 import type { ClaudeCodeSessionRow } from '../../../types';
 
@@ -39,7 +40,9 @@ export const SessionListItem: React.FC<Props> = ({
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState<string>(row.title ?? '');
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [menuPos, setMenuPos] = React.useState<{ top: number; right: number } | null>(null);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   // editing 进入时把 draft 同步到当前 title（row 变化也同步）
@@ -51,13 +54,14 @@ export const SessionListItem: React.FC<Props> = ({
     if (editing) inputRef.current?.select();
   }, [editing]);
 
-  // 点击面板外关闭菜单
+  // 点击面板外关闭菜单——同时排除 trigger 按钮，让其点击切换由 onClick 自己处理
   React.useEffect(() => {
     if (!menuOpen) return;
     const handler = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setMenuOpen(false);
     };
     window.addEventListener('mousedown', handler);
     return () => window.removeEventListener('mousedown', handler);
@@ -142,33 +146,48 @@ export const SessionListItem: React.FC<Props> = ({
         >
           <span className="flex items-center gap-1.5">
             {lastTs > 0 ? formatRelative(lastTs) : '—'}
-            {row.provider ? (
-              <span
-                className={`inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-medium ${
-                  // Task 5c — provider 分色：codex 用 emerald（区别于 Claude 家族）
-                  row.provider === 'codex'
-                    ? isActive
-                      ? 'bg-emerald-700 text-emerald-50'
-                      : 'bg-emerald-100 text-emerald-800'
-                    : isActive
-                    ? 'bg-slate-700 text-slate-100'
-                    : 'bg-slate-100 text-slate-700'
-                }`}
-                title={`provider: ${row.provider}`}
-              >
-                {row.provider}
-              </span>
-            ) : null}
+            {/* v3.3 multi-conversation：backend 标签必现，让用户一眼分清 claude vs codex */}
+            <span
+              className={`inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-medium ${
+                row.provider === 'codex'
+                  ? isActive
+                    ? 'bg-emerald-700 text-emerald-50'
+                    : 'bg-emerald-100 text-emerald-800'
+                  : isActive
+                  ? 'bg-slate-700 text-slate-100'
+                  : 'bg-slate-100 text-slate-700'
+              }`}
+              title={
+                row.provider === 'codex'
+                  ? '后端：Codex CLI'
+                  : `后端：Claude Code CLI${row.provider ? `（${row.provider}）` : ''}`
+              }
+            >
+              {row.provider === 'codex' ? 'codex' : 'claude'}
+            </span>
           </span>
           <span className="font-mono">{cost}</span>
         </div>
       </button>
-      <div className="relative" ref={menuRef}>
+      <div className="relative">
         <button
           type="button"
+          ref={triggerRef}
           onClick={(event) => {
             event.stopPropagation();
-            setMenuOpen((v) => !v);
+            if (menuOpen) {
+              setMenuOpen(false);
+              return;
+            }
+            // 用 fixed + portal 渲染 menu，避开 SessionsPanel 的 overflow 裁剪
+            const rect = triggerRef.current?.getBoundingClientRect();
+            if (rect) {
+              setMenuPos({
+                top: rect.bottom + 4,
+                right: window.innerWidth - rect.right,
+              });
+            }
+            setMenuOpen(true);
           }}
           aria-label="会话操作"
           className={`flex h-6 w-6 items-center justify-center rounded opacity-0 transition group-hover:opacity-100 ${
@@ -177,31 +196,43 @@ export const SessionListItem: React.FC<Props> = ({
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>
-        {menuOpen ? (
-          <div className="absolute right-0 top-7 z-10 w-32 overflow-hidden rounded-md border border-slate-200 bg-white text-[12px] text-slate-800 shadow-lg">
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                setEditing(true);
-              }}
-              className="block w-full px-3 py-1.5 text-left hover:bg-slate-100"
-            >
-              重命名
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                onRequestDelete(row.id);
-              }}
-              className="block w-full px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50"
-            >
-              删除
-            </button>
-          </div>
-        ) : null}
       </div>
+      {menuOpen && menuPos
+        ? createPortal(
+            <div
+              ref={menuRef}
+              style={{
+                position: 'fixed',
+                top: menuPos.top,
+                right: menuPos.right,
+                zIndex: 1000,
+              }}
+              className="w-32 overflow-hidden rounded-md border border-slate-200 bg-white text-[12px] text-slate-800 shadow-lg"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setEditing(true);
+                }}
+                className="block w-full px-3 py-1.5 text-left hover:bg-slate-100"
+              >
+                重命名
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onRequestDelete(row.id);
+                }}
+                className="block w-full px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50"
+              >
+                删除
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 };
