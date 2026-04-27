@@ -43,7 +43,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
 
 ## Tasks
 
-### [TODO] 1. 删除 v3.2 hybrid MT 注入路径 + auto-compact 后端模块
+### [DONE] 1. 删除 v3.2 hybrid MT 注入路径 + auto-compact 后端模块
 
 - **What**: 撤回 v3.2 的 5 个 commit 涉及的后端注入路径与 auto-compact runner，但**保留** messages 表 schema + `messages_store.append_message` / `list_by_conversation`（仅作 mirror 写入和跨 conv 查询用）
 - **删除清单**:
@@ -64,7 +64,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
   - 后端启动不报 import 错
   - 老对话仍能 `GET /api/conversations/{id}/messages` 拉到内容
 
-### [TODO] 2. 删除前端切换 backend 路径 + Settings UI auto-compact 区块
+### [DONE] 2. 删除前端切换 backend 路径 + Settings UI auto-compact 区块
 
 - **What**: 删除 WorkbenchTab 的 `handleBackendSwitch` 与切换按钮、`ensureConversationForSession`、SSE compact 事件 handler；删除 ConversationSection 的"上下文自动压缩"Card；删除 ProjectConfig 的 `ui.workbench.auto_compact` 类型字段
 - **Files**:
@@ -77,7 +77,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
   - `cd frontend && npx tsc --noEmit && npm run build` 通过
   - 浏览器开 conversation：单 backend 模式正常对话；顶部不再有"切换 backend"按钮
 
-### [TODO] 3. conversation 创建时绑定 backend，永不变
+### [DONE] 3. conversation 创建时绑定 backend，永不变
 
 - **What**: `POST /api/conversations` 接受 `backend: 'claude' | 'codex'` 必传字段；存到 conversations 表；前端创建 conversation 时弹选择器
 - **Files**:
@@ -90,7 +90,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
   - 新建 conversation 时必选 backend
   - 对话创建后顶部显示 backend tag（不可改）
 
-### [TODO] 4. messages 表降级为 read-only mirror（语义文档化 + 移除注入路径）
+### [DONE] 4. messages 表降级为 read-only mirror（语义文档化 + 移除注入路径）
 
 - **What**: messages 表保留写入（SSE 路由仍 `append_message`），但**移除任何"读 messages 表 → 注入回 backend"** 的路径；语义降级为"跨 conversation 查询的本地 mirror"。`mamba.db` 不动 schema，仅注释 + 文档更新
 - **Files**:
@@ -100,7 +100,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
   - grep 全仓 `serializeHistoryForBackend` 无引用
   - grep 后端 `internal: true` body 字段无引用
 
-### [TODO] 5. mamba_history.* MCP server — 跨 conversation 引用工具
+### [DONE] 5. mamba_history.* MCP server — 跨 conversation 引用工具
 
 - **What**: 新 MCP server 暴露两个 tool：
   - `search_conversations(query: str, k: int = 5)` → `[{conv_id, title, backend, snippet, last_at}]`
@@ -115,7 +115,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
   - `pytest tests/test_mamba_history_mcp.py` 全绿
   - 浏览器对话里说"列一下我之前的对话标题" → backend 调 tool 返回
 
-### [TODO] 6. 文档更新 + 清理
+### [DONE] 6. 文档更新 + 清理
 
 - **What**: README / CLAUDE.md / 大方向 plan 反映新架构；memory 更新
 - **Files**:
@@ -126,7 +126,7 @@ v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 firs
 - **Acceptance**:
   - grep `hybrid master transcript` / `跨 backend 切换` / `auto-compact` 在 README/CLAUDE.md 中无残留
 
-### [TODO] 7. 验证 + 手测
+### [PENDING-VERIFY] 7. 验证 + 手测
 
 - **自动**:
   - `pytest tests/` 全绿
