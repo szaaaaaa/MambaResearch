@@ -124,18 +124,19 @@ class ProjectRegistry:
         return None
 
     def create_project(self, *, name: str, path: str) -> Project:
-        """注册新项目；同 path 已存在则抛 ``ProjectAlreadyExistsError``。
+        """注册新项目。
 
         path 必须存在且是目录；否则抛 ``ProjectPathError``。
+
+        **允许同路径重复注册**：同一物理目录可承载多条独立研究线（譬如
+        G:\\ 上想跑两条不同主题的研究），各自的项目元数据 / conversations
+        / classification.db 在 mambaresearch 侧独立编号，不冲突。物理文件
+        自然共享。``ProjectAlreadyExistsError`` 类型保留作 API 兼容，但
+        本方法不再抛它。
         """
         normalized_path = self._normalize_path(path)
         with self._lock:
             state = self.load()
-            for existing in state.projects:
-                if existing.path == normalized_path:
-                    raise ProjectAlreadyExistsError(
-                        f"路径已注册为项目 {existing.id}: {normalized_path}"
-                    )
             now = int(time.time())
             project = Project(
                 id=uuid.uuid4().hex,

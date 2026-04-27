@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException, Request
 
 from src.server.projects.models import ProjectCreate
 from src.server.projects.registry import (
-    ProjectAlreadyExistsError,
     ProjectNotFoundError,
     ProjectPathError,
     get_registry,
@@ -48,8 +47,6 @@ async def create_project(request: Request) -> dict:
     registry = get_registry()
     try:
         project = registry.create_project(name=body.name, path=body.path)
-    except ProjectAlreadyExistsError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ProjectPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # 创建后立即激活——大方向 plan 锁定的"新建即进入"流程

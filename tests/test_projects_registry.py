@@ -15,7 +15,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.server.projects.registry import (
-    ProjectAlreadyExistsError,
     ProjectNotFoundError,
     ProjectPathError,
     ProjectRegistry,
@@ -79,12 +78,16 @@ def test_create_project_rejects_file_path(
         temp_registry.create_project(name="x", path=str(file_path))
 
 
-def test_create_project_rejects_duplicate_path(
+def test_create_project_allows_duplicate_path(
     temp_registry: ProjectRegistry, project_dir: Path
 ) -> None:
-    temp_registry.create_project(name="first", path=str(project_dir))
-    with pytest.raises(ProjectAlreadyExistsError):
-        temp_registry.create_project(name="second", path=str(project_dir))
+    """同路径多项目允许——不同研究线可以共享物理目录，
+    metadata / conversations 在 mambaresearch 侧独立编号。"""
+    first = temp_registry.create_project(name="first", path=str(project_dir))
+    second = temp_registry.create_project(name="second", path=str(project_dir))
+    assert first.id != second.id
+    assert first.path == second.path
+    assert {p.id for p in temp_registry.load().projects} == {first.id, second.id}
 
 
 def test_activate_and_get_active(
