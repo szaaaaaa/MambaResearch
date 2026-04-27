@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from src.server.projects.cleanup import cleanup_project_data
 from src.server.projects.models import ProjectCreate
 from src.server.projects.registry import (
     ProjectNotFoundError,
@@ -65,11 +66,32 @@ def activate_project(project_id: str) -> dict:
 
 @router.delete("/api/projects/{project_id}")
 def delete_project(project_id: str) -> dict:
+    """删除项目 —— 级联清 mamba.db 中关联的对话 / 消息 / MCP 调用 / 实验记录。
+
+    顺序：
+    1. ``cleanup_project_data`` —— 先把 mamba.db 关联行清掉，避免 registry
+       已删 project 后 cleanup 失败造成 orphan
+    2. ``registry.delete_project`` —— 从 ``projects.json`` 移除 + 处理 active
+
+    **不动**：物理目录 / 项目内 ``.mambaresearch/`` 工作区文件 / backend 自己
+    的 JSONL（claude code / codex 仍可通过原生 CLI ``--resume`` 打开）。
+    """
+    try:
+        get_registry().get_project(project_id)
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    summary = cleanup_project_data(project_id)
     try:
         get_registry().delete_project(project_id)
     except ProjectNotFoundError as exc:
+        # 罕见竞态：cleanup 期间 registry 被另一进程删了——cleanup 已完成，
+        # 不报 500，让 caller 把 404 视为"项目已不在"
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"status": "deleted", "id": project_id}
+    return {
+        "status": "deleted",
+        "id": project_id,
+        "cleaned": summary.to_dict(),
+    }
 
 
 async def _parse_json(request: Request) -> dict:

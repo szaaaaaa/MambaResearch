@@ -57,7 +57,14 @@ export const ProjectCard: React.FC<Props> = ({ project, onOpen, onDelete }) => {
             className="flex w-full items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
             onClick={() => {
               setMenuOpen(false);
-              if (window.confirm(`从注册表中删除项目"${project.name}"？\n\n物理目录不会被删除。`)) {
+              if (
+                window.confirm(
+                  `删除项目"${project.name}"？\n\n` +
+                    `会清除：项目注册项 + 该项目下所有对话历史 / 消息 / MCP 调用记录 / 实验运行记录。\n\n` +
+                    `不会动：物理目录及其文件、项目内 .mambaresearch/ 工作区元数据、` +
+                    `Claude/Codex 自己的会话存储（仍能用 CLI --resume 打开）。`,
+                )
+              ) {
                 onDelete();
               }
             }}
