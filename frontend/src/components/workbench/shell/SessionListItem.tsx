@@ -73,7 +73,16 @@ export const SessionListItem: React.FC<Props> = ({
   };
 
   const display = row.title || defaultTitle(row);
-  const cost = `$${row.total_cost_usd.toFixed(4)}`;
+  // codex session.to_dict() 不返 total_cost_usd / last_message_at（CodexSessionManager
+  // 没接 store），跑这条路径必须容忍缺字段，否则会把整个会话面板撕白。
+  const costValue = typeof row.total_cost_usd === 'number' ? row.total_cost_usd : 0;
+  const cost = `$${costValue.toFixed(4)}`;
+  const lastTs =
+    typeof row.last_message_at === 'number'
+      ? row.last_message_at
+      : typeof row.created_at === 'number'
+        ? row.created_at
+        : 0;
 
   return (
     <div
@@ -132,7 +141,7 @@ export const SessionListItem: React.FC<Props> = ({
           }`}
         >
           <span className="flex items-center gap-1.5">
-            {formatRelative(row.last_message_at)}
+            {lastTs > 0 ? formatRelative(lastTs) : '—'}
             {row.provider ? (
               <span
                 className={`inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-medium ${

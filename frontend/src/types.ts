@@ -397,17 +397,20 @@ export interface ClaudeCodeProviderInfo {
 }
 
 /**
- * GET /api/claude-code/sessions 的单条返回——DB 视图 + running 标记。
- * 比 ClaudeCodeSessionInfo 多了 last_message_at / message_count / cost / running。
+ * GET /api/<backend>/sessions 的单条返回。
+ *
+ * Claude 路径返回 DB 视图（含完整统计字段）。Codex 路径走内存 list_sessions，
+ * to_dict() 不带 message_count / cost 这些；前端必须容忍这些字段缺失，否则
+ * 列表会因渲染崩溃整片白屏。所以这里把统计字段标 optional。
  */
 export interface ClaudeCodeSessionRow extends ClaudeCodeSessionInfo {
-  last_message_at: number;
-  message_count: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cost_usd: number;
-  running: boolean;
-  add_dirs: string[];
+  last_message_at?: number;
+  message_count?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  total_cost_usd?: number;
+  running?: boolean;
+  add_dirs?: string[];
 }
 
 /** Activity Bar 当前激活的 activity id；null 表示 primary panel 收起。 */

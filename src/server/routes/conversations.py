@@ -26,7 +26,10 @@ from src.server.projects.conversations import (
     list_segments,
     update_title,
 )
-from src.server.projects.messages_store import list_by_conversation as list_messages
+from src.server.projects.messages_store import (
+    list_by_conversation as list_messages,
+    lookup_conversation_by_session,
+)
 
 
 router = APIRouter()
@@ -97,6 +100,25 @@ def list_conv_segments(conversation_id: str) -> dict:
         raise HTTPException(status_code=404, detail="conversation not found")
     rows = list_segments(conversation_id)
     return {"segments": [s.to_dict() for s in rows]}
+
+
+@router.get("/api/conversations/by-session/{cli_session_id}")
+def get_by_session(cli_session_id: str) -> dict:
+    """根据 cli_session_id 反查它所属的 conversation。
+
+    用途（v3.3 multi-conversation）：
+    - 前端切换到一条已有 codex session 时，需要找到它对应的 conversation 才能
+      从 messages mirror 拉历史 hydrate UI。Codex 路径没有 SSE 事件回放端点，
+      只能走 conversation mirror 这条路。
+    - 找不到 → 404；找到 → 返回 ``{"conversation_id": "<id>"}``。
+    """
+    conv_id = lookup_conversation_by_session(cli_session_id)
+    if conv_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no conversation associated with session {cli_session_id}",
+        )
+    return {"conversation_id": conv_id}
 
 
 @router.get("/api/conversations/{conversation_id}/messages")

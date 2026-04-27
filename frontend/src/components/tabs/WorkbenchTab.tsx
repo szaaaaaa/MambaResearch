@@ -621,11 +621,19 @@ export const WorkbenchTab: React.FC = () => {
   }, [isRunning, pushError, ccReset]);
 
   /**
-   * 侧栏点击切换会话：未发送输入用 confirm 挡一下，in-flight 请求先 abort，
-   * 然后走 loadSessionById 拉历史 + ccHydrateHistory。
+   * 切换会话——v3.3 multi-conversation 路径，**provider-aware**。
+   *
+   * Claude 路径：``/api/claude-code/sessions/<id>/messages`` 完整事件回放，
+   *   保留 thinking blocks / tool_use / permission 状态，UI 完整度最高。
+   *
+   * Codex 路径：Codex 后端没暴露 ``/messages`` 端点（SSE 事件不持久化），只能
+   *   走"GET session detail + lookup conv_id + 从 messages mirror 拉文本"
+   *   路径。视觉上能恢复消息文本，但 tool_use 等结构化块还原成纯文本。
+   *
+   * 找不到对应资源（404 等）→ pushError 让用户感知，不悄悄成功。
    */
   const handleSwitchSession = React.useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string, providerHint?: string | null) => {
       if (sessionRef.current?.id === sessionId) return;
       if (prompt.trim()) {
         if (!window.confirm('当前输入框有未发送的内容，切换会话将丢弃。确定？')) return;
@@ -634,10 +642,59 @@ export const WorkbenchTab: React.FC = () => {
       controller?.abort();
       setPrompt('');
       setAutocompleteDismissed(false);
+
+      const provider =
+        providerHint ??
+        state.claudeCode.sessionList.find((r) => r.id === sessionId)?.provider ??
+        null;
+
+      if (provider === 'codex') {
+        // Codex: detail + mirror hydrate
+        try {
+          const detailResp = await fetch(`${API_BASE}/api/codex/sessions/${sessionId}`);
+          if (!detailResp.ok) {
+            pushError(`切换会话失败：${sessionId.slice(0, 8)} 不存在或已被删除`);
+            return;
+          }
+          const info = (await detailResp.json()) as ClaudeCodeSessionInfo;
+          sessionRef.current = info;
+          ccSetSession(info);
+          writeLastSessionId(sessionId);
+
+          ccClearItems();
+          const convResp = await fetch(
+            `${API_BASE}/api/conversations/by-session/${sessionId}`,
+          );
+          if (convResp.ok) {
+            const data = (await convResp.json()) as { conversation_id?: string };
+            if (data.conversation_id) {
+              conversationIdRef.current = data.conversation_id;
+              writeLastConvId(data.conversation_id);
+              const messages = await getConversationMessages(data.conversation_id);
+              if (messages.length > 0) {
+                ccHydrateFromMessages(messages);
+              }
+            }
+          }
+        } catch (err) {
+          pushError(`切换会话失败：${String(err)}`);
+        }
+        return;
+      }
+      // Claude（含未指定 provider 的兼容路径）
       const ok = await loadSessionById(sessionId);
       if (!ok) pushError(`切换会话失败：${sessionId.slice(0, 8)} 不存在或已被删除`);
     },
-    [prompt, ccGetAbortController, loadSessionById, pushError],
+    [
+      prompt,
+      ccGetAbortController,
+      loadSessionById,
+      pushError,
+      state.claudeCode.sessionList,
+      ccSetSession,
+      ccClearItems,
+      ccHydrateFromMessages,
+    ],
   );
 
   /**
@@ -856,17 +913,46 @@ export const WorkbenchTab: React.FC = () => {
   const conversationIdRef = React.useRef<string | null>(null);
 
   /**
-   * 点击顶栏 backend 按钮 — v3.3 语义：**新建**该 backend 对话（不切换）。
+   * 点击顶栏 backend 按钮 — v3.3 语义：**回到该 backend 最近的对话**，找不到就起新。
    *
-   * - 当前 session 已是该 backend：no-op（已经在目标 backend 对话里）
-   * - 其它情况（没 session / 当前是另一 backend）：起新 session 并绑定 conversation。
-   *   清空 UI items（视觉上"开了一条新对话"），ensureConversationForSession
-   *   会自动建新 conversation 并把 backend 写到 conversations.backend 列。
+   * 流程：
+   * 1. 当前 session 已是该 backend → no-op
+   * 2. 调 ``/api/<backend>/sessions`` 取该 backend 全部 session，按
+   *    ``last_message_at`` / ``created_at`` 取最新一条 → handleSwitchSession 切过去
+   * 3. 该 backend 一条都没有 → handleCreateSession 起新
    *
-   * 想"切到现有的另一条对话"（不是新建）→ 点左侧"会话列表"按钮，从那里挑。
+   * 这避免了"每次点击都建新"的 bug：用户点 codex → 写一条 → 点 claude → 写一条 →
+   * 再点 codex 应该回到刚才那条 codex 对话，而不是又起一条新的。
+   *
+   * 想显式开一条新对话 → 点左侧"会话列表"里的 + 按钮。
    */
-  const handleBackendChoose = (target: 'claude' | 'codex') => {
+  const handleBackendChoose = async (target: 'claude' | 'codex') => {
     if (currentBackend === target && session) return;
+    try {
+      const prefix = target === 'codex' ? '/api/codex' : '/api/claude-code';
+      const resp = await fetch(`${API_BASE}${prefix}/sessions`);
+      if (resp.ok) {
+        const data = (await resp.json()) as {
+          sessions: Array<{
+            id: string;
+            provider?: string | null;
+            last_message_at?: number;
+            created_at?: number;
+          }>;
+        };
+        const sessions = (data.sessions ?? []).slice().sort(
+          (a, b) =>
+            (b.last_message_at ?? b.created_at ?? 0) -
+            (a.last_message_at ?? a.created_at ?? 0),
+        );
+        if (sessions.length > 0) {
+          await handleSwitchSession(sessions[0].id, target);
+          return;
+        }
+      }
+    } catch {
+      // ignore — fall through to create
+    }
     void handleCreateSession(target === 'codex' ? 'codex' : null);
   };
 
