@@ -43,24 +43,28 @@ frontend/dist/
 *.db
 *.bin
 
-# Claude Code — exclude .claude/ children (worktrees, hooks, local state)
-# but keep .claude/agents/ (subagent defs) and .claude/skills/ (project-local
-# pipeline SKILL.md, e.g. Stage 5 v3 7 pipelines + Stage 2 classify-workspace).
-# Use `.claude/*` (not `.claude/`) so git can still descend into the dir and
-# apply the negations for subagent / skill files below.
+# Claude Code — exclude .claude/ children (worktrees, hooks, local state).
+# .claude/skills/ is intentionally excluded: after running scripts/skills_mirror.ps1
+# it becomes a directory of NTFS junctions pointing into .skills-shared/, which
+# git cannot represent portably. The physical SKILL.md files live in .skills-shared/.
 .claude/*
 !.claude/agents/
 !.claude/agents/**
-!.claude/skills/
-!.claude/skills/**
 
 # Codex — exclude .codex/ children (local state, history, cache) but keep
 # .codex/agents/ (auto-generated from .claude/agents/ via scripts/sync_subagents.py)
 # and .codex/config.toml (project-level MCP for codex app-server; Task 5).
+# .codex/skills/ is excluded for the same junction reason as .claude/skills/.
 .codex/*
 !.codex/agents/
 !.codex/agents/**
 !.codex/config.toml
+
+# Skills mirror — physical source of truth for both Claude / Codex skill loaders.
+# .claude/skills/<name> and .codex/skills/<name> are NTFS junctions pointing here.
+# Tracked in git so team members get the same skills after running skills_mirror.ps1.
+!.skills-shared/
+!.skills-shared/**
 
 # Self-improvement — project-local Claude learnings, personal dev memory
 .learnings/

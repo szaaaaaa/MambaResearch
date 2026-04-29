@@ -49,13 +49,13 @@ If you find yourself about to write code without having invoked the applicable o
 - `frontend/src/` 前端代码
 - `configs/agent.yaml` 配置调整
 - `scripts/`、`docs/`
-- `.claude/agents/*.md`、`.claude/skills/*/SKILL.md`（pipeline / sub-agent 蒸馏文档）
+- `.claude/agents/*.md`、`.skills-shared/*/SKILL.md`（pipeline / sub-agent 蒸馏文档；`.claude/skills/` 与 `.codex/skills/` 是指向 `.skills-shared/` 的 NTFS junction，不直接编辑）
 
 # 架构约定 — 新功能加在哪
 
 | 类型 | 位置 | 注册方式 |
 |------|------|----------|
-| 新 pipeline | `.claude/skills/<pipeline-name>/SKILL.md` | Claude/Codex 主 agent 自动发现 |
+| 新 pipeline | `.skills-shared/<pipeline-name>/SKILL.md`（双向 mirror 到 `.claude/skills/` 与 `.codex/skills/`） | 跑 `pwsh scripts/skills_mirror.ps1 -Scope project` 建/补 junction |
 | 新 sub-agent | `.claude/agents/<role>.md`（frontmatter + 系统提示） | `scripts/sync_subagents.py` 同步 .codex/agents/*.toml |
 | 新 API | `src/server/routes/` 新文件 | `app.py` 里 `include_router()` |
 | 新前端组件 | `frontend/src/components/*.tsx` | 父组件引用 |
@@ -83,7 +83,7 @@ If you find yourself about to write code without having invoked the applicable o
 
 # Pipeline artifact 命名约定
 
-`.claude/skills/` 下的 7 个 pipeline SKILL 共用一套 workspace artifact 命名约定。所有 sub-agent 之间通过这些文件传递 artifact，不依赖任何 in-memory artifact store。
+`.skills-shared/` 下的 7 个 pipeline SKILL 共用一套 workspace artifact 命名约定（Claude / Codex 通过 `.claude/skills/` `.codex/skills/` junction 都能加载到同一物理文件）。所有 sub-agent 之间通过这些文件传递 artifact，不依赖任何 in-memory artifact store。
 
 ## 路径前缀
 
