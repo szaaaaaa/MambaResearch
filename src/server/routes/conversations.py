@@ -1,14 +1,22 @@
 """Conversations 与 segments 的 HTTP 路由。
 
-Stage 1 范围
-------------
-仅暴露：
-- ``GET    /api/conversations?project_id=<id>``    列出指定项目的会话
-- ``POST   /api/conversations``                    新建空会话 ``{project_id, title?}``
+端点
+----
+- ``GET    /api/conversations?project_id=<id>[&asset_kind=<kind|null>]``
+                                                   列出指定项目的会话；可选按
+                                                   asset_kind 过滤；``null`` 表示
+                                                   asset_kind IS NULL（草稿箱）
+- ``POST   /api/conversations``                    新建空会话
+                                                   ``{project_id, title?, backend?,
+                                                    asset_kind?, asset_label?}``
 - ``GET    /api/conversations/{id}``               单会话详情
-- ``PATCH  /api/conversations/{id}``               改 title
+- ``PATCH  /api/conversations/{id}``               改 title / asset 字段
+                                                   ``{title?, asset_kind?, asset_label?}``
 - ``DELETE /api/conversations/{id}``               删（级联删 segments）
 - ``GET    /api/conversations/{id}/segments``      列 segments
+- ``POST   /api/conversations/{id}/promote-to-asset``
+                                                   草稿 → 素材一键转换
+                                                   ``{asset_kind, asset_label}``
 
 **不**暴露 segment 创建端点——segment 由 Stage 3 跨 CLI 桥在 backend 内部
 自动写入，前端不需要也不应该直接控制 segment 序列。
@@ -19,11 +27,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.server.projects.conversations import (
+    DRAFTS_FILTER,
+    VALID_ASSET_KINDS,
     create_conversation,
     delete_conversation,
     get_conversation,
     list_by_project,
     list_segments,
+    update_asset,
     update_title,
 )
 from src.server.projects.messages_store import (
@@ -35,9 +46,57 @@ from src.server.projects.messages_store import (
 router = APIRouter()
 
 
+def _coerce_asset_kind_filter(raw: str | None):
+    """URL ``?asset_kind=`` 参数 → ``list_by_project`` 的 asset_kind 入参。
+
+    - 缺省或空：None（不过滤）
+    - ``"null"``（不区分大小写）：DRAFTS_FILTER（草稿）
+    - 4 个 valid kind 之一：返回该字符串
+    - 其他：HTTP 400
+    """
+    if raw is None or not raw.strip():
+        return None
+    s = raw.strip().lower()
+    if s == "null":
+        return DRAFTS_FILTER
+    if s not in VALID_ASSET_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"asset_kind must be one of {list(VALID_ASSET_KINDS)} or 'null', "
+                f"got {raw!r}"
+            ),
+        )
+    return s
+
+
+def _validate_asset_kind_value(raw, *, allow_none: bool):
+    """body ``asset_kind`` 字段校验。``allow_none=True`` 时 None 合法（用于
+    PATCH 的 partial 语义）；``False`` 时 None 视为缺失。"""
+    if raw is None:
+        if not allow_none:
+            return None
+        return None
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status_code=400,
+            detail="asset_kind must be string or null",
+        )
+    if raw not in VALID_ASSET_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"asset_kind must be one of {list(VALID_ASSET_KINDS)}",
+        )
+    return raw
+
+
 @router.get("/api/conversations")
-def list_conversations(project_id: str = Query(..., min_length=1)) -> dict:
-    rows = list_by_project(project_id)
+def list_conversations(
+    project_id: str = Query(..., min_length=1),
+    asset_kind: str | None = Query(default=None),
+) -> dict:
+    asset_filter = _coerce_asset_kind_filter(asset_kind)
+    rows = list_by_project(project_id, asset_kind=asset_filter)
     return {"conversations": [c.to_dict() for c in rows]}
 
 
@@ -57,8 +116,20 @@ async def post_conversation(request: Request) -> dict:
         raise HTTPException(
             status_code=400, detail=f"backend must be 'claude' or 'codex', got {backend!r}"
         )
+    # 2026-04-29 asset-centric：可选 asset_kind + asset_label 一并落库
+    asset_kind = _validate_asset_kind_value(payload.get("asset_kind"), allow_none=True)
+    asset_label_raw = payload.get("asset_label")
+    asset_label = (
+        asset_label_raw.strip()
+        if isinstance(asset_label_raw, str) and asset_label_raw.strip()
+        else None
+    )
     conv = create_conversation(
-        project_id=project_id_raw.strip(), title=title, backend=backend
+        project_id=project_id_raw.strip(),
+        title=title,
+        backend=backend,
+        asset_kind=asset_kind,
+        asset_label=asset_label,
     )
     return conv.to_dict()
 
@@ -73,14 +144,87 @@ def get_one(conversation_id: str) -> dict:
 
 @router.patch("/api/conversations/{conversation_id}")
 async def patch_one(conversation_id: str, request: Request) -> dict:
+    """部分更新。可改 ``title`` 与 asset 字段。
+
+    body 字段语义（key 缺省 = 不动该字段）：
+    - ``title``：``str`` 改名；``null`` 清空
+    - ``asset_kind`` + ``asset_label``：必须**同时给**，作为一组原子更新
+      （单独给一个语义不清——避免后续 dangling label）
+    """
     payload = await _parse_json(request)
-    if "title" not in payload:
-        raise HTTPException(status_code=400, detail="title is required")
-    title_raw = payload.get("title")
-    title = title_raw.strip() if isinstance(title_raw, str) and title_raw.strip() else None
-    ok = update_title(conversation_id, title)
-    if not ok:
+    has_title = "title" in payload
+    has_asset = "asset_kind" in payload or "asset_label" in payload
+    if not has_title and not has_asset:
+        raise HTTPException(
+            status_code=400,
+            detail="at least one of {title, asset_kind+asset_label} is required",
+        )
+    if get_conversation(conversation_id) is None:
         raise HTTPException(status_code=404, detail="conversation not found")
+    if has_title:
+        title_raw = payload.get("title")
+        title = (
+            title_raw.strip()
+            if isinstance(title_raw, str) and title_raw.strip()
+            else None
+        )
+        update_title(conversation_id, title)
+    if has_asset:
+        if "asset_kind" not in payload or "asset_label" not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail="asset_kind and asset_label must be provided together",
+            )
+        asset_kind = _validate_asset_kind_value(
+            payload.get("asset_kind"), allow_none=True
+        )
+        asset_label_raw = payload.get("asset_label")
+        asset_label = (
+            asset_label_raw.strip()
+            if isinstance(asset_label_raw, str) and asset_label_raw.strip()
+            else None
+        )
+        update_asset(
+            conversation_id,
+            asset_kind=asset_kind,
+            asset_label=asset_label,
+        )
+    conv = get_conversation(conversation_id)
+    assert conv is not None
+    return conv.to_dict()
+
+
+@router.post("/api/conversations/{conversation_id}/promote-to-asset")
+async def promote_to_asset(conversation_id: str, request: Request) -> dict:
+    """草稿 → 素材一键转换。
+
+    body：``{asset_kind: "experiment"|"literature"|"dataset"|"idea",
+             asset_label: str (non-empty)}``
+
+    与 PATCH 区别：promote 强制要求 asset_kind 非 NULL（不能"反向促成"），
+    并且 asset_label 必须非空——这是 UI"转为素材"按钮的专用语义入口。
+    """
+    payload = await _parse_json(request)
+    asset_kind = _validate_asset_kind_value(
+        payload.get("asset_kind"), allow_none=False
+    )
+    if asset_kind is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"asset_kind is required, must be one of {list(VALID_ASSET_KINDS)}",
+        )
+    asset_label_raw = payload.get("asset_label")
+    if not isinstance(asset_label_raw, str) or not asset_label_raw.strip():
+        raise HTTPException(
+            status_code=400, detail="asset_label is required and must be non-empty"
+        )
+    if get_conversation(conversation_id) is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    update_asset(
+        conversation_id,
+        asset_kind=asset_kind,
+        asset_label=asset_label_raw.strip(),
+    )
     conv = get_conversation(conversation_id)
     assert conv is not None
     return conv.to_dict()

@@ -13,6 +13,7 @@ from src.server.routes.codex import router as codex_router
 from src.server.routes.config import router as config_router
 from src.server.routes.conversation_switch import router as conversation_switch_router
 from src.server.routes.conversations import router as conversations_router
+from src.server.routes.history_runs import router as history_runs_router
 from src.server.routes.library import router as library_router
 from src.server.routes.literature import router as literature_router
 from src.server.routes.mcp_calls import router as mcp_calls_router
@@ -55,6 +56,7 @@ app.include_router(mcp_servers_router)
 app.include_router(mcp_calls_router)
 app.include_router(literature_router)
 app.include_router(library_router)
+app.include_router(history_runs_router)
 
 
 @app.on_event("startup")

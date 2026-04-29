@@ -144,6 +144,19 @@ MIGRATIONS: list[str] = [
         ADD COLUMN backend TEXT NOT NULL DEFAULT 'claude'
         CHECK (backend IN ('claude', 'codex'));
     """,
+    # v6: asset 标签字段（2026-04-29 asset-centric UI pivot）
+    # 每条 conversation 可选关联到一个"素材"——逻辑实体，无独立表。
+    # asset_kind 为 NULL 时该对话进入"草稿箱"；非 NULL 时归到对应 bucket。
+    # asset_label 是用户起的素材名（如 "mamba baseline"）；同名不强制唯一。
+    """
+    ALTER TABLE conversations
+        ADD COLUMN asset_kind TEXT
+        CHECK (asset_kind IS NULL OR asset_kind IN ('experiment', 'literature', 'dataset', 'idea'));
+    ALTER TABLE conversations
+        ADD COLUMN asset_label TEXT;
+    CREATE INDEX IF NOT EXISTS idx_conversations_asset
+        ON conversations(asset_kind, last_active_at DESC);
+    """,
 ]
 
 

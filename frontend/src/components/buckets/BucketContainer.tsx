@@ -1,18 +1,33 @@
 import React from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Layers } from 'lucide-react';
 import {
   ClassificationStats,
   FileEntry,
   PrimaryBucket,
   WorkspaceConfig,
+  getActiveProject,
   getWorkspace,
   getWorkspaceStats,
   listWorkspaceFiles,
   scanWorkspace,
 } from '../../api/projects';
+import {
+  AssetKind,
+  ConversationSummary,
+  listConversations,
+} from '../../api/conversations';
+import { useContextualTabs } from '../../store/contextual';
 import { FileItemRow } from './FileItemRow';
 import { BucketEmptyState, BucketEmptyTier } from './BucketEmptyState';
+
+// PrimaryBucket 包含 'unknown'（未分类），asset 仅在 4 个正式 bucket 上有意义
+const PRIMARY_TO_ASSET_KIND: Partial<Record<PrimaryBucket, AssetKind>> = {
+  experiment: 'experiment',
+  literature: 'literature',
+  dataset: 'dataset',
+  idea: 'idea',
+};
 
 interface Props {
   bucket: PrimaryBucket;
@@ -73,23 +88,37 @@ export const BucketContainer: React.FC<Props> = ({
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [stats, setStats] = React.useState<ClassificationStats | null>(null);
   const [workspace, setWorkspace] = React.useState<WorkspaceConfig | null>(null);
+  // 2026-04-29 asset-centric pivot：bucket 视图顶部加素材网格 section（按
+  // asset_kind 过滤的 conversations），点卡片用 contextual tab 打开素材工作台
+  const [assets, setAssets] = React.useState<ConversationSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [scanning, setScanning] = React.useState(false);
   const [scanMessage, setScanMessage] = React.useState<string | null>(null);
 
+  const { openTab, replaceActiveTab } = useContextualTabs();
+
   const refresh = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [items, statsResp, ws] = await Promise.all([
+      const [items, statsResp, ws, project] = await Promise.all([
         listWorkspaceFiles(bucket, undefined, 500),
         getWorkspaceStats(),
         getWorkspace(),
+        getActiveProject(),
       ]);
       setFiles(items);
       setStats(statsResp);
       setWorkspace(ws);
+
+      const assetKind = PRIMARY_TO_ASSET_KIND[bucket];
+      if (project && assetKind !== undefined) {
+        const convs = await listConversations(project.id, assetKind);
+        setAssets(convs);
+      } else {
+        setAssets([]);
+      }
     } catch (err: any) {
       setError(err?.detail || err?.message || '加载失败');
     } finally {
@@ -146,7 +175,174 @@ export const BucketContainer: React.FC<Props> = ({
     );
   }
 
-  if (files.length === 0) {
+  // 单击素材卡：替换当前 active asset tab；Cmd/Ctrl/中键：新 tab 打开
+  const openAssetTab = (
+    conv: ConversationSummary,
+    mode: 'replace' | 'new',
+  ): void => {
+    const init = {
+      type: 'asset' as const,
+      title: conv.asset_label || conv.title || conv.id.slice(0, 8),
+      key: conv.id,
+      props: { conversation: conv },
+    };
+    if (mode === 'new') {
+      openTab(init);
+    } else {
+      replaceActiveTab(init);
+    }
+  };
+
+  const handleAssetCardMouseDown = (
+    conv: ConversationSummary,
+    e: React.MouseEvent<HTMLButtonElement>,
+  ): void => {
+    // 中键点击 = 新 tab；左键 + Cmd/Ctrl/Shift = 新 tab；否则替换
+    if (e.button === 1) {
+      e.preventDefault();
+      openAssetTab(conv, 'new');
+    }
+  };
+  const handleAssetCardClick = (
+    conv: ConversationSummary,
+    e: React.MouseEvent<HTMLButtonElement>,
+  ): void => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      openAssetTab(conv, 'new');
+    } else {
+      openAssetTab(conv, 'replace');
+    }
+  };
+
+  const formatRelative = (ts: number): string => {
+    const diff = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+    if (diff < 86400 * 7) return `${Math.floor(diff / 86400)} 天前`;
+    const d = new Date(ts * 1000);
+    return `${d.getMonth() + 1}-${d.getDate()}`;
+  };
+
+  const renderAssetGrid = () => {
+    if (assets.length === 0) return null;
+    return (
+      <section style={{ padding: '16px 20px' }}>
+        <header
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 12,
+            color: 'var(--fg-2)',
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+          }}
+        >
+          <Layers size={13} />
+          素材 ({assets.length})
+        </header>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: 12,
+          }}
+        >
+          {assets.map((conv) => {
+            const cardTitle = conv.asset_label || conv.title || conv.id.slice(0, 8);
+            const backendDot =
+              conv.backend === 'codex' ? 'var(--role-writer-fg)' : 'var(--ok-dot)';
+            return (
+              <button
+                key={conv.id}
+                type="button"
+                onClick={(e) => handleAssetCardClick(conv, e)}
+                onMouseDown={(e) => handleAssetCardMouseDown(conv, e)}
+                onAuxClick={(e) => {
+                  // 部分浏览器中键也走 onClick 但有些只走 onAuxClick
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    openAssetTab(conv, 'new');
+                  }
+                }}
+                title={`${cardTitle}\n${conv.backend} · ${conv.id.slice(0, 8)}`}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '1px solid var(--line-1)',
+                  background: 'var(--bg-3)',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  boxShadow: 'var(--shadow-card)',
+                  transition: 'border-color 120ms, box-shadow 120ms',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor =
+                    'var(--line-2)';
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow =
+                    'var(--shadow-raised)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.borderColor =
+                    'var(--line-1)';
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow =
+                    'var(--shadow-card)';
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon size={16} color="var(--fg-2)" />
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: 'var(--fg-1)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    {cardTitle}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 11,
+                    color: 'var(--fg-3)',
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 999,
+                      background: backendDot,
+                    }}
+                  />
+                  <span>{conv.backend === 'codex' ? 'Codex' : 'Claude'}</span>
+                  <span>·</span>
+                  <span>{formatRelative(conv.last_active_at)}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    );
+  };
+
+  if (files.length === 0 && assets.length === 0) {
     const tier: BucketEmptyTier = (() => {
       if (!workspace || workspace.source_dirs.length === 0) return 'no_source_dirs';
       if (!stats || stats.total === 0) return 'never_scanned';
@@ -183,12 +379,21 @@ export const BucketContainer: React.FC<Props> = ({
 
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 bg-white">
-          <div className="flex items-center gap-2">
-            <Icon size={16} className="text-slate-500" />
-            <span className="text-sm font-medium text-slate-900">{title}</span>
+        <div
+          className="flex items-center justify-between"
+          style={{
+            borderBottom: '1px solid var(--line-1)',
+            background: 'var(--bg-3)',
+            padding: '10px 16px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon size={16} color="var(--fg-2)" />
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg-1)' }}>
+              {title}
+            </span>
             {stats ? (
-              <span className="text-xs text-slate-500">
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>
                 {stats.total === 0
                   ? '未扫描'
                   : `已分类 ${stats.total - (stats.by_bucket?.unknown ?? 0)} / 待分类 ${
@@ -202,8 +407,19 @@ export const BucketContainer: React.FC<Props> = ({
               type="button"
               onClick={handleScan}
               disabled={scanning}
-              className="inline-flex items-center gap-1.5 text-xs text-slate-600 px-2 py-1 rounded hover:bg-slate-100"
               title="重新扫描所有源目录"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                color: 'var(--fg-2)',
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: 0,
+                background: 'transparent',
+                cursor: scanning ? 'wait' : 'pointer',
+              }}
             >
               <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} />
               {scanning ? '扫描中…' : '扫描 workspace'}
@@ -226,19 +442,43 @@ export const BucketContainer: React.FC<Props> = ({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 bg-white">
-        <div className="flex items-center gap-2">
-          <Icon size={16} className="text-slate-500" />
-          <span className="text-sm font-medium text-slate-900">{title}</span>
-          <span className="text-xs text-slate-500">{files.length} / {stats?.total ?? '?'}</span>
+      <div
+        className="flex items-center justify-between"
+        style={{
+          borderBottom: '1px solid var(--line-1)',
+          background: 'var(--bg-3)',
+          padding: '10px 16px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon size={16} color="var(--fg-2)" />
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg-1)' }}>
+            {title}
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+            {assets.length} 素材 · {files.length} 文件
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          {scanMessage ? <span className="text-xs text-slate-500">{scanMessage}</span> : null}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {scanMessage ? (
+            <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{scanMessage}</span>
+          ) : null}
           <button
             type="button"
             onClick={handleScan}
             disabled={scanning}
-            className="inline-flex items-center gap-1.5 text-xs text-slate-600 px-2 py-1 rounded hover:bg-slate-100"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--fg-2)',
+              padding: '4px 8px',
+              borderRadius: 6,
+              border: 0,
+              background: 'transparent',
+              cursor: scanning ? 'wait' : 'pointer',
+            }}
           >
             <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} />
             {scanning ? '扫描中…' : '重新扫描'}
@@ -247,16 +487,48 @@ export const BucketContainer: React.FC<Props> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {groups.map(([subtype, items]) => (
-          <div key={subtype} className="border-b border-slate-100">
-            <div className="sticky top-0 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-600 border-b border-slate-200">
-              {subtype} <span className="text-slate-400">({items.length})</span>
-            </div>
-            {items.map((f) => (
-              <FileItemRow key={f.path} file={f} />
+        {renderAssetGrid()}
+        {files.length > 0 ? (
+          <section>
+            <header
+              style={{
+                padding: '12px 20px 6px',
+                color: 'var(--fg-2)',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+              }}
+            >
+              文件 ({files.length})
+            </header>
+            {groups.map(([subtype, items]) => (
+              <div
+                key={subtype}
+                style={{ borderBottom: '1px solid var(--line-1)' }}
+              >
+                <div
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: 'var(--bg-1)',
+                    padding: '6px 16px',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: 'var(--fg-2)',
+                    borderBottom: '1px solid var(--line-1)',
+                  }}
+                >
+                  {subtype}{' '}
+                  <span style={{ color: 'var(--fg-3)' }}>({items.length})</span>
+                </div>
+                {items.map((f) => (
+                  <FileItemRow key={f.path} file={f} />
+                ))}
+              </div>
             ))}
-          </div>
-        ))}
+          </section>
+        ) : null}
       </div>
     </div>
   );

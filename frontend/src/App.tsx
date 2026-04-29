@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileText, Database, Lightbulb, FlaskConical, Users, Plug } from 'lucide-react';
-import { AppProvider, useAppContext } from './store';
+import { AppProvider } from './store';
 import { MambaSidebar, NavId } from './components/MambaSidebar';
 import { PlaceholderView } from './components/PlaceholderView';
 import { HistoryTab } from './components/tabs/HistoryTab';
@@ -13,6 +13,7 @@ import { TopBar } from './components/layout/TopBar';
 import { BucketContainer } from './components/buckets/BucketContainer';
 import { McpTab } from './components/mcp/McpTab';
 import { LibraryTab } from './components/library/LibraryTab';
+import { DraftsTab } from './components/tabs/DraftsTab';
 import { getActiveProject, Project } from './api/projects';
 import { ContextualTabsProvider, useActiveContextualTab, useContextualTabs } from './store/contextual';
 import { ContextualTabBar } from './components/contextual/ContextualTabBar';
@@ -57,6 +58,7 @@ function loadLastNav(): Exclude<NavId, 'set'> {
     'pap',
     'data',
     'idea',
+    'drafts',
     'skill',
     'roles',
     'mcp',
@@ -79,15 +81,6 @@ if (typeof window !== 'undefined') {
 type AppView = 'home' | 'ide';
 
 const AppContent: React.FC = () => {
-  const {
-    state,
-    createConversation,
-    selectConversation,
-    renameConversation,
-    duplicateConversation,
-    archiveConversation,
-    deleteConversation,
-  } = useAppContext();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(() => loadUiPreferences());
   const [appView, setAppView] = React.useState<AppView>('home');
@@ -142,16 +135,6 @@ const AppContent: React.FC = () => {
       return;
     }
     setActiveNav(id);
-  };
-
-  const handleSelectConversation = (id: string) => {
-    selectConversation(id);
-    setActiveNav('hist');
-  };
-
-  const handleCreateConversation = () => {
-    createConversation();
-    setActiveNav('hist');
   };
 
   const handleProjectActivated = (project: Project) => {
@@ -229,6 +212,8 @@ const AppContent: React.FC = () => {
         return <McpTab />;
       case 'library':
         return <LibraryTab />;
+      case 'drafts':
+        return <DraftsTab />;
     }
   };
 
@@ -267,18 +252,7 @@ const AppContent: React.FC = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
         />
         <div className="rb-app" style={{ flex: 1, minHeight: 0 }}>
-          <MambaSidebar
-            active={activeNav}
-            onNav={handleNav}
-            conversations={state.conversations}
-            activeConversationId={state.activeConversationId}
-            onSelectConversation={handleSelectConversation}
-            onCreateConversation={handleCreateConversation}
-            onRenameConversation={renameConversation}
-            onDuplicateConversation={duplicateConversation}
-            onArchiveConversation={archiveConversation}
-            onDeleteConversation={deleteConversation}
-          />
+          <MambaSidebar active={activeNav} onNav={handleNav} />
           <main style={{ minWidth: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <ContextualTabBar />
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>{renderMainArea()}</div>

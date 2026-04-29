@@ -620,20 +620,6 @@ function normalizeSession(value: unknown): ChatSession | null {
   };
 }
 
-function nextActiveConversationId(conversations: ChatSession[], fallbackId: string): string {
-  const firstUnarchived = conversations.find((session) => !session.archived);
-  if (firstUnarchived) {
-    return firstUnarchived.id;
-  }
-
-  const firstConversation = conversations[0];
-  if (firstConversation) {
-    return firstConversation.id;
-  }
-
-  return fallbackId;
-}
-
 function loadSavedSessions(): { conversations: ChatSession[]; activeConversationId: string } {
   const fallback = createEmptySession();
 
@@ -936,12 +922,6 @@ interface AppContextType {
   stopRun: () => Promise<void>;
   submitHitlResponse: (runId: string, response: string) => Promise<void>;
   submitClarificationResponse: (runId: string, answers: ClarificationAnswer[]) => Promise<void>;
-  createConversation: () => void;
-  selectConversation: (conversationId: string) => void;
-  renameConversation: (conversationId: string, title: string) => void;
-  duplicateConversation: (conversationId: string) => void;
-  archiveConversation: (conversationId: string) => void;
-  deleteConversation: (conversationId: string) => void;
   toggleAdvancedMode: () => void;
   ccSetSession: (session: ClaudeCodeSessionInfo | null) => void;
   ccAppendItem: (payload: unknown) => void;
@@ -1305,112 +1285,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...prev,
       conversations: prev.conversations.map((session) => (session.id === conversationId ? updater(session) : session)),
     }));
-  };
-
-  const createConversation = () => {
-    const session = createEmptySession();
-    activeConversationIdRef.current = session.id;
-    setState((prev) => ({
-      ...prev,
-      conversations: [session, ...prev.conversations],
-      activeConversationId: session.id,
-    }));
-  };
-
-  const selectConversation = (conversationId: string) => {
-    activeConversationIdRef.current = conversationId;
-    setState((prev) => ({ ...prev, activeConversationId: conversationId }));
-  };
-
-  const renameConversation = (conversationId: string, title: string) => {
-    const nextTitle = title.trim();
-    if (!nextTitle) {
-      return;
-    }
-
-    updateSession(conversationId, (session) => ({
-      ...session,
-      title: nextTitle,
-      updatedAt: nowIso(),
-    }));
-  };
-
-  const duplicateConversation = (conversationId: string) => {
-    setState((prev) => {
-      const source = prev.conversations.find((session) => session.id === conversationId);
-      if (!source) {
-        return prev;
-      }
-
-      const timestamp = nowIso();
-      const clone: ChatSession = {
-        ...structuredClone(source),
-        id: createSessionId(),
-        title: `${source.title} 副本`,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        archived: false,
-        status: '',
-        runId: '',
-        routePlan: null,
-        nodeStatus: emptyNodeStatus(),
-        artifacts: [],
-        runEvents: [],
-        rawTerminalLog: '',
-        messages: source.messages.map((message) => ({
-          ...message,
-          id: `${message.id}-copy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          streaming: false,
-        })),
-      };
-
-      activeConversationIdRef.current = clone.id;
-      return {
-        ...prev,
-        conversations: [clone, ...prev.conversations],
-        activeConversationId: clone.id,
-      };
-    });
-  };
-
-  const archiveConversation = (conversationId: string) => {
-    setState((prev) => {
-      let archivedAfterToggle = false;
-      const conversations = prev.conversations.map((session) => {
-        if (session.id !== conversationId) {
-          return session;
-        }
-        archivedAfterToggle = !session.archived;
-        return { ...session, archived: archivedAfterToggle, updatedAt: nowIso() };
-      });
-      const activeConversationId =
-        prev.activeConversationId === conversationId && archivedAfterToggle
-          ? nextActiveConversationId(conversations, prev.activeConversationId)
-          : prev.activeConversationId;
-      activeConversationIdRef.current = activeConversationId;
-      return {
-        ...prev,
-        conversations,
-        activeConversationId,
-      };
-    });
-  };
-
-  const deleteConversation = (conversationId: string) => {
-    setState((prev) => {
-      const remaining = prev.conversations.filter((session) => session.id !== conversationId);
-      const conversations = remaining.length > 0 ? remaining : [createEmptySession()];
-      const activeConversationId =
-        prev.activeConversationId === conversationId
-          ? nextActiveConversationId(conversations, conversations[0].id)
-          : prev.activeConversationId;
-      activeConversationIdRef.current = activeConversationId;
-      return {
-        ...prev,
-        conversations,
-        activeConversationId,
-      };
-    });
   };
 
   const updateCredentials = (updates: Partial<Credentials>) => {
@@ -2381,12 +2255,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         stopRun,
         submitHitlResponse,
         submitClarificationResponse,
-        createConversation,
-        selectConversation,
-        renameConversation,
-        duplicateConversation,
-        archiveConversation,
-        deleteConversation,
         toggleAdvancedMode,
         ccSetSession,
         ccAppendItem,

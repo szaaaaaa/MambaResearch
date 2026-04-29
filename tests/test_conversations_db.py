@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.server.projects.conversations import (
+    DRAFTS_FILTER,
     add_segment,
     close_active_segment,
     create_conversation,
@@ -20,6 +21,7 @@ from src.server.projects.conversations import (
     get_conversation,
     list_by_project,
     list_segments,
+    update_asset,
     update_title,
 )
 from src.server.projects.db import MambaDb, set_db_for_tests
@@ -218,3 +220,262 @@ def test_route_patch_title(temp_db: MambaDb) -> None:
     patch = client.patch(f"/api/conversations/{cid}", json={"title": "新名"})
     assert patch.status_code == 200
     assert patch.json()["title"] == "新名"
+
+
+# ============================================================================
+# 2026-04-29 asset-centric UI pivot —— asset_kind/asset_label 字段 + promote 路由
+# ============================================================================
+
+
+def test_create_conversation_defaults_asset_fields_to_none(temp_db: MambaDb) -> None:
+    conv = create_conversation(project_id="p", title="t")
+    assert conv.asset_kind is None
+    assert conv.asset_label is None
+    assert conv.to_dict()["asset_kind"] is None
+    assert conv.to_dict()["asset_label"] is None
+
+
+def test_create_conversation_with_asset_fields(temp_db: MambaDb) -> None:
+    conv = create_conversation(
+        project_id="p",
+        title="mamba baseline 实验",
+        asset_kind="experiment",
+        asset_label="mamba baseline",
+    )
+    assert conv.asset_kind == "experiment"
+    assert conv.asset_label == "mamba baseline"
+    # roundtrip via DB
+    fetched = get_conversation(conv.id)
+    assert fetched is not None
+    assert fetched.asset_kind == "experiment"
+    assert fetched.asset_label == "mamba baseline"
+
+
+def test_create_invalid_asset_kind_raises(temp_db: MambaDb) -> None:
+    with pytest.raises(ValueError):
+        create_conversation(project_id="p", asset_kind="bogus")
+
+
+def test_list_filter_by_asset_kind(temp_db: MambaDb) -> None:
+    create_conversation(project_id="p", asset_kind="experiment", asset_label="exp1")
+    create_conversation(project_id="p", asset_kind="literature", asset_label="lit1")
+    create_conversation(project_id="p", asset_kind="experiment", asset_label="exp2")
+    create_conversation(project_id="p")  # 草稿
+    exps = list_by_project("p", asset_kind="experiment")
+    assert len(exps) == 2
+    assert {c.asset_label for c in exps} == {"exp1", "exp2"}
+    lits = list_by_project("p", asset_kind="literature")
+    assert len(lits) == 1
+    # 不传 asset_kind 返回全部 4 条
+    assert len(list_by_project("p")) == 4
+
+
+def test_list_filter_drafts_only(temp_db: MambaDb) -> None:
+    create_conversation(project_id="p", asset_kind="experiment", asset_label="e")
+    create_conversation(project_id="p")
+    create_conversation(project_id="p")
+    drafts = list_by_project("p", asset_kind=DRAFTS_FILTER)
+    assert len(drafts) == 2
+    assert all(c.asset_kind is None for c in drafts)
+
+
+def test_update_asset_promotes_draft(temp_db: MambaDb) -> None:
+    conv = create_conversation(project_id="p")
+    assert conv.asset_kind is None
+    ok = update_asset(conv.id, asset_kind="dataset", asset_label="ETT")
+    assert ok is True
+    fetched = get_conversation(conv.id)
+    assert fetched is not None
+    assert fetched.asset_kind == "dataset"
+    assert fetched.asset_label == "ETT"
+
+
+def test_update_asset_invalid_kind_raises(temp_db: MambaDb) -> None:
+    conv = create_conversation(project_id="p")
+    with pytest.raises(ValueError):
+        update_asset(conv.id, asset_kind="bogus", asset_label="x")
+
+
+def test_update_asset_can_demote_to_draft(temp_db: MambaDb) -> None:
+    conv = create_conversation(
+        project_id="p", asset_kind="idea", asset_label="kan head"
+    )
+    ok = update_asset(conv.id, asset_kind=None, asset_label=None)
+    assert ok is True
+    fetched = get_conversation(conv.id)
+    assert fetched is not None
+    assert fetched.asset_kind is None
+    assert fetched.asset_label is None
+
+
+def test_route_post_with_asset_fields(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/conversations",
+        json={
+            "project_id": "p",
+            "title": "t",
+            "asset_kind": "experiment",
+            "asset_label": "mamba",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["asset_kind"] == "experiment"
+    assert body["asset_label"] == "mamba"
+
+
+def test_route_post_rejects_invalid_asset_kind(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/conversations",
+        json={"project_id": "p", "asset_kind": "bogus"},
+    )
+    assert resp.status_code == 400
+
+
+def test_route_get_filter_by_asset_kind(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create_conversation(project_id="p", asset_kind="experiment", asset_label="e")
+    create_conversation(project_id="p", asset_kind="literature", asset_label="l")
+    create_conversation(project_id="p")
+    resp = client.get(
+        "/api/conversations", params={"project_id": "p", "asset_kind": "experiment"}
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["conversations"]) == 1
+    assert resp.json()["conversations"][0]["asset_label"] == "e"
+
+
+def test_route_get_filter_drafts_via_null_param(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create_conversation(project_id="p", asset_kind="experiment", asset_label="e")
+    create_conversation(project_id="p")
+    create_conversation(project_id="p")
+    resp = client.get(
+        "/api/conversations", params={"project_id": "p", "asset_kind": "null"}
+    )
+    assert resp.status_code == 200
+    drafts = resp.json()["conversations"]
+    assert len(drafts) == 2
+    assert all(c["asset_kind"] is None for c in drafts)
+
+
+def test_route_get_rejects_invalid_asset_kind(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    resp = client.get(
+        "/api/conversations", params={"project_id": "p", "asset_kind": "bogus"}
+    )
+    assert resp.status_code == 400
+
+
+def test_route_patch_asset_fields(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create = client.post("/api/conversations", json={"project_id": "p"})
+    cid = create.json()["id"]
+    patch = client.patch(
+        f"/api/conversations/{cid}",
+        json={"asset_kind": "experiment", "asset_label": "mamba"},
+    )
+    assert patch.status_code == 200
+    assert patch.json()["asset_kind"] == "experiment"
+    assert patch.json()["asset_label"] == "mamba"
+
+
+def test_route_patch_asset_requires_both_fields(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create = client.post("/api/conversations", json={"project_id": "p"})
+    cid = create.json()["id"]
+    # 仅 asset_kind 不带 asset_label → 400
+    resp = client.patch(
+        f"/api/conversations/{cid}", json={"asset_kind": "experiment"}
+    )
+    assert resp.status_code == 400
+
+
+def test_route_patch_requires_at_least_one_field(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create = client.post("/api/conversations", json={"project_id": "p"})
+    cid = create.json()["id"]
+    resp = client.patch(f"/api/conversations/{cid}", json={})
+    assert resp.status_code == 400
+
+
+def test_route_promote_to_asset(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create = client.post("/api/conversations", json={"project_id": "p"})
+    cid = create.json()["id"]
+    resp = client.post(
+        f"/api/conversations/{cid}/promote-to-asset",
+        json={"asset_kind": "dataset", "asset_label": "ETT"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["asset_kind"] == "dataset"
+    assert body["asset_label"] == "ETT"
+
+    # promote 之后该对话从 drafts 列表消失
+    drafts = client.get(
+        "/api/conversations", params={"project_id": "p", "asset_kind": "null"}
+    ).json()["conversations"]
+    assert all(c["id"] != cid for c in drafts)
+    # 出现在对应 bucket
+    datasets = client.get(
+        "/api/conversations", params={"project_id": "p", "asset_kind": "dataset"}
+    ).json()["conversations"]
+    assert any(c["id"] == cid for c in datasets)
+
+
+def test_route_promote_requires_asset_kind(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create = client.post("/api/conversations", json={"project_id": "p"})
+    cid = create.json()["id"]
+    resp = client.post(
+        f"/api/conversations/{cid}/promote-to-asset",
+        json={"asset_label": "x"},
+    )
+    assert resp.status_code == 400
+
+
+def test_route_promote_requires_non_empty_label(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    create = client.post("/api/conversations", json={"project_id": "p"})
+    cid = create.json()["id"]
+    resp = client.post(
+        f"/api/conversations/{cid}/promote-to-asset",
+        json={"asset_kind": "experiment", "asset_label": "  "},
+    )
+    assert resp.status_code == 400
+
+
+def test_route_promote_404_for_missing(temp_db: MambaDb) -> None:
+    app = FastAPI()
+    app.include_router(conv_router)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/conversations/nope/promote-to-asset",
+        json={"asset_kind": "experiment", "asset_label": "x"},
+    )
+    assert resp.status_code == 404
