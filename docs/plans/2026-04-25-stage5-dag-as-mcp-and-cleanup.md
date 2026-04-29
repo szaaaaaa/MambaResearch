@@ -2,7 +2,7 @@
 
 **Created**: 2026-04-26
 **Rewritten**: 2026-04-26（v3 推翻 v2）
-**Status**: in-progress
+**Status**: auto-verified（task 1–9 DONE；task 10 浏览器手测 5 项仍 PENDING-VERIFY）
 **Scope**: 把 dynamic_os 的 21 skill prompt 工程 + 7 role 分工蒸馏入 Claude/Codex 原生 sub-agent + pipeline SKILL.md；删除 `src/dynamic_os/` 整目录、Stage 5 v2 已 commit 的 `src/server/integrations/research_dag/` (1a/1b)、`src/server/routes/runs.py`、`RunTab`；历史 tab 简化为 conversations + experiment_runs。
 **所属大方向 plan**: `C:\Users\ziang\.claude\plans\project-llm-dag-claude-code-cli-codex-breezy-quill.md` (v3 已重写)
 
@@ -84,7 +84,7 @@
 
 ## Tasks
 
-### [TODO] 1. 蒸馏 21 skill prompt → 8 sub-agent
+### [DONE] 1. 蒸馏 21 skill prompt → 8 sub-agent
 
 - **What**: dynamic_os 的 21 skill 各自含 prompt 设计精华（如 `extract_notes` 的抽取套路、`draft_report` 的引文格式约束、`analyze_metrics` 的对比框架）。把这些精华平移到对应 sub-agent 的 system prompt（`.claude/agents/*.md` 的 markdown body）。同时新建 conductor / experimenter / reviewer 3 个 .md。
 - **映射表**（sub-agent ← 来源 skill）：
@@ -106,7 +106,7 @@
   - `python scripts/sync_subagents.py` 跑通；`.codex/agents/` 下 8 个 .toml
   - `pytest tests/test_claude_code_agents.py` 全绿（现 16 测，新增 sub-agent 后 sub-agent 数量断言要更新）
 
-### [TODO] 2. 写 7 个 pipeline SKILL.md
+### [DONE] 2. 写 7 个 pipeline SKILL.md
 
 - **What**: 每个 pipeline = 一个 SKILL.md，描述何时调用 + 步骤 + artifact 命名 + 失败策略 + 完成态。
 - **Files**（新建）:
@@ -123,7 +123,7 @@
   - 每个 SKILL 的"步骤列表"明确写出 spawn 哪个 sub-agent (Task tool 调用形式)
   - artifact 命名约定使用 `outputs/<run_id>/` 前缀（与 Task 3 的命名约定一致）
 
-### [TODO] 3. 文件命名约定文档化
+### [DONE] 3. 文件命名约定文档化
 
 - **What**: 把 pipeline 用到的 workspace artifact 文件命名约定写到 CLAUDE.md / AGENTS.md，让所有 sub-agent / pipeline SKILL 共享一致认知。
 - **Files**:
@@ -142,7 +142,7 @@
   - 段中至少列出上述 6 类文件
   - Pipeline SKILL.md (Task 2) 引用本段约定，不重复定义
 
-### [TODO] 4. revert v2 1a/1b + 删 research_dag/
+### [DONE] 4. revert v2 1a/1b + 删 research_dag/
 
 - **What**: `git revert` 8627668 (1a) + b3fdf6b (1b)；删除 `src/server/integrations/research_dag/` 整目录 + `tests/test_research_dag_mcp.py`；移除 `.mcp.json` / `.codex/config.toml` 中 mamba_research_dag 注册（如有）。
 - **Files**:
@@ -158,7 +158,7 @@
   - `grep -r research_dag src/ tests/` 无输出（除被删的目录）
   - `cd frontend && npm run build` 通过
 
-### [TODO] 5. 删 src/server/routes/runs.py + 相关 tests
+### [DONE] 5. 删 src/server/routes/runs.py + 相关 tests
 
 - **What**: 删除 `src/server/routes/runs.py`；从 `app.py` 移除 `include_router(runs)`；删除相关测试（如有）。
 - **Files**:
@@ -170,7 +170,7 @@
   - `grep -rn "from src.server.routes.runs" src/` 无输出
   - `curl http://localhost:8000/api/runs/` 返 404（启动后手测，可推到 Task 10 验证）
 
-### [TODO] 6. 删 RunTab + sidebar 'runs' nav + localStorage 迁移
+### [DONE] 6. 删 RunTab + sidebar 'runs' nav + localStorage 迁移
 
 - **What**: 前端删 RunTab 整个组件 + sidebar 中 'runs' nav 项；localStorage `mamba_last_nav == 'runs'` 时映射到 `'hist'` 并覆写。
 - **Files**:
@@ -185,7 +185,7 @@
   - `grep -r RunTab frontend/src/` 无输出
   - 测试 localStorage 旧值 'runs' → loadLastNav 返 'hist' 且 setItem 已覆写
 
-### [TODO] 7. 简化历史 tab（仅 conversations + experiment_runs）
+### [DONE] 7. 简化历史 tab（仅 conversations + experiment_runs）
 
 - **What**: HistoryTab 现有可能引用 dag_runs / runs.py 数据源；改为仅 conversations + experiment_runs 混排。后端可加 `GET /api/history?project_id=&limit=` 一站式端点（可选；也可前端各自拉两份合并）。
 - **Files**:
@@ -289,3 +289,4 @@
 - **2026-04-26 created (v2)** — 8 task 想做"DAG-as-MCP"，1a/1b 已实施 + commit
 - **2026-04-26 第五次纠偏** — Stage 5 v2 task 1c 触发 STOP（acceptance 引用不存在的 evidence_extractor skill + SkillContext 架构与 sub-agent 同构）；ziang 决定整个删 dynamic_os；advisor 同意；大方向 plan v3 全篇重写；本文件改写为 v3
 - **2026-04-26 v3 task 列表** — 10 task；起点状态：working tree 含 v2 1a/1b commit + plan 文件残留 [WIP] 标记
+- **2026-04-29 收尾对账** — 实际进度核实：task 1–7 在过去几次提交链路里早已落地（8 sub-agent / 7 pipeline SKILL / CLAUDE.md+AGENTS.md 命名约定 / research_dag+runs.py+RunTab 删除 / HistoryTab 重写为 conversations + experiment_runs 骨架），plan 文件状态未回写。本次清掉 `src/server/integrations/research_dag/__pycache__/` 4 个 .pyc 残留 + `tests/__pycache__/test_research_dag_mcp.cpython-312-pytest-9.0.2.pyc`，跑 `pytest tests/` = **426 passed**（dynamic_os/research_dag 测试已随源码删除），`cd frontend && npm run build` 通过（main 802.54 kB + 4 lazy chunks）。task 1–7 状态全部回写 [DONE]。task 10 自动验证段达成，浏览器手测 5 项（structured-lit-review / cross-CLI Codex / HistoryTab / sidebar 无 runs / experiment-iteration metric 流）仍待 ziang 走一遍。
