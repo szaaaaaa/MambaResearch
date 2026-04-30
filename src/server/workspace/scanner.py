@@ -95,8 +95,14 @@ def scan_source_dir(
     result = ScanResult()
     base = Path(source_dir).resolve()
     if not base.is_dir():
-        result.duration_s = time.time() - started
-        return result
+        # 显式抛错——之前静默返 0 让调用方（MCP 工具 / HTTP 路由）以为"扫了
+        # 但啥都没找到"，配合 Windows 上 ``Path("/g/...")`` 自动锚到当前盘根
+        # 的行为，路径手误会被完全吞掉。改造调用方在 try/except 里把它翻成
+        # isError / 400 给上层。
+        raise ValueError(
+            f"source_dir does not exist or is not a directory (resolved to {base}): "
+            f"{source_dir}"
+        )
 
     for entry_path in _iter_files(base, result):
         if result.scanned >= max_files:

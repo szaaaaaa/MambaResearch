@@ -315,7 +315,13 @@ def _call_scan(arguments: dict[str, Any], project_path: Path) -> dict[str, Any]:
         "per_source": [],
     }
     for src in sources:
-        result = scan_source_dir(db, src)
+        try:
+            result = scan_source_dir(db, src)
+        except ValueError as exc:
+            return _tool_error_result(
+                f"scan 失败：{exc}。在 Windows 上请用原生路径（例如 G:\\我的云端硬盘\\foo），"
+                "MSYS / WSL 风格的 /g/... 不会被自动转换。"
+            )
         d = result.to_dict()
         d["source_dir"] = src
         aggregate["per_source"].append(d)

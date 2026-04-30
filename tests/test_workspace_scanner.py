@@ -34,6 +34,17 @@ def _mkfile(p: Path, content: bytes = b"hello") -> Path:
     return p
 
 
+def test_scan_raises_on_nonexistent_source_dir(db: ClassificationDb, tmp_path: Path) -> None:
+    """路径写错时必须抛 ValueError——之前静默返 0 让上游误判"扫了但啥都没找到"。
+
+    Windows 上 ``Path("/g/foo").resolve()`` 会被锚到当前盘根，``is_dir()`` 仍是 False；
+    本测试就模拟"路径表面上存在但解析后不是目录"的场景，回归保护。
+    """
+    missing = tmp_path / "definitely-not-here"
+    with pytest.raises(ValueError, match="source_dir does not exist"):
+        scan_source_dir(db, missing)
+
+
 def test_scan_new_files_marked_unknown(db: ClassificationDb, tmp_path: Path) -> None:
     src = tmp_path / "src"
     _mkfile(src / "a.py")

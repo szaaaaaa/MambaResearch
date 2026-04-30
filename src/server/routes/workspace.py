@@ -116,7 +116,10 @@ async def scan(request: Request) -> dict:
         "per_source": [],
     }
     for src in sources:
-        result = scan_source_dir(db, src)
+        try:
+            result = scan_source_dir(db, src)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         d = result.to_dict()
         d["source_dir"] = src
         aggregate["per_source"].append(d)
