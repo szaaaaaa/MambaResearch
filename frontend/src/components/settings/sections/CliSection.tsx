@@ -37,6 +37,45 @@ export const CliSection: React.FC = () => {
   const [info, setInfo] = React.useState<string | null>(null);
   const [codexBusy, setCodexBusy] = React.useState<boolean>(false);
   const [authorizeUrl, setAuthorizeUrl] = React.useState<string>('');
+  const [showManualCallback, setShowManualCallback] = React.useState<boolean>(false);
+  const pollTimerRef = React.useRef<number | null>(null);
+
+  // 浏览器跳到 localhost:1455/auth/callback 时，后端的 callback server 已经把
+  // code 兑换成 token 写到 auth.json——前端只需轮询 status 自动收尾。
+  const stopPolling = React.useCallback(() => {
+    if (pollTimerRef.current !== null) {
+      window.clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  const startPollingStatus = React.useCallback(
+    (deadline: number) => {
+      stopPolling();
+      const tick = async () => {
+        try {
+          const status = await getCodexStatus();
+          setCodexStatus(status);
+          if (status.logged_in) {
+            setAuthorizeUrl('');
+            setCallbackInput('');
+            setShowManualCallback(false);
+            setInfo('Codex 已登录。');
+            return;
+          }
+        } catch {
+          // 网络抖动忽略——下一轮再试
+        }
+        if (Date.now() < deadline) {
+          pollTimerRef.current = window.setTimeout(tick, 2000);
+        }
+      };
+      pollTimerRef.current = window.setTimeout(tick, 2000);
+    },
+    [stopPolling],
+  );
+
+  React.useEffect(() => stopPolling, [stopPolling]);
 
   const loadAll = React.useCallback(async () => {
     setLoading(true);
@@ -86,11 +125,15 @@ export const CliSection: React.FC = () => {
     setError(null);
     setInfo(null);
     setAuthorizeUrl('');
+    setShowManualCallback(false);
     try {
       const resp = await startCodexLogin();
       setAuthorizeUrl(resp.authorize_url);
       setCodexStatus(resp.status);
-      setInfo('请在浏览器完成登录，再把回调 URL 粘到下面。');
+      setInfo('已在浏览器打开授权页；登录完成后状态会自动刷新。');
+      // 浏览器回到 localhost:1455 时 callback server 已写好 auth.json——
+      // 这里 poll 5 分钟检测 logged_in 翻位
+      startPollingStatus(Date.now() + 5 * 60 * 1000);
     } catch (err) {
       setError(formatErr(err));
     } finally {
@@ -108,6 +151,8 @@ export const CliSection: React.FC = () => {
       setCodexStatus(resp.status);
       setCallbackInput('');
       setAuthorizeUrl('');
+      setShowManualCallback(false);
+      stopPolling();
       setInfo('Codex 登录已完成。');
     } catch (err) {
       setError(formatErr(err));
@@ -117,6 +162,7 @@ export const CliSection: React.FC = () => {
   };
 
   const onCodexLogout = async () => {
+    stopPolling();
     setCodexBusy(true);
     setError(null);
     setInfo(null);
@@ -196,10 +242,11 @@ export const CliSection: React.FC = () => {
         description="管理当前默认 profile 的 ChatGPT 登录状态；底层操作的是 ~/.codex/auth.json。"
       >
         <CodexStatusBlock status={codexStatus} />
-        {authorizeUrl ? (
+        {authorizeUrl && !codexStatus?.logged_in ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
             <p className="text-xs text-amber-700">
-              授权链接（已自动打开浏览器；如未弹出请手动访问）：
+              授权链接（已自动打开浏览器；如未弹出请手动访问）。完成登录后此状态会自动刷新——
+              一般无需手动提交回调。
             </p>
             <a
               href={authorizeUrl}
@@ -209,24 +256,46 @@ export const CliSection: React.FC = () => {
             >
               {authorizeUrl}
             </a>
-            <Input
-              className="mt-3"
-              label="OAuth 回调 URL"
-              description="登录完成后浏览器跳转到的 http://127.0.0.1:1455/...；整段粘到这里。"
-              value={callbackInput}
-              onChange={(event) => setCallbackInput(event.target.value)}
-            />
-            <div className="mt-3 flex justify-end">
-              <Button onClick={() => void onCodexCallback()} disabled={codexBusy || !callbackInput.trim()}>
-                提交回调
-              </Button>
-            </div>
+            {showManualCallback ? (
+              <>
+                <Input
+                  className="mt-3"
+                  label="OAuth 回调 URL"
+                  description="登录完成后浏览器跳转到的 http://localhost:1455/...；整段粘到这里。仅当浏览器没自动跳转 / callback server 没收到回调时才需要。"
+                  value={callbackInput}
+                  onChange={(event) => setCallbackInput(event.target.value)}
+                />
+                <div className="mt-3 flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setShowManualCallback(false);
+                      setCallbackInput('');
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button onClick={() => void onCodexCallback()} disabled={codexBusy || !callbackInput.trim()}>
+                    提交回调
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowManualCallback(true)}
+                className="mt-2 text-xs text-amber-800 underline hover:text-amber-900"
+              >
+                浏览器没跳转？手动粘贴回调 URL
+              </button>
+            )}
           </div>
         ) : null}
         <div className="flex flex-wrap gap-3">
           <Button onClick={() => void onCodexLogin()} disabled={codexBusy}>
             <LogIn className="h-4 w-4" />
-            启动登录
+            {codexStatus?.logged_in ? '重新登录' : '启动登录'}
           </Button>
           <Button variant="secondary" onClick={() => void onCodexLogout()} disabled={codexBusy}>
             <LogOut className="h-4 w-4" />
