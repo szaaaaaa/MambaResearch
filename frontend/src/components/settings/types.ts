@@ -1,14 +1,9 @@
 export type SettingsCategoryId =
-  | 'general'
-  | 'models'
-  | 'conversation'
-  | 'tools'
+  | 'project'
+  | 'cli'
+  | 'mcp'
+  | 'skills'
   | 'appearance'
-  | 'data'
-  | 'security'
-  | 'experiment'
-  | 'knowledge-graph'
-  | 'review'
   | 'about';
 
 export interface UiPreferences {

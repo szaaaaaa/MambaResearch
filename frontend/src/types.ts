@@ -198,16 +198,6 @@ export interface ChatSession {
   updatedAt: string;
   archived: boolean;
   messages: ChatMessage[];
-  runId: string;
-  status: string;
-  routePlan: RoutePlan | null;
-  nodeStatus: NodeStatusMap;
-  artifacts: RunArtifact[];
-  runEvents: RunEvent[];
-  rawTerminalLog: string;
-  hitlRequest: HitlRequest | null;
-  clarificationState: ClarificationState | null;
-  clientRequestId: string | null;
 }
 
 export interface ProviderModelCatalog {
@@ -364,17 +354,13 @@ export interface AppState {
   codexStatus: CodexStatus;
   runtimeMode: string;
   projectConfig: ProjectConfig;
-  hasUnsavedModelChanges: boolean;
-  runOverrides: RunOverrides;
   conversations: ChatSession[];
   activeConversationId: string;
-  isRunInProgress: boolean;
   codexCatalog: ProviderModelCatalog;
   openaiCatalog: ProviderModelCatalog;
   geminiCatalog: ProviderModelCatalog;
   openrouterCatalog: ProviderModelCatalog;
   siliconflowCatalog: ProviderModelCatalog;
-  isAdvancedMode: boolean;
   claudeCode: ClaudeCodeState;
 }
 

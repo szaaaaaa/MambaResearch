@@ -1,30 +1,12 @@
 import React from 'react';
-import {
-  ClipboardCheck,
-  Cpu,
-  Database,
-  FlaskConical,
-  Info,
-  MessagesSquare,
-  Palette,
-  Share2,
-  Shield,
-  SlidersHorizontal,
-  Wrench,
-  X,
-} from 'lucide-react';
+import { Folder, Info, Palette, Plug, Terminal, Wand2, X } from 'lucide-react';
 import { Button } from '../ui';
 import { AboutSection } from './sections/AboutSection';
 import { AppearanceSection } from './sections/AppearanceSection';
-import { ConversationSection } from './sections/ConversationSection';
-import { DataStorageSection } from './sections/DataStorageSection';
-import { ExperimentSection } from './sections/ExperimentSection';
-import { KnowledgeGraphSection } from './sections/KnowledgeGraphSection';
-import { ReviewSection } from './sections/ReviewSection';
-import { GeneralSection } from './sections/GeneralSection';
-import { ModelsSection } from './sections/ModelsSection';
-import { SecuritySection } from './sections/SecuritySection';
-import { ToolsSection } from './sections/ToolsSection';
+import { CliSection } from './sections/CliSection';
+import { McpSection } from './sections/McpSection';
+import { ProjectSection } from './sections/ProjectSection';
+import { SkillsSection } from './sections/SkillsSection';
 import { SettingsCategoryId, UiPreferences } from './types';
 
 const CATEGORIES: {
@@ -33,16 +15,11 @@ const CATEGORIES: {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
-  { id: 'general', label: '常规', description: '工作区与基础运行偏好。', icon: SlidersHorizontal },
-  { id: 'models', label: '模型', description: '角色模型与 API 凭证。', icon: Cpu },
-  { id: 'conversation', label: '对话', description: '研究轮次、上下文和输出边界。', icon: MessagesSquare },
-  { id: 'tools', label: '工具 / 插件', description: '检索、多模态和工具链开关。', icon: Wrench },
+  { id: 'project', label: '项目', description: '管理项目列表与项目级 lazy 配置。', icon: Folder },
+  { id: 'cli', label: 'CLI', description: 'Claude Code provider 与 Codex OAuth 状态。', icon: Terminal },
+  { id: 'mcp', label: 'MCP', description: 'MCP server 注册表与 user 层 env override。', icon: Plug },
+  { id: 'skills', label: 'Skills & Agents', description: 'pipeline / sub-agent 列表（只读）。', icon: Wand2 },
   { id: 'appearance', label: '外观', description: '聊天界面的视觉偏好。', icon: Palette },
-  { id: 'data', label: '数据 / 存储', description: '目录、索引和存储后端。', icon: Database },
-  { id: 'security', label: '安全', description: '预算、断路器和下载安全。', icon: Shield },
-  { id: 'experiment', label: '实验模式', description: '配置实验优化循环与GPU设置', icon: FlaskConical },
-  { id: 'knowledge-graph', label: '知识图谱', description: '跨运行知识持久化配置', icon: Share2 },
-  { id: 'review', label: '论文审查', description: '质量评分维度与阈值设置', icon: ClipboardCheck },
   { id: 'about', label: '关于', description: '系统信息与当前状态。', icon: Info },
 ];
 
@@ -52,28 +29,18 @@ function renderSection(
   onUiPreferencesChange: (nextValue: UiPreferences) => void,
 ) {
   switch (categoryId) {
-    case 'general':
-      return <GeneralSection />;
-    case 'models':
-      return <ModelsSection />;
-    case 'conversation':
-      return <ConversationSection />;
-    case 'tools':
-      return <ToolsSection />;
+    case 'project':
+      return <ProjectSection />;
+    case 'cli':
+      return <CliSection />;
+    case 'mcp':
+      return <McpSection />;
+    case 'skills':
+      return <SkillsSection />;
     case 'appearance':
       return (
         <AppearanceSection uiPreferences={uiPreferences} onUiPreferencesChange={onUiPreferencesChange} />
       );
-    case 'data':
-      return <DataStorageSection />;
-    case 'security':
-      return <SecuritySection />;
-    case 'experiment':
-      return <ExperimentSection />;
-    case 'knowledge-graph':
-      return <KnowledgeGraphSection />;
-    case 'review':
-      return <ReviewSection />;
     case 'about':
       return <AboutSection />;
     default:
@@ -86,7 +53,7 @@ export const SettingsModal: React.FC<{
   onUiPreferencesChange: (nextValue: UiPreferences) => void;
   onClose: () => void;
 }> = ({ uiPreferences, onUiPreferencesChange, onClose }) => {
-  const [activeCategory, setActiveCategory] = React.useState<SettingsCategoryId>('general');
+  const [activeCategory, setActiveCategory] = React.useState<SettingsCategoryId>('project');
 
   React.useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
