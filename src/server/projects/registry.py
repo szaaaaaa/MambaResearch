@@ -16,6 +16,16 @@ Env 注入
 ``activate_project`` / ``delete_project`` 会同步更新进程级 env
 ``MAMBA_ACTIVE_PROJECT_PATH``——这个 env 通过子进程继承传递给后续启动的
 MCP server 进程，让它们读到当前 active project 路径。
+
+Per-project 配置（D+E 重构 task 3）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``active_project_config()`` 读 ``<project>/.mambaresearch/config.json``，
+``write_active_project_config(updates)`` patch-merge 写。lazy 语义：
+
+- 文件不存在 → 读返回空 dict，**不主动创建**
+- 写时若文件不存在才创建；空 updates 不触发写
+- 切到没绑定 active project 时读返回空 dict（不抛）；写抛 ``ProjectError``
 """
 
 from __future__ import annotations
@@ -32,6 +42,16 @@ from src.server.projects.models import Project, ProjectsState
 
 # 进程级 env 名——MCP server 子进程读它定位 active project
 ACTIVE_PROJECT_ENV_VAR = "MAMBA_ACTIVE_PROJECT_PATH"
+
+# 项目本地元数据目录与 per-project 配置文件名
+PROJECT_META_DIR = ".mambaresearch"
+PROJECT_CONFIG_FILE = "config.json"
+
+# Per-project config 允许的字段——schema 最小集（D+E task 3）。新增字段开新 plan
+ALLOWED_PROJECT_CONFIG_KEYS: frozenset[str] = frozenset({
+    "codex_profile",
+    "enabled_mcp_servers",
+})
 
 
 class ProjectError(Exception):
@@ -236,6 +256,86 @@ def sync_active_project_env() -> None:
     """启动钩子：从当前注册表读 active 并把 env 同步好。"""
     project = get_registry().get_active()
     _apply_active_project_env(project.path if project else None)
+
+
+# ---------------------------------------------------------------------------
+# Per-project config 层（D+E 重构 task 3，lazy 写入）
+# ---------------------------------------------------------------------------
+
+
+def _project_config_path(project_path: str) -> Path:
+    return Path(project_path) / PROJECT_META_DIR / PROJECT_CONFIG_FILE
+
+
+def active_project_config() -> dict:
+    """读 active project 的 ``.mambaresearch/config.json``。
+
+    无 active project / 文件不存在 / JSON 损坏 → 返回空 dict。**不创建文件**——
+    settings UI GET 端点应永远只返回这个函数的输出而不触发文件写。
+    """
+    project = get_registry().get_active()
+    if project is None:
+        return {}
+    config_path = _project_config_path(project.path)
+    if not config_path.exists():
+        return {}
+    try:
+        with config_path.open("r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    # 过滤掉未在 allowlist 中的字段（防止旧字段或 typo 渗入）
+    return {k: v for k, v in payload.items() if k in ALLOWED_PROJECT_CONFIG_KEYS}
+
+
+def write_active_project_config(updates: dict) -> dict:
+    """patch-merge 写 active project config，返回写入后的完整字典。
+
+    Parameters
+    ----------
+    updates : dict
+        要写入的字段子集。键必须在 ``ALLOWED_PROJECT_CONFIG_KEYS`` 内，
+        不在的字段抛 ``ValueError``——避免 settings UI 误传扩展字段（schema
+        扩展走新 plan 流程）。
+
+    Returns
+    -------
+    dict
+        merge 后写入文件的完整 config（仅含 allowlist 字段）。
+
+    Raises
+    ------
+    ProjectError
+        无 active project（无处可写）。
+    ValueError
+        ``updates`` 含未授权字段。
+    """
+    if not isinstance(updates, dict):
+        raise ValueError("updates must be a dict")
+    unknown = set(updates.keys()) - ALLOWED_PROJECT_CONFIG_KEYS
+    if unknown:
+        raise ValueError(
+            f"unknown per-project config keys: {sorted(unknown)}; "
+            f"allowed: {sorted(ALLOWED_PROJECT_CONFIG_KEYS)}"
+        )
+
+    project = get_registry().get_active()
+    if project is None:
+        raise ProjectError("no active project — cannot write per-project config")
+
+    existing = active_project_config()
+    merged = {**existing, **updates}
+    config_path = _project_config_path(project.path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = config_path.with_suffix(config_path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(merged, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(tmp, config_path)
+    return merged
 
 
 _REGISTRY_INSTANCE: ProjectRegistry | None = None

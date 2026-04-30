@@ -20,6 +20,7 @@ from src.server.routes.literature import router as literature_router
 from src.server.routes.mcp_calls import router as mcp_calls_router
 from src.server.routes.mcp_servers import router as mcp_servers_router
 from src.server.routes.models import router as model_router
+from src.server.routes.project_config import router as project_config_router
 from src.server.routes.projects import router as projects_router
 from src.server.routes.skills import router as skills_router
 from src.server.routes.workspace import router as workspace_router
@@ -46,6 +47,7 @@ app.add_middleware(
 app.include_router(model_router)
 app.include_router(config_router)
 app.include_router(projects_router)
+app.include_router(project_config_router)
 app.include_router(workspace_router)
 app.include_router(auth_router)
 app.include_router(conversations_router)

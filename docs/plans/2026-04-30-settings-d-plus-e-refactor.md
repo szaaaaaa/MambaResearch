@@ -77,7 +77,7 @@
   - 旧 `/api/config` GET/POST 返回 404
   - `pytest tests/` 全绿
 
-### [TODO] 3. per-project config 层（lazy 写入）
+### [DONE] 3. per-project config 层（lazy 写入）
 - **What**: 在 `src/server/projects/registry.py` 加 `active_project_config()` 接口，读 `<project_workspace>/.research-agent/config.toml`；不存在返回空 dict（不主动写文件）。新增 `/api/project-config` GET/PATCH，PATCH 时如 toml 不存在才创建。schema 最小集：`{codex_profile: str, enabled_mcp_servers: list[str]}`。配置读取做 layered（project toml override 全局默认）。
 - **Files**:
   - `src/server/projects/registry.py`（🟠 高风险，改完必须跑 `pytest tests/`）
