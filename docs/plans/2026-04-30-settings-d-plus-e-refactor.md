@@ -108,26 +108,26 @@
 
 
 
-### [WIP] 4a. 删除 9 个旧 section + 收缩 store/types schema
+### [DONE] 4a. 删除 9 个旧 section + 收缩 store/types schema
 - **What**: 删除 frontend/src/components/settings/sections/{General,Conversation,Tools,DataStorage,Security,Experiment,KnowledgeGraph,Review,Models}.tsx 9 个文件；改 frontend/src/store.tsx 把 projectConfig 形状收缩，删除 99% dead 字段；改 frontend/src/types.ts 删除关联 dead 类型。SettingsModal 暂保留旧引用，4c 处理重接线。本步会让前端临时编译不过——4b/4c 跟进。
 - **Acceptance**:
   - frontend/src/components/settings/sections/ 下 9 个旧 section 文件全部删除
   - frontend/src/store.tsx projectConfig 不再含 agent.budget / retrieval / index / sources.* / ingest / fetch / institutional_access / providers.search.circuit_breaker / budget_guard / agent.experiment_plan / agent.review / knowledge_graph / agent.routing.planner_llm / llm.role_models / paths.papers_dir / metadata_store 等 dead 字段
   - frontend/src/types.ts 关联 dead 类型已删除
   - pytest tests/ 全绿（前端不影响后端）
-### [TODO] 4b. 实现 4 个新 section + 对应 API helpers
+### [DONE] 4b. 实现 4 个新 section + 对应 API helpers
 - **What**: 新建 ProjectSection / CliSection / McpSection / SkillsSection 4 个组件，分别接 /api/projects + /api/project-config、/api/cli-providers + /api/codex/*、/api/mcp/servers + PATCH /env、/api/skills + /api/agents。如需新增 frontend/src/api/ helper 也在本 task 完成。
 - **Acceptance**:
   - 4 个新 section 文件存在：ProjectSection.tsx / CliSection.tsx / McpSection.tsx / SkillsSection.tsx
   - 每个 section 内的 hooks/state 对应后端 API 端点（编译时 tsc 通过该 section 自身）
   - 新 API helpers（如有）放 frontend/src/api/ 或就近
-### [TODO] 4c. SettingsModal 重接线 + tsc + build 验证
+### [DONE] 4c. SettingsModal 重接线 + tsc + build 验证
 - **What**: 改 SettingsModal CATEGORIES 为 6 项（4 新 + Appearance + About），renderSection switch 接新 section；删 SettingsModal types.ts 里 dead category id；跑 tsc --noEmit 与 npm run build 验证整体通过。
 - **Acceptance**:
   - frontend/src/components/settings/sections/ 下只剩 6 个文件（4 新 + Appearance + About）
   - cd frontend && tsc --noEmit 无 error
   - cd frontend && npm run build 成功
-### [TODO] 5. 端到端验证
+### [PENDING-VERIFY] 5. 端到端验证
 - **What**: 手动跑通真实工作流，确认枢转后核心功能（Codex OAuth、paper_search MCP、Claude Code 会话）没被打断。
 - **Files**: 验收型 task，无文件变更
 - **Acceptance**:
@@ -138,7 +138,7 @@
   - 手动：发起一次 Claude Code 会话（任意 skill），确认 `ANTHROPIC_API_KEY` 注入正确
   - 手动：切换 active project 后 settings 面板 `enabled_mcp_servers` 字段跟着切
 
-### [TODO] 6. 文档同步
+### [PENDING-VERIFY] 6. 文档同步
 - **What**: 更新 `CLAUDE.md` 的"代码修改边界"和"架构约定—新功能加在哪"两段。修订或删除 `docs/` 中残留引用 `configs/agent.yaml` 死字段的文档。
 - **Files**:
   - `CLAUDE.md`
