@@ -126,6 +126,37 @@ export async function removeSourceDir(path: string): Promise<WorkspaceConfig> {
 }
 
 // ==========================================================================
+// Per-project config (lazy write)
+// ==========================================================================
+
+export interface ProjectConfig {
+  codex_profile?: string;
+  enabled_mcp_servers?: string[];
+  // 允许 backend 后续扩展未知字段；前端 patch 时透传未知字段保持向前兼容
+  [key: string]: unknown;
+}
+
+export async function getProjectConfig(): Promise<ProjectConfig> {
+  const body = await _json(await fetch(`${API_BASE}/api/project-config`));
+  return (body?.config ?? {}) as ProjectConfig;
+}
+
+/**
+ * Patch-merge active project 的 config.toml。无 active project → 400。
+ * Lazy 写入：toml 不存在时 PATCH 才创建。
+ */
+export async function patchProjectConfig(updates: Partial<ProjectConfig>): Promise<ProjectConfig> {
+  const body = await _json(
+    await fetch(`${API_BASE}/api/project-config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    }),
+  );
+  return (body?.config ?? {}) as ProjectConfig;
+}
+
+// ==========================================================================
 // Auth status
 // ==========================================================================
 

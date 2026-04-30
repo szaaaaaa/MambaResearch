@@ -106,6 +106,32 @@ export async function listMcpServers(): Promise<McpServer[]> {
   return body.servers;
 }
 
+export async function getMcpServerEnv(name: string): Promise<Record<string, string>> {
+  const body = await _json<{ server_name: string; env: Record<string, string> }>(
+    await fetch(`${API_BASE}/api/mcp/servers/${encodeURIComponent(name)}/env`),
+  );
+  return body.env ?? {};
+}
+
+/**
+ * 覆盖写指定 server 的 user env override。Backend 严格只接受 ``{env: {...}}``，
+ * 出现 command/args/url/type/transport 字段会被 400 拒绝（命令行定义在 builtin
+ * helper 里硬编码，UI 不可改）。空 env dict 表示清空 override。
+ */
+export async function patchMcpServerEnv(
+  name: string,
+  env: Record<string, string>,
+): Promise<Record<string, string>> {
+  const body = await _json<{ server_name: string; env: Record<string, string> }>(
+    await fetch(`${API_BASE}/api/mcp/servers/${encodeURIComponent(name)}/env`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env }),
+    }),
+  );
+  return body.env ?? {};
+}
+
 export async function listMcpStatuses(): Promise<McpServerStatus[]> {
   const body = await _json<{ statuses: McpServerStatus[] }>(
     await fetch(`${API_BASE}/api/mcp/servers/status`),
