@@ -2,7 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "configs" / "agent.yaml"
+CLAUDE_CODE_PROVIDERS_PATH = ROOT / "configs" / "claude_code" / "providers.json"
+CODEX_AUTH_PATH = ROOT / "configs" / "codex" / "auth.json"
 ENV_PATH = ROOT / ".env"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 TMP_DIR = ROOT / ".tmp"

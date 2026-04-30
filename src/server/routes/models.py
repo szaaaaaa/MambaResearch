@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from src.common.openai_codex import openai_codex_model_catalog
-from src.server.routes.config import _read_config_file, _read_env_file
+from src.server.routes.config import _load_codex_legacy_config, _read_env_file
 from src.server.settings import (
     GEMINI_MODELS_URL,
     OPENAI_MODELS_URL,
@@ -326,7 +326,7 @@ def get_openai_models():
 
 @router.get("/api/codex/models")
 def get_codex_models():
-    return openai_codex_model_catalog(config=_read_config_file())
+    return openai_codex_model_catalog(config=_load_codex_legacy_config())
 
 
 @router.get("/api/gemini/models")

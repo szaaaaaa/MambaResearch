@@ -35,7 +35,7 @@
   - `configs/codex/auth.json` 存在且含原 `auth.openai_codex` 内容
   - `scripts/migrate_agent_yaml.py` 存在且可重复执行（幂等或明确 one-shot 标注）
   - `pytest tests/` 全绿（loader 未改、yaml 仍在，世界观未变）
-### [WIP] 1c. paper_search 做成 builtin helper + env override 加载层 + 修正 1a 的 servers.json 错误
+### [DONE] 1c. paper_search 做成 builtin helper + env override 加载层 + 修正 1a 的 servers.json 错误
 - **What**: 经 1a 之后发现的架构错位修正——`mcp.servers[]` 在 src/ 里 0 引用，registry.py 真实 source 是 builtin helpers + .codex/config.toml + .mcp.json。把 paper_search 从 yaml 死字段升级为 builtin helper：(i) 新建 `src/server/integrations/paper_search/mcp_server.py`，导出 `default_mcp_config(root)` 返回 hardcoded command/args（照 `mamba_history/mcp_server.py:499` 模板），并合并 env override；(ii) 新建 `src/server/mcp/env_overrides.py` 读 `configs/mcp/env_overrides.json`（仅 env keys 字典，不含 command/args）；(iii) 在 `src/server/mcp/registry.py:_read_builtin_helpers()` import 并 append 新 helper；(iv) 删 `configs/mcp/servers.json`（1a 错误产物）；(v) 改 `scripts/migrate_agent_yaml.py` 把 paper_search 的 env keys 子集迁到 `configs/mcp/env_overrides.json`；(vi) 跑 migrate script 生成 env_overrides.json。
 - **Files**:
   - `src/server/integrations/paper_search/__init__.py`（新建）
@@ -52,7 +52,7 @@
   - 启动后端，`/api/mcp-servers` 列表里能看到 paper_search（不依赖 yaml）
   - env_overrides.json 修改一个 key 后重启后端，paper_search 子进程 env 反映新值
   - `pytest tests/` 全绿
-### [TODO] 1b. 改造 2 个加载点（claude_code/providers + codex 段）从新 json 读取 + 清退 _normalize_config_shape + 物理删除 agent.yaml
+### [WIP] 1b. 改造 2 个加载点（claude_code/providers + codex 段）从新 json 读取 + 清退 _normalize_config_shape + 物理删除 agent.yaml
 - **What**: 1b 范围已 narrow——mcp loader 由 1c 独立处理。本 task 改 `src/server/claude_code/providers.py` 从 `configs/claude_code/providers.json` 读；改 `src/server/routes/config.py`（codex 段中转）从 `configs/codex/auth.json` 读；删除 `_normalize_config_shape` v2 迁移代码 + 90% dead 字段相关引用。loader 全部切完且 `pytest tests/` 通过后，**最后一步**物理删除 `configs/agent.yaml`，再跑一次 pytest 兜底。
 - **Acceptance**:
   - 2 个加载点（claude_code/providers.py + routes/config.py codex 段）不再引用 `configs/agent.yaml`

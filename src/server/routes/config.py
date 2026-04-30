@@ -1,9 +1,29 @@
+"""配置与凭证 API 路由（D+E 重构后版本）。
+
+枢转后 ``configs/agent.yaml`` 已物理删除，全局配置拆为：
+
+- ``configs/claude_code/providers.json`` —— Claude Code provider 注册表
+- ``configs/codex/auth.json`` —— Codex OAuth 绑定（default_profile / allowed_profiles 等）
+- ``configs/mcp/env_overrides.json`` —— MCP server 的 user 级 env override
+- ``.env`` —— 凭证（API keys）
+
+本模块只承担 Codex auth 与凭证 (.env) 两类路由：
+
+- ``/api/codex/{status,login,logout,callback}`` —— 把 ``codex/auth.json`` 包装成
+  legacy 形状传给 ``src/common/openai_codex`` 的 binding 函数（保持其
+  ``cfg["auth"]["openai_codex"]`` 接口契约）
+- ``/api/credentials`` (GET/POST) —— 读写 ``.env`` 中的 API keys
+
+旧 ``/api/config`` GET/POST 已删除——其 yaml 全局视图在新架构里没有对应物
+（providers / mcp / codex 各有独立路由，settings UI 走 4 个分视图）。
+"""
+
+from __future__ import annotations
+
 import json
 import os
-from copy import deepcopy
 from typing import Any
 
-import yaml
 from fastapi import APIRouter, HTTPException, Request
 
 from src.common.config_utils import read_env_file
@@ -13,85 +33,31 @@ from src.common.openai_codex import (
     openai_codex_login_status,
     start_openai_codex_login,
 )
-from src.server.settings import APP_RUNTIME_MODE, CONFIG_PATH, CREDENTIAL_KEYS, ENV_PATH
+from src.server.settings import CODEX_AUTH_PATH, CREDENTIAL_KEYS, ENV_PATH
 
 
 router = APIRouter()
 
 
-def _normalize_config_shape(config: dict[str, Any]) -> dict[str, Any]:
-    normalized = deepcopy(config)
-    llm_config = normalized.get("llm")
-    if isinstance(llm_config, dict):
-        role_models = llm_config.get("role_models")
-        if isinstance(role_models, dict):
-            legacy_critic = role_models.pop("critic", None)
-            reviewer_entry = role_models.get("reviewer")
-            if legacy_critic and not isinstance(reviewer_entry, dict):
-                role_models["reviewer"] = legacy_critic
+def _load_codex_legacy_config() -> dict[str, Any]:
+    """读 ``codex/auth.json`` 包装成 legacy ``cfg["auth"]["openai_codex"]`` 形状。
 
-            conductor_entry = role_models.get("conductor")
-            agent_config = normalized.get("agent")
-            if isinstance(agent_config, dict):
-                routing_config = agent_config.get("routing")
-                if not isinstance(routing_config, dict):
-                    routing_config = {}
-                    agent_config["routing"] = routing_config
-                planner_config = routing_config.get("planner_llm")
-                if not isinstance(planner_config, dict):
-                    planner_config = {}
-                    routing_config["planner_llm"] = planner_config
-                if isinstance(conductor_entry, dict):
-                    planner_config.setdefault("provider", conductor_entry.get("provider", ""))
-                    planner_config.setdefault("model", conductor_entry.get("model", ""))
-                planner_config.setdefault("temperature", 0.1)
-    return normalized
+    ``src/common/openai_codex`` 的 ``_openai_codex_binding(config)`` 期望
+    ``cfg["auth"]["openai_codex"]`` 路径。改它的接口影响面大，保留旧形状作
+    适配层——本函数把扁平的 ``codex/auth.json`` 内容重新包成嵌套 dict 传入。
 
-
-def _read_config_file() -> dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        return {}
-    with CONFIG_PATH.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file) or {}
-    if not isinstance(config, dict):
-        raise HTTPException(status_code=500, detail="config file must contain an object")
-    return _normalize_config_shape(config)
-
-
-def _merge_config(base: Any, incoming: Any) -> Any:
-    if isinstance(base, dict) and isinstance(incoming, dict):
-        merged = dict(base)
-        for key, value in incoming.items():
-            merged[key] = _merge_config(merged.get(key), value)
-        return merged
-    if isinstance(incoming, list):
-        return list(incoming)
-    return incoming
-
-
-def _write_config_file(config: dict[str, Any]) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as file:
-        yaml.safe_dump(_normalize_config_shape(config), file, allow_unicode=True, sort_keys=False)
-
-
-@router.get("/api/config")
-def get_config():
-    config = _read_config_file()
-    return {**config, "runtime_mode": APP_RUNTIME_MODE}
-
-
-@router.post("/api/config")
-async def save_config(request: Request):
-    payload = await request.json()
+    文件不存在返回 ``{"auth": {"openai_codex": {}}}``——binding 会用默认值兜底。
+    """
+    if not CODEX_AUTH_PATH.exists():
+        return {"auth": {"openai_codex": {}}}
+    with CODEX_AUTH_PATH.open("r", encoding="utf-8") as fp:
+        payload = json.load(fp)
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="config payload must be an object")
-    incoming = dict(payload)
-    incoming.pop("runtime_mode", None)
-    merged_config = _merge_config(_read_config_file(), incoming)
-    normalized = _normalize_config_shape(merged_config)
-    _write_config_file(normalized)
-    return {**normalized, "runtime_mode": APP_RUNTIME_MODE}
+        raise HTTPException(
+            status_code=500,
+            detail=f"{CODEX_AUTH_PATH.name} must contain a JSON object",
+        )
+    return {"auth": {"openai_codex": payload}}
 
 
 def _read_env_file() -> dict[str, str]:
@@ -164,12 +130,12 @@ def get_credentials():
 
 @router.get("/api/codex/status")
 def get_codex_status():
-    return openai_codex_login_status(config=_read_config_file())
+    return openai_codex_login_status(config=_load_codex_legacy_config())
 
 
 @router.post("/api/codex/login")
 def start_codex_login():
-    config = _read_config_file()
+    config = _load_codex_legacy_config()
     try:
         payload = start_openai_codex_login(config=config)
     except RuntimeError as exc:
@@ -186,7 +152,7 @@ def start_codex_login():
 
 @router.post("/api/codex/logout")
 def logout_codex():
-    config = _read_config_file()
+    config = _load_codex_legacy_config()
     try:
         status = logout_openai_codex(config=config)
     except RuntimeError as exc:
@@ -199,7 +165,7 @@ def logout_codex():
 
 @router.post("/api/codex/callback")
 async def complete_codex_login(request: Request):
-    config = _read_config_file()
+    config = _load_codex_legacy_config()
     payload = await request.json()
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="callback payload must be an object")
