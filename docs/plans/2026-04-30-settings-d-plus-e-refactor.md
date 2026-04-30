@@ -27,7 +27,7 @@
 
 
 
-### [WIP] 1a. 写迁移脚本 + 生成 3 个新 json（yaml 保留不动）
+### [DONE] 1a. 写迁移脚本 + 生成 3 个新 json（yaml 保留不动）
 - **What**: 新建 `scripts/migrate_agent_yaml.py` 一次性读旧 `configs/agent.yaml`，拆出 `configs/claude_code/providers.json`、`configs/mcp/servers.json`、`configs/codex/auth.json` 三个新文件；运行脚本生成产物。**保留 `configs/agent.yaml` 不动**——loader 切换在 1b 处理，避免本步留下损坏中间态。仅动 configs/ 与 scripts/，不改任何 .py 加载点。
 - **Acceptance**:
   - `configs/claude_code/providers.json` 存在且含原 `claude_code.providers` 内容
@@ -35,26 +35,44 @@
   - `configs/codex/auth.json` 存在且含原 `auth.openai_codex` 内容
   - `scripts/migrate_agent_yaml.py` 存在且可重复执行（幂等或明确 one-shot 标注）
   - `pytest tests/` 全绿（loader 未改、yaml 仍在，世界观未变）
-### [TODO] 1b. 改造 3 个加载点从新 json 读取 + 清退 _normalize_config_shape + 物理删除 agent.yaml
-- **What**: 改 `src/server/claude_code/providers.py` 从 `configs/claude_code/providers.json` 读；改 `src/server/mcp/registry.py` 从 `configs/mcp/servers.json` 读；定位并改造 Codex 配置加载点从 `configs/codex/auth.json` 读；删除 `src/server/routes/config.py` 的 `_normalize_config_shape` v2 迁移代码 + 90% dead 字段相关引用。loader 全部切完且 `pytest tests/` 通过后，**最后一步**物理删除 `configs/agent.yaml`，再跑一次 pytest 兜底。
+### [WIP] 1c. paper_search 做成 builtin helper + env override 加载层 + 修正 1a 的 servers.json 错误
+- **What**: 经 1a 之后发现的架构错位修正——`mcp.servers[]` 在 src/ 里 0 引用，registry.py 真实 source 是 builtin helpers + .codex/config.toml + .mcp.json。把 paper_search 从 yaml 死字段升级为 builtin helper：(i) 新建 `src/server/integrations/paper_search/mcp_server.py`，导出 `default_mcp_config(root)` 返回 hardcoded command/args（照 `mamba_history/mcp_server.py:499` 模板），并合并 env override；(ii) 新建 `src/server/mcp/env_overrides.py` 读 `configs/mcp/env_overrides.json`（仅 env keys 字典，不含 command/args）；(iii) 在 `src/server/mcp/registry.py:_read_builtin_helpers()` import 并 append 新 helper；(iv) 删 `configs/mcp/servers.json`（1a 错误产物）；(v) 改 `scripts/migrate_agent_yaml.py` 把 paper_search 的 env keys 子集迁到 `configs/mcp/env_overrides.json`；(vi) 跑 migrate script 生成 env_overrides.json。
+- **Files**:
+  - `src/server/integrations/paper_search/__init__.py`（新建）
+  - `src/server/integrations/paper_search/mcp_server.py`（新建）
+  - `src/server/mcp/env_overrides.py`（新建）
+  - `src/server/mcp/registry.py`（改 5 行 import + append）
+  - `scripts/migrate_agent_yaml.py`（修：servers.json → env_overrides.json）
+  - `configs/mcp/servers.json`（删除）
+  - `configs/mcp/env_overrides.json`（生成）
 - **Acceptance**:
-  - 3 个加载点不再引用 `configs/agent.yaml`
+  - `configs/mcp/servers.json` 已删除（`git ls-files | grep mcp/servers.json` 返回空）
+  - `configs/mcp/env_overrides.json` 存在且只含 paper_search 的 env keys 子集（不含 command/args）
+  - `src/server/integrations/paper_search/mcp_server.py:default_mcp_config` 返回字典含 `paper_search` key 与 hardcoded command/args
+  - 启动后端，`/api/mcp-servers` 列表里能看到 paper_search（不依赖 yaml）
+  - env_overrides.json 修改一个 key 后重启后端，paper_search 子进程 env 反映新值
+  - `pytest tests/` 全绿
+### [TODO] 1b. 改造 2 个加载点（claude_code/providers + codex 段）从新 json 读取 + 清退 _normalize_config_shape + 物理删除 agent.yaml
+- **What**: 1b 范围已 narrow——mcp loader 由 1c 独立处理。本 task 改 `src/server/claude_code/providers.py` 从 `configs/claude_code/providers.json` 读；改 `src/server/routes/config.py`（codex 段中转）从 `configs/codex/auth.json` 读；删除 `_normalize_config_shape` v2 迁移代码 + 90% dead 字段相关引用。loader 全部切完且 `pytest tests/` 通过后，**最后一步**物理删除 `configs/agent.yaml`，再跑一次 pytest 兜底。
+- **Acceptance**:
+  - 2 个加载点（claude_code/providers.py + routes/config.py codex 段）不再引用 `configs/agent.yaml`
   - `src/server/routes/config.py` 中已无 `_normalize_config_shape` 残留
   - `python app.py` 启动无 import error / config error
   - `git ls-files | grep agent.yaml` 返回空
   - `pytest tests/` 全绿（删 yaml 后兜底跑一次）
-  - 启动后调一次 paper_search MCP 工具能拿到结果（不返回 connection error）
+  - 启动后调一次 paper_search MCP 工具能拿到结果（依靠 1c 的 builtin helper，不依赖 yaml）
 ### [TODO] 2. 后端 settings 路由重构
-- **What**: 删 `/api/config` GET/POST（旧 yaml 接口）。新增 `/api/cli-providers` GET/PATCH 操作 `providers.json`。扩展 `/api/mcp-servers` 支持编辑 env keys 写回 `servers.json`。确认 `/api/projects` 与 `/api/skills` 满足 D 视图所需，缺什么补什么。
+- **What**: 删 `/api/config` GET/POST（旧 yaml 接口）。新增 `/api/cli-providers` GET/PATCH 操作 `providers.json`。扩展 `/api/mcp-servers` 支持编辑 env keys 写回 `configs/mcp/env_overrides.json`（user 层 env override，非 server 命令行定义；server 定义在 1c 引入的 builtin helper 里，不可被 PATCH 改动）。确认 `/api/projects` 与 `/api/skills` 满足 D 视图所需，缺什么补什么。
 - **Files**:
   - `src/server/routes/config.py`（重写或拆分）
-  - `src/server/routes/mcp_servers.py`（扩展 PATCH env）
+  - `src/server/routes/mcp_servers.py`（扩展 PATCH env，写 env_overrides.json）
   - `src/server/routes/skills.py`（确认列出 `.skills-shared/*` 与 `.claude/agents/*`）
   - `src/server/routes/__init__.py`（如新增 router 文件）
   - `app.py`（include_router 增删）
 - **Acceptance**:
   - `curl localhost:8000/api/cli-providers` 返回 `providers.json` 内容（含 `anthropic` 条目）
-  - `curl -X PATCH /api/mcp-servers/paper_search` 写入 env 后，`servers.json` 文件内 env 字段被更新；进程重启后 env 仍存在
+  - `curl -X PATCH /api/mcp-servers/paper_search` 写入 env 后，`configs/mcp/env_overrides.json` 文件内 env 字段被更新；进程重启后 env 仍存在
+  - PATCH 试图改 paper_search 的 command/args 应被拒绝（返回 400 或忽略），仅允许改 env
   - `/api/skills` 返回包含 path / size / mtime 的列表，覆盖 `.skills-shared/*/SKILL.md` 与 `.claude/agents/*.md`
   - 旧 `/api/config` GET/POST 返回 404
   - `pytest tests/` 全绿
@@ -85,7 +103,7 @@
   - `cd frontend && tsc --noEmit` 无 error
   - `cd frontend && npm run build` 成功
   - 启动前端打开设置弹窗，6 个分类全部可见且 console 无 error
-  - 在 MCP 视图编辑一个 env key 点保存 → 后端 `servers.json` 文件真被修改
+  - 在 MCP 视图编辑一个 env key 点保存 → 后端 `configs/mcp/env_overrides.json` 文件真被修改
 
 ### [TODO] 5. 端到端验证
 - **What**: 手动跑通真实工作流，确认枢转后核心功能（Codex OAuth、paper_search MCP、Claude Code 会话）没被打断。

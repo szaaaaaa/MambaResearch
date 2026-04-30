@@ -120,6 +120,9 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
     from src.server.integrations.mamba_history.mcp_server import (
         default_mcp_config as mamba_history_default_mcp_config,
     )
+    from src.server.integrations.paper_search.mcp_server import (
+        default_mcp_config as paper_search_default_mcp_config,
+    )
     from src.server.integrations.zotero.mcp_server import (
         default_mcp_config as zotero_default_mcp_config,
     )
@@ -134,6 +137,7 @@ def _read_builtin_helpers() -> list[McpServerInfo]:
         colab_default_mcp_config,
         experiment_default_mcp_config,
         mamba_history_default_mcp_config,
+        paper_search_default_mcp_config,
     ):
         config = func(_REPO_ROOT)
         for name, raw in config.items():
