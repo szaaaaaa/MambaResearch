@@ -112,7 +112,7 @@ ResearchAgent 是一个**自主学术研究代理系统**。用户输入一个�
     ▼
 runtime.run()
     │
-    ├─ 1. 加载配置 (configs/agent.yaml + .env)
+    ├─ 1. 加载配置 (configs/{claude_code,mcp,codex}/*.json + .env)
     ├─ 2. 初始化存储 (内存模式 或 SQLite+知识图谱)
     ├─ 3. 加载角色注册表 (roles.yaml)
     ├─ 4. 发现并加载技能 (builtins/ + skills/ + evolved_skills/)
@@ -236,7 +236,9 @@ runtime.run()
 ResearchAgent/
 ├── app.py                          # FastAPI 入口，启动后端服务
 ├── configs/
-│   └── agent.yaml                  # 主配置（LLM/搜索/预算/MCP 服务器）
+│   ├── claude_code/providers.json  # Claude Code provider 注册表
+│   ├── mcp/env_overrides.json      # MCP 子进程 user 层 env override
+│   └── codex/auth.json             # Codex OAuth profile 绑定
 ├── frontend/src/
 │   ├── App.tsx                     # React 根组件
 │   ├── store.tsx                   # 全局状态管理 (Zustand)
@@ -429,19 +431,18 @@ Planner 不是固定流程，而是用 LLM 根据当前状态动态生成 DAG，
 
 ## 十一、配置系统
 
-主配置文件：`configs/agent.yaml`（约 314 行），核心部分：
+枢转后全局 yaml 物理删除，按职责拆为 4 个 json 注册表（每个对应一个 settings 视图与一组 REST 端点）：
 
-| 配置段 | 内容 |
-|--------|------|
-| `providers` | LLM 后端、搜索引擎、检索器配置 |
-| `mcp_servers` | 5 个 MCP 服务器定义（llm/search/retrieval/exec/paper_search） |
-| `llm` | 默认模型 + 每个角色的专属模型 |
-| `retrieval` | Embedding 模型、混合搜索、重排序配置 |
-| `academic_sources` | arXiv/Semantic Scholar 等论文源开关 |
-| `agent` | 最大迭代数、论文数、查询改写策略、话题过滤 |
-| `output` | 输出目录、索引后端、PDF 提取方式 |
+| 文件 | 内容 | 编辑入口 |
+|--------|------|------|
+| `configs/claude_code/providers.json` | Claude Code provider 注册表（`name → {base_url, api_key_env, default_model}`） | 前端 CLI 视图 / `PATCH /api/cli-providers` |
+| `configs/mcp/env_overrides.json` | MCP 子进程 user 层 env override（`server_name → {KEY: value}`） | 前端 MCP 视图 / `PATCH /api/mcp/servers/{name}/env` |
+| `configs/codex/auth.json` | Codex OAuth profile 绑定（`default_profile` / `allowed_profiles` 等） | 自动维护，需要时手编 |
+| `<project>/.research-agent/config.toml` | 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
 
-环境变量在 `.env` 中配置（API Key 等），通过 `${ENV_VAR}` 在 YAML 中引用。
+MCP server 命令行（`command` / `args`）不在任何配置文件里——由 `src/server/integrations/<name>/mcp_server.py` 的 `default_mcp_config()` 硬编码，再由 `src/server/mcp/registry.py:_read_builtin_helpers()` 在启动时合并 env override 后注册。前端只能改 env，不可改命令行（安全边界）。
+
+API key 等凭证仍在 `.env`，通过设置面板"凭证"段落或 `POST /api/credentials` 写入。
 
 ---
 

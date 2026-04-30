@@ -44,10 +44,18 @@ If you find yourself about to write code without having invoked the applicable o
 
 规则：改完运行 `pytest tests/`；失败必须修复。
 
+## 🟡 中风险 — 配置注册表（手编请走 schema）
+
+枢转后全局 yaml 已物理删除，配置拆为 4 个 json 文件，schema 收紧到注册表语义；改完不必跑 pytest，但形状错会让对应 backend session 拉不起来。
+
+- `configs/claude_code/providers.json` — Claude Code provider 注册表（`name → {base_url, api_key_env, default_model}`）；优先走 `PATCH /api/cli-providers` 或前端 CLI 视图
+- `configs/mcp/env_overrides.json` — MCP 子进程 user 层 env override（`server_name → {KEY: value}`）；优先走 `PATCH /api/mcp/servers/{name}/env` 或前端 MCP 视图
+- `configs/codex/auth.json` — Codex OAuth profile 绑定（``default_profile`` / ``allowed_profiles``）
+- `<project>/.research-agent/config.toml` — 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`）；优先走 `PATCH /api/project-config`
+
 ## 🟢 安全区 — 可直接修改
 
 - `frontend/src/` 前端代码
-- `configs/agent.yaml` 配置调整
 - `scripts/`、`docs/`
 - `.claude/agents/*.md`、`.skills-shared/*/SKILL.md`（pipeline / sub-agent 蒸馏文档；`.claude/skills/` 与 `.codex/skills/` 是指向 `.skills-shared/` 的 NTFS junction，不直接编辑）
 

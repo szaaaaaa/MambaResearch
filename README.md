@@ -149,7 +149,10 @@ python scripts/sync_subagents.py
 ```
 MambaResearch/
 ├── app.py                          # FastAPI 入口
-├── configs/agent.yaml              # 主配置
+├── configs/
+│   ├── claude_code/providers.json  # Claude Code provider 注册表
+│   ├── mcp/env_overrides.json      # MCP 子进程 user 层 env override
+│   └── codex/auth.json             # Codex OAuth profile 绑定
 ├── .claude/
 │   ├── agents/                     # 8 个 sub-agent 真相源（.md）
 │   └── skills/                     # 7 + 1 个 SKILL.md（pipeline + classify-workspace）
@@ -173,25 +176,18 @@ MambaResearch/
 
 ## ⚙ 配置
 
-`configs/agent.yaml` v3 只剩跟 paper_search 与 Codex / Claude provider profile 相关的少量配置；不再有 LLM routing / role_models / dynamic_os runtime 段。常见调整：
+枢转后全局 yaml 物理删除，配置按职责拆为 4 个 json 注册表：
 
-```yaml
-sources:
-  arxiv:
-    enabled: true
-    max_results_per_query: 30
-  semantic_scholar:
-    enabled: true
-    max_results_per_query: 30
-mcp:
-  servers:
-    - server_id: paper_search
-      command: [${python}, -m, paper_search_mcp.server]
-      env:
-        PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY: ''
-```
+| 文件 | 职责 | 编辑入口 |
+|---|---|---|
+| `configs/claude_code/providers.json` | Claude Code provider（`name → {base_url, api_key_env, default_model}`） | 前端 CLI 视图 / `PATCH /api/cli-providers` |
+| `configs/mcp/env_overrides.json` | MCP 子进程 user 层 env override | 前端 MCP 视图 / `PATCH /api/mcp/servers/{name}/env` |
+| `configs/codex/auth.json` | Codex OAuth profile 绑定 | 自动维护，需要时手编 |
+| `<project>/.research-agent/config.toml` | 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
 
-`paths.outputs_dir` 决定 `outputs/<run_id>/` 写到哪（默认 `${project.data_dir}/outputs`）。
+MCP server 命令行（`command` / `args`）由 `src/server/integrations/<name>/mcp_server.py` 的 `default_mcp_config()` 硬编码 + `src/server/mcp/registry.py:_read_builtin_helpers()` 注册；UI 只能改 env override，不可改命令行。
+
+API key 等凭证仍在 `.env`，通过设置面板"凭证"段落写入。
 
 ## 🔁 自动化开发流程（/pipeline）
 
