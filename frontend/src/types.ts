@@ -51,155 +51,34 @@ export interface CredentialPresence {
 
 export type CredentialStatusMap = Record<keyof Credentials, CredentialPresence>;
 
+/**
+ * D+E 重构后 ProjectConfig 收缩为 minimal。
+ *
+ * 旧 yaml 镜像（agent.budget / retrieval / index / sources.* / ingest / fetch /
+ * institutional_access / providers.search.circuit_breaker / budget_guard /
+ * agent.experiment_plan / agent.review / knowledge_graph / agent.routing /
+ * llm.role_models / paths / metadata_store 等）已全部移除——它们的后端
+ * consumer 已在 task 1+2 删除（agent.yaml 物理删除，旧 /api/config 路由 404）。
+ *
+ * 新世界里前端的"全局配置"非常薄——只剩两块：
+ *   - auth.openai_codex：Codex OAuth 绑定（CliSection 用）
+ *   - llm.openai_codex：Codex transport / model_discovery（CliSection 用）
+ *
+ * 其它"配置"不再走 ProjectConfig，直接由各 section 调对应 API：
+ *   - ProjectSection → /api/projects + /api/project-config
+ *   - CliSection (Anthropic provider) → /api/cli-providers
+ *   - McpSection → /api/mcp/servers + PATCH /env
+ *   - SkillsSection → /api/skills + /api/agents
+ */
 export interface ProjectConfig {
   auth: {
     openai_codex: OpenAICodexAuthBinding;
   };
-  providers: {
-    llm: {
-      backend: string;
-      retries: number;
-      retry_backoff_sec: number;
-      gemini_api_key_env: string;
-    };
-    search: {
-      backend: string;
-      web_order: string[];
-      query_all_web: boolean;
-      circuit_breaker: {
-        enabled: boolean;
-        failure_threshold: number;
-        open_ttl_sec: number;
-        half_open_probe_after_sec: number;
-        sqlite_path: string;
-      };
-    };
-  };
   llm: {
-    provider: string;
-    model: string;
-    temperature: number;
     openai_codex: {
       transport: string;
       model_discovery: string;
     };
-    role_models: Record<AgentRoleId, AgentModelConfig>;
-  };
-  retrieval: {
-    openai_api_key_env: string;
-    runtime_mode: string;
-    embedding_backend: string;
-    embedding_model: string;
-    remote_embedding_model: string;
-    hybrid: boolean;
-    top_k: number;
-    candidate_k: number;
-    reranker_backend: string;
-    reranker_model: string;
-  };
-  sources: {
-    arxiv: { enabled: boolean; max_results_per_query: number; download_pdf: boolean };
-    openalex: { enabled: boolean; max_results_per_query: number };
-    google_scholar: { enabled: boolean; max_results_per_query: number };
-    semantic_scholar: { enabled: boolean; max_results_per_query: number; polite_delay_sec: number; max_retries: number; retry_backoff_sec: number };
-    web: { enabled: boolean; max_results_per_query: number };
-    google_cse: { enabled: boolean };
-    bing: { enabled: boolean };
-    github: { enabled: boolean };
-    paper_search_mcp: { enabled: boolean; max_results_per_query: number };
-    pdf_download: { only_allowed_hosts: boolean; allowed_hosts: string[]; forbidden_host_ttl_sec: number };
-  };
-  index: {
-    backend: string;
-    persist_dir: string;
-    collection_name: string;
-    web_collection_name: string;
-    chunk_size: number;
-    overlap: number;
-  };
-  agent: {
-    seed: number;
-    max_iterations: number;
-    papers_per_query: number;
-    max_queries_per_iteration: number;
-    top_k_for_analysis: number;
-    language: string;
-    report_max_sources: number;
-    budget: { max_research_questions: number; max_sections: number; max_references: number };
-    source_ranking: { core_min_a_ratio: number; background_max_c: number; max_per_venue: number };
-    query_rewrite: { min_per_rq: number; max_per_rq: number; max_total_queries: number };
-    dynamic_retrieval: { simple_query_academic: boolean; simple_query_pdf: boolean; simple_query_terms: number; deep_query_terms: number };
-    memory: { max_findings_for_context: number; max_context_chars: number };
-    evidence: { min_per_rq: number; allow_graceful_degrade: boolean };
-    claim_alignment: { enabled: boolean; min_rq_relevance: number; anchor_terms_max: number };
-    limits: { analysis_web_content_max_chars: number };
-    topic_filter: { min_keyword_hits: number; min_anchor_hits: number; include_terms: string[]; block_terms: string[] };
-    experiment_plan: {
-      enabled: boolean;
-      max_per_rq: number;
-      require_human_results: boolean;
-      mode?: string;
-      max_iterations?: number;
-      gpu?: string;
-      objective?: string;
-      exec_timeout_sec?: number;
-      workspace?: {
-        template?: string;
-        custom_path?: string;
-        mutable_files?: string[];
-        entry_point?: string;
-        eval_script?: string;
-      };
-      recovery?: {
-        max_retries?: number;
-        refine_after?: number;
-        pivot_after?: number;
-      };
-      stopping?: {
-        patience?: number;
-        min_improvement?: number;
-      };
-    };
-    review?: {
-      score_threshold?: number;
-      max_rewrite_cycles?: number;
-      dimension_weights?: {
-        novelty?: number;
-        soundness?: number;
-        clarity?: number;
-        significance?: number;
-        completeness?: number;
-      };
-    };
-    routing: {
-      planner_llm: AgentModelConfig;
-    };
-  };
-  ingest: {
-    text_extraction: string;
-    latex: { download_source: boolean; source_dir: string };
-    figure: { enabled: boolean; image_dir: string; min_width: number; min_height: number; vlm_model: string; vlm_temperature: number; validation_min_entity_match: number };
-  };
-  fetch: {
-    source: string;
-    max_results: number;
-    download_pdf: boolean;
-    polite_delay_sec: number;
-  };
-  institutional_access: {
-    enabled: boolean;
-    proxy_url: string;
-    ezproxy_base: string;
-    extra_hosts: string[];
-  };
-  project: { data_dir: string };
-  paths: { papers_dir: string; metadata_dir: string; indexes_dir: string; outputs_dir: string };
-  metadata_store: { backend: string; sqlite_path: string };
-  budget_guard: { max_tokens: number; max_api_calls: number; max_wall_time_sec: number };
-  knowledge_graph?: {
-    persistence_mode?: string;
-    sqlite_path?: string;
-    cross_run_mode?: string;
   };
 }
 
