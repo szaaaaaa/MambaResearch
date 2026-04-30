@@ -215,6 +215,19 @@ export const WorkbenchTab: React.FC = () => {
     [ccAppendItem],
   );
 
+  // 后端在 idle TTL 回收 / 重启后会丢掉内存里的 session；前端再拿旧 id
+  // 调任何 session 绑定端点都会拿到 404 "session not found"。
+  // 这个 helper 把前端状态归零让下一次发送自动起新 session，并提示用户。
+  const clearStaleSession = React.useCallback(() => {
+    sessionRef.current = null;
+    writeLastSessionId(null);
+    ccReset();
+  }, [ccReset]);
+
+  const isSessionNotFound = React.useCallback((status: number, detail: string): boolean => {
+    return status === 404 && /session not found/i.test(detail);
+  }, []);
+
   const ensureSession = React.useCallback(async (): Promise<ClaudeCodeSessionInfo> => {
     if (sessionRef.current) return sessionRef.current;
     const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
@@ -336,6 +349,13 @@ export const WorkbenchTab: React.FC = () => {
 
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
+        if (isSessionNotFound(response.status, detail)) {
+          clearStaleSession();
+          pushError(
+            '会话已过期（后端回收或重启），已自动清空当前 session——再发一次会自动起新 session。',
+          );
+          return;
+        }
         pushError(detail || `HTTP ${response.status}`);
         return;
       }
@@ -528,6 +548,15 @@ export const WorkbenchTab: React.FC = () => {
         );
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
+          if (isSessionNotFound(response.status, detail)) {
+            // 后端没认出这个 session id——清前端状态。/clear / /exit 的语义本来
+            // 就是"清掉对话上下文"，session 已经没了，效果一样；其他命令则告诉用户。
+            clearStaleSession();
+            if (command !== 'clear' && command !== 'exit') {
+              pushError('会话已过期（后端回收或重启），已自动清空。请重新发送命令。');
+            }
+            return;
+          }
           pushError(detail || `HTTP ${response.status}`);
           return;
         }
@@ -549,7 +578,7 @@ export const WorkbenchTab: React.FC = () => {
         pushError(`命令失败：${String(error)}`);
       }
     },
-    [ensureSession, pushError, ccClearItems, ccReset, ccOpenPanel],
+    [ensureSession, pushError, ccClearItems, ccReset, ccOpenPanel, clearStaleSession, isSessionNotFound],
   );
 
   const runSlashCommand = (input: string) => {
