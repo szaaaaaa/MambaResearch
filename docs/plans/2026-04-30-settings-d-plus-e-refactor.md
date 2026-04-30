@@ -52,7 +52,7 @@
   - 启动后端，`/api/mcp-servers` 列表里能看到 paper_search（不依赖 yaml）
   - env_overrides.json 修改一个 key 后重启后端，paper_search 子进程 env 反映新值
   - `pytest tests/` 全绿
-### [WIP] 1b. 改造 2 个加载点（claude_code/providers + codex 段）从新 json 读取 + 清退 _normalize_config_shape + 物理删除 agent.yaml
+### [DONE] 1b. 改造 2 个加载点（claude_code/providers + codex 段）从新 json 读取 + 清退 _normalize_config_shape + 物理删除 agent.yaml
 - **What**: 1b 范围已 narrow——mcp loader 由 1c 独立处理。本 task 改 `src/server/claude_code/providers.py` 从 `configs/claude_code/providers.json` 读；改 `src/server/routes/config.py`（codex 段中转）从 `configs/codex/auth.json` 读；删除 `_normalize_config_shape` v2 迁移代码 + 90% dead 字段相关引用。loader 全部切完且 `pytest tests/` 通过后，**最后一步**物理删除 `configs/agent.yaml`，再跑一次 pytest 兜底。
 - **Acceptance**:
   - 2 个加载点（claude_code/providers.py + routes/config.py codex 段）不再引用 `configs/agent.yaml`
@@ -61,7 +61,7 @@
   - `git ls-files | grep agent.yaml` 返回空
   - `pytest tests/` 全绿（删 yaml 后兜底跑一次）
   - 启动后调一次 paper_search MCP 工具能拿到结果（依靠 1c 的 builtin helper，不依赖 yaml）
-### [TODO] 2. 后端 settings 路由重构
+### [DONE] 2. 后端 settings 路由重构
 - **What**: 删 `/api/config` GET/POST（旧 yaml 接口）。新增 `/api/cli-providers` GET/PATCH 操作 `providers.json`。扩展 `/api/mcp-servers` 支持编辑 env keys 写回 `configs/mcp/env_overrides.json`（user 层 env override，非 server 命令行定义；server 定义在 1c 引入的 builtin helper 里，不可被 PATCH 改动）。确认 `/api/projects` 与 `/api/skills` 满足 D 视图所需，缺什么补什么。
 - **Files**:
   - `src/server/routes/config.py`（重写或拆分）

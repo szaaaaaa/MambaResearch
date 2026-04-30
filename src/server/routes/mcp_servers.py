@@ -34,6 +34,7 @@ from src.server.mcp.config_io import (
     delete_custom_server,
     list_custom_servers,
 )
+from src.server.mcp.env_overrides import load_env_overrides, write_env_overrides
 from src.server.mcp.probe import probe_server
 from src.server.mcp.sandbox import call_tool, is_dangerous
 
@@ -89,6 +90,60 @@ async def get_server_status(name: str) -> dict:
         raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
     status = await probe_server(server)
     return status.to_dict()
+
+
+@router.get("/api/mcp/servers/{name}/env")
+def get_server_env_override(name: str) -> dict:
+    """读指定 server 的 user env override（仅 user 层；不返回 hardcoded defaults）。"""
+    server = registry.get_server(name)
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+    return {"server_name": name, "env": load_env_overrides(name)}
+
+
+@router.patch("/api/mcp/servers/{name}/env")
+async def patch_server_env_override(name: str, request: Request) -> dict:
+    """覆盖写指定 server 的 user env override。
+
+    Body
+    ----
+    严格只接受 ``{"env": {key: value, ...}}`` 形状：
+
+    * env 必须是 dict[str, str]，空 dict 表示"清空该 server 的 override"
+    * 出现 ``command`` / ``args`` / ``url`` 等其他字段直接 400 拒绝——server 命令行
+      定义在 builtin helper 代码里硬编码，禁止 user 通过 PATCH 改动（安全边界）
+
+    端点设计来自 D+E 重构 task 2：settings UI 编辑 paper_search API keys 时点的就是
+    本接口。registry 下次 ``list_servers`` 取 builtin helper 的 ``default_mcp_config``
+    即合并最新 override；MCP 子进程下次启动也会拿到新值。
+    """
+    server = registry.get_server(name)
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+    payload = await _parse_json(request)
+    forbidden = {"command", "args", "url", "type", "transport"} & payload.keys()
+    if forbidden:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"fields not allowed via this endpoint: {sorted(forbidden)}. "
+                "Server command/args/url are hardcoded in the builtin helper; "
+                "only `env` is editable here."
+            ),
+        )
+    extra = set(payload.keys()) - {"env"}
+    if extra:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown fields: {sorted(extra)}. only `env` is accepted",
+        )
+    env = payload.get("env")
+    if not isinstance(env, dict):
+        raise HTTPException(
+            status_code=400, detail="`env` must be a JSON object (possibly empty)"
+        )
+    written = write_env_overrides(name, env)
+    return {"server_name": name, "env": written}
 
 
 # ---------------------------------------------------------------------------

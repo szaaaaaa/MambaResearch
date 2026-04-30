@@ -9,6 +9,7 @@ from src.server.projects.db import init_mamba_db
 from src.server.projects.registry import sync_active_project_env
 from src.server.routes.auth import router as auth_router
 from src.server.routes.claude_code import router as claude_code_router
+from src.server.routes.cli_providers import router as cli_providers_router
 from src.server.routes.codex import router as codex_router
 from src.server.routes.config import router as config_router
 from src.server.routes.conversation_switch import router as conversation_switch_router
@@ -51,6 +52,7 @@ app.include_router(conversations_router)
 app.include_router(conversation_switch_router)
 app.include_router(skills_router)
 app.include_router(claude_code_router)
+app.include_router(cli_providers_router)
 app.include_router(codex_router)
 app.include_router(mcp_servers_router)
 app.include_router(mcp_calls_router)

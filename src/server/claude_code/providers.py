@@ -20,6 +20,7 @@ from typing import Any, Mapping
 __all__ = [
     "ProviderConfig",
     "ProviderRegistryError",
+    "REQUIRED_FIELDS",
     "build_env_for_provider",
     "get_provider_registry",
     "load_provider_registry",
@@ -55,7 +56,7 @@ class ProviderConfig:
     default_model: str
 
 
-_REQUIRED_FIELDS: tuple[str, ...] = ("base_url", "api_key_env", "default_model")
+REQUIRED_FIELDS: tuple[str, ...] = ("base_url", "api_key_env", "default_model")
 
 
 def load_provider_registry(raw: Any) -> dict[str, ProviderConfig]:
@@ -97,7 +98,7 @@ def load_provider_registry(raw: Any) -> dict[str, ProviderConfig]:
                 f"{type(entry).__name__}"
             )
         kwargs: dict[str, str] = {}
-        for field in _REQUIRED_FIELDS:
+        for field in REQUIRED_FIELDS:
             if field not in entry:
                 raise ProviderRegistryError(
                     f"provider {name!r}: missing required field {field!r}"
