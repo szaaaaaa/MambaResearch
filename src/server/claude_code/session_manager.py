@@ -306,42 +306,101 @@ class SessionManager:
 
         - 保留 ``add_dirs`` 累计目录（用户的"工作区"配置不该被 /clear 抹掉）
         - 保留 ``permission_state.allowed_always``（"允许本会话"属于用户信任选择
-          而非上下文，/clear 只清对话历史不清权限授权，与 CLI 语义一致）
+          而非上下文，/clear 只清对话历史不清权限授权，与 CLI 语义一致）。
+          注意：冷路径下原 in-memory state 已被 idle sweeper 清掉，此时新建空
+          PermissionState——allowed_always 由用户在新 turn 重新授权。
         - 刷新 ``last_activity_at``，保留原 ``created_at``
         - DB 侧清空该 session 的 messages 行（``store.clear_messages``），保留
           sessions 行的元数据。与 SDK 侧"同 id 不 resume 重建"语义对齐
 
+        Hot path（in-memory）：dispose 现有 client 后重建。
+        Cold path（仅 DB）：从 ``store.get_session`` 拿元数据重建并注册——此时
+        新 client 不带 sdk_resume，效果等同先 restore 再 clear；DB 也没有就 None。
+
         Returns
         -------
         ClaudeSession or None
-            重建后的会话；若 id 不存在返回 ``None``。
+            重建后的会话；DB 也查不到才返 None。
         """
         session = self._sessions.get(session_id)
-        if session is None:
-            return None
-        old_client = session.client
-        _cancel_pending_permissions(session)
-        try:
-            await old_client.disconnect()
-        except Exception:
-            logger.exception("disconnect failed during clear_context for %s", session_id)
+        if session is not None:
+            old_client = session.client
+            _cancel_pending_permissions(session)
+            try:
+                await old_client.disconnect()
+            except Exception:
+                logger.exception(
+                    "disconnect failed during clear_context for %s", session_id
+                )
 
-        new_client = await _build_client(
+            new_client = await _build_client(
+                session_id=session_id,
+                cwd=session.cwd,
+                model=session.model,
+                permission_mode=session.permission_mode,
+                add_dirs=list(session.add_dirs),
+                permission_state=session.permission_state,
+                options_overrides=None,
+                sdk_resume=False,
+                provider_config=_resolve_provider_or_raise(session.provider),
+            )
+            session.client = new_client
+            session.last_activity_at = time.time()
+            if self._store is not None:
+                self._store.clear_messages(session_id)
+            return session
+
+        # Cold path：内存里没 session，但 DB 里若仍有元数据就以同 id 重建一个
+        # 空上下文 client。/clear 的语义是"在该 session 内清空"——session id 必须
+        # 保持，否则就退化成"close + new"。idle TTL 回收 / 进程重启不应该让用户
+        # 失去 session 标识。
+        if self._store is None:
+            return None
+        stored = self._store.get_session(session_id)
+        if stored is None:
+            return None
+        permission_state = PermissionState()
+        client = await _build_client(
             session_id=session_id,
-            cwd=session.cwd,
-            model=session.model,
-            permission_mode=session.permission_mode,
-            add_dirs=list(session.add_dirs),
-            permission_state=session.permission_state,
+            cwd=stored.cwd,
+            model=stored.model,
+            permission_mode=stored.permission_mode,
+            add_dirs=list(stored.add_dirs),
+            permission_state=permission_state,
             options_overrides=None,
             sdk_resume=False,
-            provider_config=_resolve_provider_or_raise(session.provider),
+            provider_config=_resolve_provider_or_raise(stored.provider),
         )
-        session.client = new_client
-        session.last_activity_at = time.time()
-        if self._store is not None:
-            self._store.clear_messages(session_id)
-        return session
+        now = time.time()
+        rebuilt = ClaudeSession(
+            id=session_id,
+            cwd=stored.cwd,
+            model=stored.model,
+            permission_mode=stored.permission_mode,
+            created_at=stored.created_at,
+            last_activity_at=now,
+            client=client,
+            add_dirs=list(stored.add_dirs),
+            permission_state=permission_state,
+            provider=stored.provider,
+        )
+        async with self._lock:
+            # 并发恢复保护——同 get_or_restore 的处理：另一路已建好就让它胜出
+            existing = self._sessions.get(session_id)
+            if existing is not None:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    logger.exception(
+                        "disconnect failed for lost-race in clear_context %s",
+                        session_id,
+                    )
+                existing.last_activity_at = now
+                return existing
+            self._sessions[session_id] = rebuilt
+        self._ensure_sweeper()
+        self._store.clear_messages(session_id)
+        return rebuilt
 
     async def add_directory(self, session_id: str, path: str) -> ClaudeSession | None:
         """把 ``path`` 加入会话的 ``add_dirs`` 并重建 SDK client（带 resume 保留上下文）。
@@ -353,12 +412,16 @@ class SessionManager:
         路径校验（存在 + 属于项目根）由路由层完成；SessionManager 只负责 append
         + rebuild。DB 侧同步 ``update_add_dirs``。
 
+        若 session 已被 idle sweeper evict（仅 DB 有），先走 ``get_or_restore``
+        把它带 SDK resume 重建回内存——/add-dir 必须保留对话上下文；与 /clear
+        的"重建即清空"语义不同。
+
         Returns
         -------
         ClaudeSession or None
-            重建后的会话；若 id 不存在返回 ``None``。
+            重建后的会话；DB 也查不到才返 None。
         """
-        session = self._sessions.get(session_id)
+        session = await self.get_or_restore(session_id)
         if session is None:
             return None
         if path in session.add_dirs:

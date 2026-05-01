@@ -219,6 +219,16 @@ export const WorkbenchTab: React.FC = () => {
     return status === 404 && /session not found/i.test(detail);
   }, []);
 
+  // 后端 ``clear_context`` / ``add_directory`` / ``send_message`` 都已通过
+  // ``get_or_restore`` 把 idle-evicted session 从 DB 重建回同 id；理论上 404
+  // 只剩"DB 也丢了"的极端情况。这里不再自动 recreate（那会偷换 session id），
+  // 而是清掉前端 stale ref 让用户决定下一步。
+  const dropStaleSessionRef = React.useCallback(() => {
+    sessionRef.current = null;
+    writeLastSessionId(null);
+    ccSetSession(null);
+  }, [ccSetSession]);
+
   const ensureSession = React.useCallback(async (): Promise<ClaudeCodeSessionInfo> => {
     if (sessionRef.current) return sessionRef.current;
     const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
@@ -236,23 +246,6 @@ export const WorkbenchTab: React.FC = () => {
     writeLastSessionId(info.id);
     return info;
   }, [ccSetSession, permissionMode]);
-
-  // 后端 idle TTL 回收 / 进程重启后内存里的 session 没了；前端再拿旧 id 调任何
-  // session 绑定端点都会撞 404 "session not found"。/clear / /messages 的语义
-  // 都是"在当前会话里继续"——session id 就只是接续游标。这个 helper 把前端
-  // sessionRef 清空再调 ensureSession 起一个等价新 session（同 cwd / permission
-  // mode），让命令在新 session 上继续。失败返 null，调用方自行兜底。
-  const recreateSession = React.useCallback(async (): Promise<ClaudeCodeSessionInfo | null> => {
-    sessionRef.current = null;
-    writeLastSessionId(null);
-    ccSetSession(null);
-    try {
-      return await ensureSession();
-    } catch (error) {
-      pushError(`会话重建失败：${String(error)}`);
-      return null;
-    }
-  }, [ccSetSession, ensureSession, pushError]);
 
   /**
    * 加载指定 session：拉 DB 历史 + ccHydrateHistory。
@@ -342,38 +335,30 @@ export const WorkbenchTab: React.FC = () => {
     const controller = new AbortController();
     ccSetAbortController(controller);
 
-    const requestBody = JSON.stringify({ prompt: text });
-    const postMessages = async (s: ClaudeCodeSessionInfo): Promise<Response> => {
-      const prefix = sessionEndpointPrefix(s.provider);
-      return fetch(`${API_BASE}${prefix}/sessions/${s.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody,
-        signal: controller.signal,
-      });
-    };
-
     try {
-      let active = await ensureSession();
-      let response = await postMessages(active);
-
-      // session 已 evict — 起一个等价新 session 自动重发本条消息，让用户感知
-      // 不到 session 切换；user_local item 已经 append，不要 ccReset。
-      if (response.status === 404) {
-        const detail = await response.text().catch(() => '');
-        if (isSessionNotFound(404, detail)) {
-          const fresh = await recreateSession();
-          if (!fresh) return;
-          active = fresh;
-          response = await postMessages(active);
-        } else {
-          pushError(detail || `HTTP 404`);
-          return;
-        }
-      }
+      const active = await ensureSession();
+      const prefix = sessionEndpointPrefix(active.provider);
+      const response = await fetch(
+        `${API_BASE}${prefix}/sessions/${active.id}/messages`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text }),
+          signal: controller.signal,
+        },
+      );
 
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
+        if (isSessionNotFound(response.status, detail)) {
+          // 罕见——后端 send_message 走 get_or_restore，连 DB 都查不到才到这。
+          // 清前端 ref，让用户下次发送显式起新 session（避免悄悄换 id）。
+          dropStaleSessionRef();
+          pushError(
+            'Session 不在后端注册表也不在 DB 里（可能被 /exit 删除或 DB 损坏）。已清掉前端记录，重新发送会起一个新 session。',
+          );
+          return;
+        }
         pushError(detail || `HTTP ${response.status}`);
         return;
       }
@@ -555,50 +540,52 @@ export const WorkbenchTab: React.FC = () => {
           return;
         }
       }
-      const postCommand = async (s: ClaudeCodeSessionInfo): Promise<Response> =>
-        fetch(`${API_BASE}/api/claude-code/sessions/${s.id}/command`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command, args }),
-        });
-
       try {
-        let response = await postCommand(active);
-
-        // session 已 evict 时，按命令语义恢复——/clear 是"清空当前会话上下文"，
-        // session 没了就起个等价新 session，效果等同；/exit 是"销毁 session"，
-        // 后端已无即同步前端；/add-dir 在新 session 上重试。
-        if (response.status === 404) {
+        const response = await fetch(
+          `${API_BASE}/api/claude-code/sessions/${active.id}/command`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command, args }),
+          },
+        );
+        if (!response.ok) {
           const detail = await response.text().catch(() => '');
-          if (isSessionNotFound(404, detail)) {
+          if (isSessionNotFound(response.status, detail)) {
+            // 后端 clear_context / add_directory 都走 get_or_restore；这里 404
+            // 意味着 DB 也没有——常见路径是先 /exit 后又调命令。/exit 要求
+            // 销毁，前端跟上即可；其他命令则告知用户。
             if (command === 'exit') {
               sessionRef.current = null;
               writeLastSessionId(null);
               ccReset();
               return;
             }
-            const fresh = await recreateSession();
-            if (!fresh) return;
-            active = fresh;
-            if (command === 'clear') {
-              // 新 session 本来就空——前端 items 也清掉对齐"清空上下文"语义
-              ccClearItems();
-              return;
-            }
-            // 其他命令（如 /add-dir）在新 session 上重试一次
-            response = await postCommand(active);
-          } else {
-            pushError(detail || `HTTP 404`);
+            dropStaleSessionRef();
+            pushError(
+              'Session 不在后端注册表也不在 DB 里（可能被 /exit 删除或 DB 损坏）。已清前端记录，重新发送会起新 session。',
+            );
             return;
           }
-        }
-
-        if (!response.ok) {
-          const detail = await response.text().catch(() => '');
           pushError(detail || `HTTP ${response.status}`);
           return;
         }
         if (command === 'clear') {
+          // 后端可能新建了一个同 id 的空 session（cold-path restore）——把
+          // 返回的 session 同步到前端，确保 sessionRef 反映最新对象。
+          try {
+            const data = (await response.clone().json()) as {
+              status?: string;
+              session?: ClaudeCodeSessionInfo;
+            };
+            if (data.session) {
+              sessionRef.current = data.session;
+              ccSetSession(data.session);
+              writeLastSessionId(data.session.id);
+            }
+          } catch {
+            /* 旧后端返回不含 session 字段时忽略 */
+          }
           ccClearItems();
         } else if (command === 'exit') {
           sessionRef.current = null;
@@ -616,7 +603,16 @@ export const WorkbenchTab: React.FC = () => {
         pushError(`命令失败：${String(error)}`);
       }
     },
-    [ensureSession, pushError, ccClearItems, ccReset, ccOpenPanel, recreateSession, isSessionNotFound],
+    [
+      ensureSession,
+      pushError,
+      ccClearItems,
+      ccReset,
+      ccOpenPanel,
+      ccSetSession,
+      dropStaleSessionRef,
+      isSessionNotFound,
+    ],
   );
 
   const runSlashCommand = (input: string) => {

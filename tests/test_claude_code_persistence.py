@@ -295,6 +295,72 @@ def test_get_session_messages_unknown_id_returns_404(fake_sdk_with_store):
     assert resp.status_code == 404
 
 
+def test_clear_context_restores_evicted_session(fake_sdk_with_store):
+    """已 evict 的 session 调 clear_context 必须从 DB 恢复同 id（不能 404）。
+
+    /clear 的语义是"在该 session 内清空"——session id 不能变。idle TTL 回收后
+    内存里没了，但 DB 还有元数据；clear_context 必须从 DB 重建一个同 id 的
+    空上下文 session（``sdk_resume=False``，因为本来就要清掉）。
+    """
+
+    async def run():
+        mgr = sm_module.session_manager
+        session = await mgr.create(cwd=".")
+        sid = session.id
+        original_client = session.client
+        # 手动模拟 idle evict：清空内存注册表但 DB 保留
+        async with mgr._lock:
+            mgr._sessions.clear()
+        cleared = await mgr.clear_context(sid)
+        assert cleared is not None
+        # 关键：session id 必须保持不变
+        assert cleared.id == sid
+        # 新 client 已建好（不 resume——/clear 就是要清空）
+        new_client = FakeClient.created[-1]
+        opts = new_client.options
+        assert getattr(opts, "resume", None) in (None, "")
+        # 旧 client 已经被 evict 时 disconnect 过，clear_context 不会再调它
+        assert original_client is not new_client
+        # session 已重新登记到内存
+        assert mgr.get(sid) is cleared
+
+    asyncio.run(run())
+
+
+def test_clear_context_returns_none_when_db_also_missing(fake_sdk_with_store):
+    """DB 也没有的 id → None → 路由翻 404。"""
+
+    async def run():
+        mgr = sm_module.session_manager
+        assert await mgr.clear_context("never-existed") is None
+
+    asyncio.run(run())
+
+
+def test_add_directory_restores_evicted_session(fake_sdk_with_store, tmp_path):
+    """add_directory 在冷 session 上必须先 restore（保留上下文）再追加目录。"""
+
+    async def run():
+        mgr = sm_module.session_manager
+        session = await mgr.create(cwd=str(tmp_path))
+        sid = session.id
+        # 模拟 evict
+        async with mgr._lock:
+            mgr._sessions.clear()
+        extra_dir = tmp_path / "extra"
+        extra_dir.mkdir()
+        added = await mgr.add_directory(sid, str(extra_dir))
+        assert added is not None
+        assert added.id == sid
+        assert str(extra_dir) in added.add_dirs
+        # add_directory 走 restore 路径——新 client 必须 sdk_resume=True
+        # （既然要保留对话上下文）。restore 建一个，append-rebuild 再建一个。
+        last_client = FakeClient.created[-1]
+        assert getattr(last_client.options, "resume", None) == sid
+
+    asyncio.run(run())
+
+
 def test_send_message_restores_evicted_session(fake_sdk_with_store):
     """已 evict 但 DB 仍有行的会话，send_message 应触发 get_or_restore 成功。"""
     client = TestClient(app_module.app)
