@@ -295,6 +295,40 @@ def test_get_session_messages_unknown_id_returns_404(fake_sdk_with_store):
     assert resp.status_code == 404
 
 
+def test_delete_session_archive_removes_jsonl(monkeypatch, tmp_path):
+    """``_delete_session_archive`` 必须能找到 ``<root>/*/<uuid>.jsonl`` 并删掉。
+
+    Claude CLI 在 ``~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`` 写归档；
+    /clear 同 id rebuild 之前必须 unlink，否则 CLI 子进程会因 --session-id
+    撞已有档案 exit 1。
+    """
+    fake_root = tmp_path / "claude-projects"
+    cwd_a = fake_root / "G--encoded-A"
+    cwd_b = fake_root / "G--encoded-B"
+    cwd_a.mkdir(parents=True)
+    cwd_b.mkdir(parents=True)
+    sid = "11111111-2222-3333-4444-555555555555"
+    archive_a = cwd_a / f"{sid}.jsonl"
+    archive_b = cwd_b / f"{sid}.jsonl"
+    other = cwd_a / "deadbeef-0000-0000-0000-000000000000.jsonl"
+    for p in (archive_a, archive_b, other):
+        p.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(sm_module, "_CLAUDE_PROJECTS_ROOT", fake_root)
+    sm_module._delete_session_archive(sid)
+
+    assert not archive_a.exists()
+    assert not archive_b.exists()
+    # 同名 sid 之外的 archive 不能被误删
+    assert other.exists()
+
+
+def test_delete_session_archive_no_root_is_noop(monkeypatch, tmp_path):
+    """projects 根目录不存在时直接返回，不抛错。"""
+    monkeypatch.setattr(sm_module, "_CLAUDE_PROJECTS_ROOT", tmp_path / "missing")
+    sm_module._delete_session_archive("any-id")  # should not raise
+
+
 def test_clear_context_restores_evicted_session(fake_sdk_with_store):
     """已 evict 的 session 调 clear_context 必须从 DB 恢复同 id（不能 404）。
 

@@ -187,6 +187,30 @@ DEFAULT_IDLE_TTL_SEC = 3600.0  # 60 分钟无活动自动回收 SDK client
 DEFAULT_SWEEP_INTERVAL_SEC = 60.0
 
 
+_CLAUDE_PROJECTS_ROOT = Path.home() / ".claude" / "projects"
+
+
+def _delete_session_archive(session_id: str) -> None:
+    """删除 Claude CLI 在 ``~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`` 留下的
+    会话存档。
+
+    /clear 的 rebuild 路径需要以 ``--session-id <uuid>`` 不带 ``--resume`` 的方式
+    启动 CLI 子进程；CLI 看到同名 archive 已存在会拒绝（exit 1）。删完后用同 id
+    建一份新 archive，对外语义就是"在该 session 内清空"。
+
+    encoded-cwd 是 CLI 内部的路径转义（``G:\\我的云端硬盘`` → ``G--------``），编码
+    规则随 CLI 版本可能变；这里直接 glob ``<projects-root>/*/<uuid>.jsonl``（uuid
+    全局唯一所以最多匹配一条），不耦合具体编码方案。
+    """
+    if not _CLAUDE_PROJECTS_ROOT.exists():
+        return
+    for archive in _CLAUDE_PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"):
+        try:
+            archive.unlink()
+        except OSError:
+            logger.exception("failed to delete session archive %s", archive)
+
+
 class SessionManager:
     """进程内 Claude Code 会话注册表。
 
@@ -333,6 +357,10 @@ class SessionManager:
                     "disconnect failed during clear_context for %s", session_id
                 )
 
+            # CLI 子进程会拒绝 ``--session-id <existing-archive>``——删旧 archive
+            # 让同 id 重建走"新档案"路径
+            _delete_session_archive(session_id)
+
             new_client = await _build_client(
                 session_id=session_id,
                 cwd=session.cwd,
@@ -360,6 +388,8 @@ class SessionManager:
         if stored is None:
             return None
         permission_state = PermissionState()
+        # 同 hot path：删旧 archive 让 ``--session-id <uuid>`` 不撞已有档
+        _delete_session_archive(session_id)
         client = await _build_client(
             session_id=session_id,
             cwd=stored.cwd,
