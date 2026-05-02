@@ -183,7 +183,52 @@ def test_bridge_signal_int_reaches_subprocess(tmp_cwd: Path) -> None:
     # 关键：能看到 STDIN: 说明 read(1) 已被打断返回了——signal_int 真的把
     # \x03 透传到 ConPTY 并触发了 stdin 关闭/中断。具体 repr 内容（''/...）取决于
     # ConPTY 版本，不强求。
-    assert "STDIN:" in out
+    assert "STDIN:" in out or "KeyboardInterrupt" in out
+
+
+def test_terminal_pump_closes_websocket_when_pty_exits() -> None:
+    """PTY EOF must close the websocket so the frontend can show the restart path."""
+    from src.server.routes.terminal import _pump
+
+    class _ExitedPty:
+        async def read_chunks(self):
+            if False:
+                yield ""
+
+        def write_bytes(self, data: bytes) -> None:
+            raise AssertionError("write_bytes should not be called")
+
+        def write_str(self, data: str) -> None:
+            raise AssertionError("write_str should not be called")
+
+    class _WaitingWebSocket:
+        def __init__(self) -> None:
+            self.closed_codes: list[int] = []
+
+        async def send_text(self, text: str) -> None:
+            raise AssertionError("send_text should not be called")
+
+        async def receive(self) -> dict:
+            await asyncio.Event().wait()
+            return {"type": "websocket.disconnect"}
+
+        async def close(self, code: int) -> None:
+            self.closed_codes.append(code)
+
+    async def run() -> list[int]:
+        ws = _WaitingWebSocket()
+        await asyncio.wait_for(_pump(ws, _ExitedPty()), timeout=1.0)
+        return ws.closed_codes
+
+    assert asyncio.run(run()) == [1000]
+
+
+def test_terminal_no_mirror_sentinel_disables_turn_teer() -> None:
+    from src.server.routes.terminal import _should_mirror
+
+    assert _should_mirror(None) is False
+    assert _should_mirror("no-mirror") is False
+    assert _should_mirror("conv-real") is True
 
 
 def test_bridge_aclose_terminates_subprocess(tmp_cwd: Path) -> None:

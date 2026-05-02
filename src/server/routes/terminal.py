@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SUPPORTED_BACKENDS = {"claude"}
+NO_MIRROR_SENTINEL = "no-mirror"
 
 
 def _resolve_argv(backend: str, *, resume: str | None) -> list[str]:
@@ -73,6 +75,10 @@ def _resolve_cwd(cwd_param: str | None) -> Path:
     if not cwd.is_dir():
         raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
     return cwd
+
+
+def _should_mirror(conversation_id: str | None) -> bool:
+    return bool(conversation_id and conversation_id != NO_MIRROR_SENTINEL)
 
 
 async def _send_fatal(ws: WebSocket, message: str) -> None:
@@ -150,7 +156,7 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
     # （比如纯设置面板里测试 PTY 时）。tee 抛异常不影响 PTY 主流（acceptance #4）。
     teer: TurnTeer | None = (
         TurnTeer(conversation_id, messages_store.append_message)
-        if conversation_id
+        if _should_mirror(conversation_id)
         else None
     )
     on_input = teer.on_user_input if teer else None
@@ -188,7 +194,21 @@ async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
 
     try:
         while True:
-            msg = await websocket.receive()
+            receive = asyncio.create_task(websocket.receive())
+            done, _pending = await asyncio.wait(
+                {reader, receive}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if reader in done:
+                receive.cancel()
+                with suppress(asyncio.CancelledError):
+                    await receive
+                try:
+                    await websocket.close(code=1000)
+                except Exception:
+                    pass
+                break
+
+            msg = receive.result()
             msg_type = msg.get("type")
             if msg_type == "websocket.disconnect":
                 break
@@ -211,8 +231,8 @@ async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
         pass
     finally:
         reader.cancel()
-        # 不 await reader——其内部 run_in_executor 的 read 阻塞调用 cancel 不能立即停，
-        # PtyBridge.aclose 会 terminate 子进程让 read EOF，reader 自然返回。
+        with suppress(asyncio.CancelledError):
+            await reader
 
 
 async def _handle_control(

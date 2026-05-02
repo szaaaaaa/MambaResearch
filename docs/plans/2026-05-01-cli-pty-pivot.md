@@ -124,7 +124,7 @@
   - src/server/claude_code/ 下仅保留 storage.py + __init__.py（及必要的会话历史读取 helper）
   - routes/claude_code.py 仅暴露列出 sessions / 拉 session messages 历史两个 GET 端点
   - 后端 import 不报错，app.py 启动通过
-### [WIP] 7. 端到端验证 + 文档同步
+### [PENDING-VERIFY] 7. 端到端验证 + 文档同步
 - **What**: 手动跑通 5 项核心场景；CLAUDE.md 高风险清单 + 架构表更新；README + docs/architecture.md 同步描述新聊天链路。
 - **Files**:
   - `CLAUDE.md`（删 `session_manager.py` 高风险条目，加 `terminal/pty_bridge.py`；架构表"新聊天后端"栏新增）
