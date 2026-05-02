@@ -23,6 +23,7 @@ from src.server.routes.models import router as model_router
 from src.server.routes.project_config import router as project_config_router
 from src.server.routes.projects import router as projects_router
 from src.server.routes.skills import router as skills_router
+from src.server.routes.terminal import router as terminal_router
 from src.server.routes.workspace import router as workspace_router
 from src.server.settings import FRONTEND_DIST
 
@@ -61,6 +62,7 @@ app.include_router(mcp_calls_router)
 app.include_router(literature_router)
 app.include_router(library_router)
 app.include_router(history_runs_router)
+app.include_router(terminal_router)
 
 
 @app.on_event("startup")
