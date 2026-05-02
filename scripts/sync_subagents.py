@@ -50,30 +50,157 @@ CLI 用法
 from __future__ import annotations
 
 import argparse
+import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+import yaml
 
-# 复用运行时加载器——保证 parser 语义完全一致（单一源的单一解析器）。
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-from src.server.claude_code.agents import (  # noqa: E402
-    AgentDefinitionError,
-    _parse_one,
-)
 
 __all__ = [
+    "AgentDefinitionError",
     "CODEX_MODEL",
     "ConvertedAgent",
     "convert_agent",
     "main",
     "sync_directory",
 ]
+
+
+# ---------------------------------------------------------------------------
+# .claude/agents/*.md 解析器
+# ---------------------------------------------------------------------------
+# 历史：原本在 ``src.server.claude_code.agents`` 里给 SDK ``AgentDefinition``
+# 喂数据；plan 2026-05-01 Task 6a 删除 SDK 集成后，唯一消费者就是本脚本，
+# 解析器顺手内联，自带轻量数据类，零运行时依赖（不再 import claude_agent_sdk）。
+
+
+class AgentDefinitionError(ValueError):
+    """subagent 定义文件解析失败——格式错、缺必填字段、name 冲突等皆用此异常。"""
+
+
+@dataclass(frozen=True)
+class _AgentSpec:
+    """从 .md frontmatter + body 解析出的中间结构。
+
+    字段名沿用 SDK ``AgentDefinition`` 的旧名，便于本脚本下游代码改动最小化。
+    """
+
+    description: str
+    prompt: str
+    tools: list[str] | None = field(default=None)
+    model: str | None = field(default=None)
+    mcpServers: list[str | dict[str, Any]] | None = field(default=None)
+
+
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
+
+
+def _parse_string_list(
+    value: Any, file_name: str, field_name: str
+) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise AgentDefinitionError(
+            f"{file_name}: '{field_name}' must be a list, got {type(value).__name__}"
+        )
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise AgentDefinitionError(
+                f"{file_name}: '{field_name}' entries must be non-empty strings, "
+                f"got {item!r}"
+            )
+        out.append(item.strip())
+    return out
+
+
+def _parse_mcp_servers(
+    value: Any, file_name: str
+) -> list[str | dict[str, Any]] | None:
+    """mcpServers 允许 list[str] 或 list[str | inline dict]。"""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise AgentDefinitionError(
+            f"{file_name}: 'mcpServers' must be a list, got "
+            f"{type(value).__name__}"
+        )
+    out: list[str | dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+        elif isinstance(item, dict):
+            out.append(item)
+        else:
+            raise AgentDefinitionError(
+                f"{file_name}: 'mcpServers' entries must be strings or "
+                f"inline mappings, got {item!r}"
+            )
+    return out
+
+
+def _parse_one(path: Path) -> tuple[str, _AgentSpec]:
+    """解析单个 .md → ``(name, _AgentSpec)``。"""
+    text = path.read_text(encoding="utf-8")
+    match = _FRONTMATTER_RE.match(text)
+    if match is None:
+        raise AgentDefinitionError(
+            f"{path.name}: missing YAML frontmatter "
+            "(file must start with '---\\n...\\n---\\n')"
+        )
+    raw_frontmatter, body = match.groups()
+    try:
+        front = yaml.safe_load(raw_frontmatter) or {}
+    except yaml.YAMLError as exc:
+        raise AgentDefinitionError(
+            f"{path.name}: frontmatter YAML parse error: {exc}"
+        ) from exc
+    if not isinstance(front, dict):
+        raise AgentDefinitionError(
+            f"{path.name}: frontmatter must be a mapping, got "
+            f"{type(front).__name__}"
+        )
+
+    name = front.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise AgentDefinitionError(
+            f"{path.name}: frontmatter must include non-empty 'name'"
+        )
+    description = front.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise AgentDefinitionError(
+            f"{path.name}: frontmatter must include non-empty 'description'"
+        )
+
+    prompt = body.strip()
+    if not prompt:
+        raise AgentDefinitionError(
+            f"{path.name}: body (system prompt) must not be empty"
+        )
+
+    model = front.get("model")
+    if model is not None and not isinstance(model, str):
+        raise AgentDefinitionError(
+            f"{path.name}: 'model' must be a string alias or full id, got "
+            f"{type(model).__name__}"
+        )
+
+    tools = _parse_string_list(front.get("tools"), path.name, "tools")
+    mcp_servers = _parse_mcp_servers(front.get("mcpServers"), path.name)
+
+    return name.strip(), _AgentSpec(
+        description=description.strip(),
+        prompt=prompt,
+        tools=tools,
+        model=model,
+        mcpServers=mcp_servers,
+    )
 
 
 CODEX_MODEL = "gpt-5.5"

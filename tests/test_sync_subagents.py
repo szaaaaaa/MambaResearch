@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-from src.server.claude_code.agents import AgentDefinitionError
 from src.server.settings import ROOT
 
 # 让 scripts/ 能像包一样 import——converter 脚本在 scripts/ 根层。
@@ -28,6 +27,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import sync_subagents  # noqa: E402
+from sync_subagents import AgentDefinitionError  # noqa: E402
 
 
 _REPO_CLAUDE = ROOT / ".claude" / "agents"

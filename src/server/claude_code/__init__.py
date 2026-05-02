@@ -1,18 +1,11 @@
-"""Claude Code SDK 会话桥接层。
+"""Claude Code 历史会话存储层。
 
-封装 ``claude-agent-sdk`` 的 ``ClaudeSDKClient``，提供跨 HTTP 请求的持久多轮会话。
+经 plan 2026-05-01-cli-pty-pivot Task 6 删除 SDK 集成后，本包只剩两块：
 
-注意：本包不 re-export 子模块 ``session_manager`` 中的单例 ``session_manager``，
-以免与子模块同名属性产生绑定冲突（``import ...session_manager`` 会拿到实例而非模块）。
-消费者请直接 ``from src.server.claude_code.session_manager import session_manager``。
+* :mod:`storage` —— DB 持久化（sessions + messages），路由层只读使用
+* :mod:`providers` —— provider registry，被 ``terminal/pty_bridge`` 与
+  ``routes/cli_providers`` 复用，与 SDK 无关
+
+实时聊天走 PTY（``terminal/pty_bridge.py``），不再有 SDK client / serializers /
+session_manager。``claude-agent-sdk`` 不再是项目运行时依赖。
 """
-
-from src.server.claude_code.serializers import serialize_block, serialize_message
-from src.server.claude_code.session_manager import ClaudeSession, SessionManager
-
-__all__ = [
-    "ClaudeSession",
-    "SessionManager",
-    "serialize_block",
-    "serialize_message",
-]

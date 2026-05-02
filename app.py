@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from src.server.claude_code.session_manager import session_manager as cc_session_manager
 from src.server.codex.session_manager import codex_session_manager
 from src.server.projects.db import init_mamba_db
 from src.server.projects.registry import sync_active_project_env
@@ -79,12 +78,6 @@ async def _sync_active_project_env() -> None:
     workspace MCP server 依赖此 env 定位 active project。
     """
     sync_active_project_env()
-
-
-@app.on_event("shutdown")
-async def _shutdown_claude_code_sessions() -> None:
-    """进程关停时关闭所有 Claude Code SDK 会话，避免孤儿 CLI 子进程。"""
-    await cc_session_manager.shutdown()
 
 
 @app.on_event("shutdown")
