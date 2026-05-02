@@ -166,7 +166,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
     if (!prompt.startsWith('/')) setAutocompleteDismissed(false);
   }, [prompt]);
 
-  // sessionRef 给 handleSend 闭包用：避免 state 未及时同步时 ensureSession 读到旧值
+  // sessionRef 给 handleSend 闭包用：避免 state 未及时同步时读到旧值
   const sessionRef = React.useRef<ClaudeCodeSessionInfo | null>(session);
   React.useEffect(() => {
     sessionRef.current = session;
@@ -221,116 +221,19 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
     [ccAppendItem],
   );
 
-  const isSessionNotFound = React.useCallback((status: number, detail: string): boolean => {
-    return status === 404 && /session not found/i.test(detail);
+  // plan 2026-05-01 Task 6b: 旧 SDK 的 ensure-session 路径已删（POST /sessions
+  // 端点 6a 已撤）。Claude 走 PTY 不再经此；Codex 必须用 SessionsPanel 显式新建
+  // 后才能发消息（handleCreateSession('codex')）。
+  const requireSessionForSend = React.useCallback((): ClaudeCodeSessionInfo | null => {
+    if (sessionRef.current) return sessionRef.current;
+    pushError('请先在左上"会话列表"新建一条 Codex 会话再发送消息。');
+    return null;
   }, []);
 
-  // 后端 ``clear_context`` / ``add_directory`` / ``send_message`` 都已通过
-  // ``get_or_restore`` 把 idle-evicted session 从 DB 重建回同 id；理论上 404
-  // 只剩"DB 也丢了"的极端情况。这里不再自动 recreate（那会偷换 session id），
-  // 而是清掉前端 stale ref 让用户决定下一步。
-  const dropStaleSessionRef = React.useCallback(() => {
-    sessionRef.current = null;
-    writeLastSessionId(null);
-    ccSetSession(null);
-  }, [ccSetSession]);
-
-  const ensureSession = React.useCallback(async (): Promise<ClaudeCodeSessionInfo> => {
-    if (sessionRef.current) return sessionRef.current;
-    const response = await fetch(`${API_BASE}/api/claude-code/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permission_mode: permissionMode }),
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw new Error(detail || `HTTP ${response.status}`);
-    }
-    const info = (await response.json()) as ClaudeCodeSessionInfo;
-    sessionRef.current = info;
-    ccSetSession(info);
-    writeLastSessionId(info.id);
-    return info;
-  }, [ccSetSession, permissionMode]);
-
-  /**
-   * 加载指定 session：拉 DB 历史 + ccHydrateHistory。
-   * 供挂载恢复、用户点击侧栏切换两条入口复用。成功返回 true，失败（不存在 / 网络错误）false。
-   */
-  const loadSessionById = React.useCallback(
-    async (sessionId: string): Promise<boolean> => {
-      try {
-        const response = await fetch(
-          `${API_BASE}/api/claude-code/sessions/${sessionId}/messages`,
-        );
-        if (response.status === 404) {
-          writeLastSessionId(null);
-          return false;
-        }
-        if (!response.ok) return false;
-        const data = (await response.json()) as {
-          session: ClaudeCodeSessionInfo;
-          messages: Array<{ sequence: number; event_type: string; payload: unknown }>;
-        };
-        sessionRef.current = data.session;
-        ccHydrateHistory(data.session, data.messages);
-        writeLastSessionId(sessionId);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [ccHydrateHistory],
-  );
-
-  // 刷新恢复：挂载时若 state 无 session 且 localStorage 记着上次 id 就回灌一次。
-  // Tab 切换路径不触发——state.session 在 AppProvider 上下文里保留。
-  //
-  // Hybrid Master Transcript T5：增加 conversation-level hydrate 兜底。
-  // 路径：
-  // 1. 优先尝试 session-level hydrate（loadSessionById）—— SDK 仍活时拿到的
-  //    cc_message events 包含 thinking blocks / tool_use / permission 等 UI 状态
-  //    完整度最高
-  // 2. session 已 evict / 被删 → loadSessionById 返 false → fall back 到
-  //    conversation messages 表 hydrate（getConversationMessages +
-  //    ccHydrateFromMessages）。complete fidelity 没有，但对话文本不丢
-  // 3. 两者都没 → 空白起步
-  const hydrateAttemptedRef = React.useRef(false);
-  React.useEffect(() => {
-    if (hydrateAttemptedRef.current) return;
-    if (state.claudeCode.session) return;
-    hydrateAttemptedRef.current = true;
-    const lastSid = readLastSessionId();
-    const lastConvIdLocal = readLastConvId();
-    void (async () => {
-      if (lastSid) {
-        const ok = await loadSessionById(lastSid);
-        if (ok) {
-          // session 还在 → 顺便把 conv id 同步到 ref（切换路径用）
-          if (lastConvIdLocal) {
-            conversationIdRef.current = lastConvIdLocal;
-          }
-          return;
-        }
-      }
-      // session-level hydrate 失败 → 走 conversation messages 表
-      if (lastConvIdLocal) {
-        try {
-          const messages = await getConversationMessages(lastConvIdLocal);
-          if (messages.length > 0) {
-            ccHydrateFromMessages(messages);
-            conversationIdRef.current = lastConvIdLocal;
-          } else {
-            // conversation 空（已被删 / messages 全部清空）→ 清 localStorage
-            writeLastConvId(null);
-          }
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.warn('conversation-level hydrate failed', err);
-        }
-      }
-    })();
-  }, [state.claudeCode.session, loadSessionById, ccHydrateFromMessages]);
+  // plan 2026-05-01 Task 6b: Claude SDK session-level hydrate 已删除——Claude
+  // 现在走 PTY，session 状态由 CLI 自己持久化在 ~/.claude/projects/。Codex tab 切
+  // 过去时 hydrate 由 handleSwitchSession 内的 conv-mirror 路径处理（Codex 还在
+  // SDK 模式，下一个 plan 收尾）。
 
   const sendToBackend = async (text: string) => {
     const turnStart = Date.now();
@@ -342,7 +245,12 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
     ccSetAbortController(controller);
 
     try {
-      const active = await ensureSession();
+      const active = requireSessionForSend();
+      if (!active) {
+        ccSetRunning(false);
+        ccSetTurnStartAt(null);
+        return;
+      }
       const prefix = sessionEndpointPrefix(active.provider);
       const response = await fetch(
         `${API_BASE}${prefix}/sessions/${active.id}/messages`,
@@ -356,15 +264,6 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
 
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
-        if (isSessionNotFound(response.status, detail)) {
-          // 罕见——后端 send_message 走 get_or_restore，连 DB 都查不到才到这。
-          // 清前端 ref，让用户下次发送显式起新 session（避免悄悄换 id）。
-          dropStaleSessionRef();
-          pushError(
-            'Session 不在后端注册表也不在 DB 里（可能被 /exit 删除或 DB 损坏）。已清掉前端记录，重新发送会起一个新 session。',
-          );
-          return;
-        }
         pushError(detail || `HTTP ${response.status}`);
         return;
       }
@@ -384,16 +283,14 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
         } catch {
           /* keep raw */
         }
-        // Task 5c — Codex session 走 ``codex_*`` 命名空间事件；cc_* 是 Claude 侧，
-        // 两边语义对齐：finished/error/permission_request 直接复用同一处理路径。
-        // codex_message 是原始 JSON-RPC notification（``item/agentMessage/delta`` 等），
-        // 先整帧 append 让用户能看到发生了什么，deep rendering 留给 Task 5d 的 E2E 后补。
-        if (frame.event === 'cc_finished' || frame.event === 'codex_finished') {
+        // plan 2026-05-01 Task 6b: 仅 Codex 路径（codex_*）；Claude 走 PTY 不再
+        // 经此 SSE 流。事件分支：finished / error / message / permission_request。
+        if (frame.event === 'codex_finished') {
           ccSetRunning(false);
           ccSetTurnStartAt(null);
           return;
         }
-        if (frame.event === 'cc_error' || frame.event === 'codex_error') {
+        if (frame.event === 'codex_error') {
           const text =
             parsed && typeof parsed === 'object' && 'message' in (parsed as object)
               ? String((parsed as { message?: unknown }).message ?? '')
@@ -404,10 +301,8 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
           return;
         }
         if (frame.event === 'codex_message') {
-          // Codex SSE pass-through 是 JSON-RPC 通知逐帧发的（包括逐 token
-          // delta）。把 item/agentMessage/delta 单独合并成一个连续的
-          // codex_assistant item；其余帧仍保留 codex_raw 形态供"显示原始
-          // 事件"开关查看（turn 生命周期、mcpServer/* 等）。
+          // Codex SSE 是 JSON-RPC 通知逐帧发；item/agentMessage/delta 合并成连续
+          // assistant item，其余帧保留 codex_raw 给"原始事件"开关查看。
           if (parsed && typeof parsed === 'object') {
             const inner = parsed as Record<string, unknown>;
             if (inner.method === 'item/agentMessage/delta') {
@@ -422,32 +317,22 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
           ccAppendItem({ type: 'codex_raw', payload: parsed });
           return;
         }
-        if (
-          frame.event === 'cc_permission_request' ||
-          frame.event === 'codex_permission_request'
-        ) {
-          // 形状契约：
-          //   Claude  (cc_permission_request): { request_id, session_id, tool_name, input }
-          //   Codex   (codex_permission_request): { request_id, session_id, action_key, payload }
-          // 把两种形状归一化：Codex 的 action_key 作为 tool_name 展示，payload 作为 input。
+        if (frame.event === 'codex_permission_request') {
+          // 形状：{ request_id, session_id, action_key, payload }——映射到
+          // ClaudeCodePermissionRequest 的 tool_name + input 字段（共用类型）
           if (parsed && typeof parsed === 'object') {
             const rec = parsed as Record<string, unknown>;
             const requestId = typeof rec.request_id === 'string' ? rec.request_id : '';
             const sessionId = typeof rec.session_id === 'string' ? rec.session_id : '';
             const toolName =
-              typeof rec.tool_name === 'string'
-                ? rec.tool_name
-                : typeof rec.action_key === 'string'
-                ? rec.action_key
-                : '';
-            const input = rec.input !== undefined ? rec.input : rec.payload;
+              typeof rec.action_key === 'string' ? rec.action_key : '';
+            const input = rec.payload;
             if (requestId && sessionId && toolName) {
               const req: ClaudeCodePermissionRequest = {
                 request_id: requestId,
                 session_id: sessionId,
                 tool_name: toolName,
                 input,
-                // 保留 provider 供 Modal 分派决策 POST 到正确端点
                 provider: active.provider,
               };
               ccEnqueuePermissionRequest(req);
@@ -526,99 +411,19 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
   };
 
   /**
-   * /clear /exit /add-dir 的后端分派——POST 到 /command 端点，并把本地状态
-   * 按命令语义收尾：
-   * - clear: 后端同 id 重建 SDK client → 前端只清 items
-   * - exit: 后端断开 + 移除 session → 前端走 ccReset 回到空态
-   * - add-dir: 后端把 path append 到 add_dirs 并重建 → InfoPanel 告知用户
-   *   本轮 SDK 上下文因 rebuild 已清空（6c 建立 resume 后可保留）
+   * /clear /exit /add-dir 后端命令——plan 2026-05-01 Task 6a 删了
+   * `/api/claude-code/sessions/{id}/command` 端点；Claude 走 PTY 由 CLI 自带
+   * 处理（`/clear` 直接在终端里输），Codex 暂时不支持，弹 InfoPanel 告知。
    */
   const runBackendCommand = React.useCallback(
-    async (command: string, args?: Record<string, unknown>) => {
-      // /exit 没有 session 时是 no-op；其余命令需要先拿到 session
-      let active = sessionRef.current;
-      if (!active) {
-        if (command === 'exit') return;
-        try {
-          active = await ensureSession();
-        } catch (error) {
-          pushError(`创建会话失败：${String(error)}`);
-          return;
-        }
-      }
-      try {
-        const response = await fetch(
-          `${API_BASE}/api/claude-code/sessions/${active.id}/command`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command, args }),
-          },
-        );
-        if (!response.ok) {
-          const detail = await response.text().catch(() => '');
-          if (isSessionNotFound(response.status, detail)) {
-            // 后端 clear_context / add_directory 都走 get_or_restore；这里 404
-            // 意味着 DB 也没有——常见路径是先 /exit 后又调命令。/exit 要求
-            // 销毁，前端跟上即可；其他命令则告知用户。
-            if (command === 'exit') {
-              sessionRef.current = null;
-              writeLastSessionId(null);
-              ccReset();
-              return;
-            }
-            dropStaleSessionRef();
-            pushError(
-              'Session 不在后端注册表也不在 DB 里（可能被 /exit 删除或 DB 损坏）。已清前端记录，重新发送会起新 session。',
-            );
-            return;
-          }
-          pushError(detail || `HTTP ${response.status}`);
-          return;
-        }
-        if (command === 'clear') {
-          // 后端可能新建了一个同 id 的空 session（cold-path restore）——把
-          // 返回的 session 同步到前端，确保 sessionRef 反映最新对象。
-          try {
-            const data = (await response.clone().json()) as {
-              status?: string;
-              session?: ClaudeCodeSessionInfo;
-            };
-            if (data.session) {
-              sessionRef.current = data.session;
-              ccSetSession(data.session);
-              writeLastSessionId(data.session.id);
-            }
-          } catch {
-            /* 旧后端返回不含 session 字段时忽略 */
-          }
-          ccClearItems();
-        } else if (command === 'exit') {
-          sessionRef.current = null;
-          writeLastSessionId(null);
-          ccReset();
-        } else if (command === 'add-dir') {
-          const path = typeof args?.path === 'string' ? args.path : '';
-          ccOpenPanel({
-            kind: 'info',
-            title: '/add-dir',
-            body: `已追加目录${path ? `：${path}` : ''}。\n\n注意：SDK 不支持运行时追加工作目录，因此 client 已被重建，本轮对话上下文已清空（行为等同 /clear）。Task 6c 建立 resume 基础设施后，/add-dir 会保留历史。`,
-          });
-        }
-      } catch (error) {
-        pushError(`命令失败：${String(error)}`);
-      }
+    async (command: string, _args?: Record<string, unknown>): Promise<void> => {
+      ccOpenPanel({
+        kind: 'info',
+        title: `/${command}`,
+        body: 'Claude 工作台已切换到 PTY 直连模式——请直接在终端里输入 `/clear` `/exit` 等 CLI 自带命令，前端不再代理。Codex tab 暂未实现这些命令的桥接，下个 plan 处理。',
+      });
     },
-    [
-      ensureSession,
-      pushError,
-      ccClearItems,
-      ccReset,
-      ccOpenPanel,
-      ccSetSession,
-      dropStaleSessionRef,
-      isSessionNotFound,
-    ],
+    [ccOpenPanel],
   );
 
   const runSlashCommand = (input: string) => {
@@ -702,7 +507,9 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
    * 找不到对应资源（404 等）→ pushError 让用户感知，不悄悄成功。
    */
   const handleSwitchSession = React.useCallback(
-    async (sessionId: string, providerHint?: string | null) => {
+    async (sessionId: string, _providerHint?: string | null) => {
+      // plan 2026-05-01 Task 6b: 仅 Codex 入口——Claude 走 SessionsPanel 内联的
+      // PTY resume 分支，不再调本函数。
       if (sessionRef.current?.id === sessionId) return;
       if (prompt.trim()) {
         if (!window.confirm('当前输入框有未发送的内容，切换会话将丢弃。确定？')) return;
@@ -712,54 +519,40 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
       setPrompt('');
       setAutocompleteDismissed(false);
 
-      const provider =
-        providerHint ??
-        state.claudeCode.sessionList.find((r) => r.id === sessionId)?.provider ??
-        null;
+      try {
+        const detailResp = await fetch(`${API_BASE}/api/codex/sessions/${sessionId}`);
+        if (!detailResp.ok) {
+          pushError(`切换会话失败：${sessionId.slice(0, 8)} 不存在或已被删除`);
+          return;
+        }
+        const info = (await detailResp.json()) as ClaudeCodeSessionInfo;
+        sessionRef.current = info;
+        ccSetSession(info);
+        writeLastSessionId(sessionId);
 
-      if (provider === 'codex') {
-        // Codex: detail + mirror hydrate
-        try {
-          const detailResp = await fetch(`${API_BASE}/api/codex/sessions/${sessionId}`);
-          if (!detailResp.ok) {
-            pushError(`切换会话失败：${sessionId.slice(0, 8)} 不存在或已被删除`);
-            return;
-          }
-          const info = (await detailResp.json()) as ClaudeCodeSessionInfo;
-          sessionRef.current = info;
-          ccSetSession(info);
-          writeLastSessionId(sessionId);
-
-          ccClearItems();
-          const convResp = await fetch(
-            `${API_BASE}/api/conversations/by-session/${sessionId}`,
-          );
-          if (convResp.ok) {
-            const data = (await convResp.json()) as { conversation_id?: string };
-            if (data.conversation_id) {
-              conversationIdRef.current = data.conversation_id;
-              writeLastConvId(data.conversation_id);
-              const messages = await getConversationMessages(data.conversation_id);
-              if (messages.length > 0) {
-                ccHydrateFromMessages(messages);
-              }
+        ccClearItems();
+        const convResp = await fetch(
+          `${API_BASE}/api/conversations/by-session/${sessionId}`,
+        );
+        if (convResp.ok) {
+          const data = (await convResp.json()) as { conversation_id?: string };
+          if (data.conversation_id) {
+            conversationIdRef.current = data.conversation_id;
+            writeLastConvId(data.conversation_id);
+            const messages = await getConversationMessages(data.conversation_id);
+            if (messages.length > 0) {
+              ccHydrateFromMessages(messages);
             }
           }
-        } catch (err) {
-          pushError(`切换会话失败：${String(err)}`);
         }
-        return;
+      } catch (err) {
+        pushError(`切换会话失败：${String(err)}`);
       }
-      // Claude（含未指定 provider 的兼容路径）
-      const ok = await loadSessionById(sessionId);
-      if (!ok) pushError(`切换会话失败：${sessionId.slice(0, 8)} 不存在或已被删除`);
     },
     [
       prompt,
       ccGetAbortController,
-      loadSessionById,
       pushError,
-      state.claudeCode.sessionList,
       ccSetSession,
       ccClearItems,
       ccHydrateFromMessages,
@@ -769,13 +562,11 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
   /**
    * 侧栏 + 按钮新建会话：POST /sessions 用当前默认 permissionMode，
    * 成功后把新 session 设为 active + 清 items + 写 localStorage。
-   * 不调 ensureSession，因为 ensureSession 在已有 sessionRef 时会复用旧的。
    *
-   * Hybrid Master Transcript T4 修改：每次建 session 都同步 ensure 一个
-   * conversation + 把新 session 注册成 segment。这样后续 SSE handler 调
-   * lookup_conversation_by_session 一定能找到 conv_id，messages 表持久化
-   * 路径不会哑火。clearItemsOnSuccess=false 用于切换路径——切换不清 items，
-   * 只追加 segment_boundary。
+   * Hybrid Master Transcript T4：每次建 session 都同步 ensure 一个 conversation
+   * + 把新 session 注册成 segment——后续 SSE handler 调
+   * lookup_conversation_by_session 才能找到 conv_id 写 messages 表。
+   * clearItemsOnSuccess=false 用于切换路径（切换不清 items，只追加 segment_boundary）。
    */
   const handleCreateSession = React.useCallback(
     async (
