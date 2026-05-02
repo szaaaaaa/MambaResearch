@@ -136,7 +136,7 @@ python scripts/sync_subagents.py
 
 ## 🔌 内置 MCP Servers
 
-由 `src/server/integrations/*/mcp_server.py` 自动注入到 Claude / Codex SDK：
+由 `src/server/integrations/*/mcp_server.py` 通过项目级 `.mcp.json` 暴露给 Claude PTY 子进程 / Codex app-server：
 
 - **workspace.\*** — 文件分类索引读写
 - **zotero.\*** — Zotero Web API 客户端
@@ -162,8 +162,9 @@ MambaResearch/
 │   ├── server/
 │   │   ├── projects/               # 项目注册表 + active project env
 │   │   ├── workspace/              # 分类索引 + workspace MCP
-│   │   ├── claude_code/            # Claude Code SDK 会话编排
-│   │   ├── codex/                  # Codex app-server 会话编排
+│   │   ├── terminal/               # Claude PTY 桥（pywinpty）+ ANSI strip + turn tee
+│   │   ├── claude_code/            # provider 注册表 + 历史 session 存储（GET-only）
+│   │   ├── codex/                  # Codex app-server 会话编排（仍走 SDK，下个 plan PTY pivot）
 │   │   ├── integrations/           # zotero / colab / experiment MCP servers
 │   │   ├── mcp/                    # MCP server registry
 │   │   ├── bridge/                 # cross-CLI continues 桥（v3.2 hybrid MT 已撤回）

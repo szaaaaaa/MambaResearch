@@ -103,13 +103,13 @@
 
 
 
-### [TODO] 6c. tests 同步整理
+### [DONE] 6c. tests 同步整理
 - **What**: 删除或重写 tests/test_claude_code_session.py、test_claude_code_command.py、test_claude_code_persistence.py、test_claude_code_provider_session.py、test_claude_code_agents.py，仅保留 storage 层与新两个 GET 端点的必要测试。
 - **Acceptance**:
   - 针对已删除的 session_manager / serializers / agents / dispatch 逻辑的测试全部移除或重写
   - pytest tests/ 全过
   - 保留对 storage.py 与简化后 routes/claude_code.py 两个 GET 端点的最小化覆盖
-### [WIP] 6b. 前端 Claude 死代码清理（保留 Codex 共享组件）
+### [PENDING-VERIFY] 6b. 前端 Claude 死代码清理（保留 Codex 共享组件）
 - **What**: ziang 决策（2026-05-02）选方案 A——Codex tab 在本 plan 期间继续用旧 SDK UI（DP4），共享组件 `PermissionModal` / `slash/` / 共用 panel 不动。本 task 只清理 **Claude 路径不再走的死代码**：WorkbenchTab.tsx 里 `cc_*` SSE 事件分支（cc_finished / cc_error / cc_message / cc_permission_request 等纯 Claude SDK 输出处理）、`loadSessionById` + 挂载 hydrate 的 Claude 半、`ensureSession` / `runBackendCommand` 等只给 Claude 用的 helper。Codex tab 用的所有 codex_* 事件 / SSE / permission 路径保留不动。store.tsx claudeCode 字段保守瘦身：保留 Codex 仍 piggyback 的 ccAppendItem / items / sessionList 等共用字段，删 Claude SDK-only 但 Codex 不读的（permission queue 主动评估）。
 - **Acceptance**:
   - WorkbenchTab.tsx 里 grep `cc_finished|cc_error|cc_message|cc_permission_request|loadSessionById|ensureSession` 空（这些是纯 Claude SDK 路径）
@@ -124,7 +124,7 @@
   - src/server/claude_code/ 下仅保留 storage.py + __init__.py（及必要的会话历史读取 helper）
   - routes/claude_code.py 仅暴露列出 sessions / 拉 session messages 历史两个 GET 端点
   - 后端 import 不报错，app.py 启动通过
-### [TODO] 7. 端到端验证 + 文档同步
+### [WIP] 7. 端到端验证 + 文档同步
 - **What**: 手动跑通 5 项核心场景；CLAUDE.md 高风险清单 + 架构表更新；README + docs/architecture.md 同步描述新聊天链路。
 - **Files**:
   - `CLAUDE.md`（删 `session_manager.py` 高风险条目，加 `terminal/pty_bridge.py`；架构表"新聊天后端"栏新增）

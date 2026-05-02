@@ -39,8 +39,9 @@ If you find yourself about to write code without having invoked the applicable o
 - `src/server/projects/registry.py` — active project 单例 + 进程级 env 管理；改动会影响所有 session 创建路径与 MCP 子进程启动
 - `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
 - `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
-- `src/server/claude_code/session_manager.py` — Claude Code SDK 会话编排；改完跑 `pytest tests/test_claude_code_session*`
-- `src/server/codex/session_manager.py` — Codex app-server 会话编排；同上对应测试
+- `src/server/terminal/pty_bridge.py` — Claude PTY 子进程桥（pywinpty + provider env 注入）；改完跑 `pytest tests/test_terminal_pty_bridge.py`
+- `src/server/terminal/output_parser.py` — PTY → messages 表 mirror 的 ANSI strip + turn 切分；改完跑 `pytest tests/test_terminal_output_parser.py`
+- `src/server/codex/session_manager.py` — Codex app-server 会话编排（Codex 仍走 SDK，下个 plan 再 PTY pivot）；改完跑对应测试
 
 规则：改完运行 `pytest tests/`；失败必须修复。
 
@@ -68,6 +69,7 @@ If you find yourself about to write code without having invoked the applicable o
 | 新 API | `src/server/routes/` 新文件 | `app.py` 里 `include_router()` |
 | 新前端组件 | `frontend/src/components/*.tsx` | 父组件引用 |
 | 新 MCP server | `src/server/integrations/<name>/mcp_server.py` 写 `default_mcp_config()` | `src/server/mcp/registry.py:_read_builtin_helpers` 注册 |
+| 聊天 PTY 入口 | Claude 走 `src/server/routes/terminal.py` (`WS /api/terminal/claude`) + `src/server/terminal/pty_bridge.py` 直 spawn `claude` CLI | 前端 `frontend/src/components/workbench/TerminalPane.tsx` 是 xterm.js + WS 客户端；WorkbenchTab 在 Claude tab 下渲染该组件 |
 
 # 测试原则
 

@@ -399,6 +399,18 @@ ResearchAgent/
 | `GET` | `/api/knowledge-graph/status` | 知识图谱状态 |
 | `GET` | `/api/knowledge-graph/nodes` | 知识图谱节点 |
 
+### 聊天 PTY（plan 2026-05-01-cli-pty-pivot 后）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `WS`     | `/api/terminal/{backend}` | PTY 直连 `claude` CLI 二进制（`backend=claude`），text+binary 双向流；query: `cwd` / `provider` / `resume` / `conversation_id` |
+| `GET`    | `/api/claude-code/sessions` | DB 里所有 Claude session 元数据（会话列表 popover 用） |
+| `GET`    | `/api/claude-code/sessions/{id}/messages` | 历史事件流（旧 SDK 落库的，回灌用） |
+| `PATCH`  | `/api/claude-code/sessions/{id}` | 重命名 title |
+| `DELETE` | `/api/claude-code/sessions/{id}` | 删 session + 级联消息 |
+
+聊天主路径：浏览器 `<TerminalPane>` (xterm.js) ↔ FastAPI WS ↔ ConPTY (`pywinpty`) ↔ `claude` 子进程；HITL y/n 在终端内由 CLI 自己处理，前端不再有 PermissionModal 流程。Codex tab 仍走旧 SDK 路径（下个 plan PTY pivot）。
+
 ---
 
 ## 十、关键设计模式
