@@ -23,6 +23,8 @@ import { SLASH_COMMANDS } from '../workbench/slash/registry';
 import { SessionsPanel } from '../workbench/shell/activities/SessionsPanel';
 import { ClassifyHintBar } from '../workbench/ClassifyHintBar';
 import { useContextualTabs } from '../../store/contextual';
+import { TerminalPane } from '../workbench/TerminalPane';
+import type { Project } from '../../api/projects';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -81,7 +83,11 @@ const writeLastConvId = (id: string | null) => {
   }
 };
 
-export const WorkbenchTab: React.FC = () => {
+export interface WorkbenchTabProps {
+  activeProject: Project;
+}
+
+export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => {
   const {
     state,
     ccSetSession,
@@ -988,24 +994,82 @@ export const WorkbenchTab: React.FC = () => {
   const [cwdSubmitting, setCwdSubmitting] = React.useState(false);
   const [cwdError, setCwdError] = React.useState<string | null>(null);
 
+  // ---- Claude PTY 模式状态（plan 2026-05-01-cli-pty-pivot Task 5）------------
+  // Claude 走 <TerminalPane> + WS PTY 直连 claude CLI；以下 4 个 state 共同决定
+  // PTY 的生命周期，任何一个变化都触发 TerminalPane 用新 props remount。
+  // - claudeResumeId：点会话列表里的历史项 → claude --resume <id>；新建/结束 → null
+  // - claudeCwdOverride：cwd modal 里手动指定的目录；不传则用 activeProject.path
+  // - claudeConversationId：messages 表 mirror 用；首次进 Claude tab 时 ensure 一条
+  // - claudeRestartTick：手动重启计数器（"结束会话"按钮等场景，即使前 3 个 state 没变
+  //   也强制 remount 一次重置 PTY）
+  // Codex tab 仍走旧 SDK UI（DP4：过渡态可接受），与本组的状态完全隔离。
+  const [claudeResumeId, setClaudeResumeId] = React.useState<string | null>(null);
+  const [claudeCwdOverride, setClaudeCwdOverride] = React.useState<string | null>(null);
+  const [claudeConversationId, setClaudeConversationId] = React.useState<string | null>(null);
+  const [claudeRestartTick, setClaudeRestartTick] = React.useState(0);
+
+  // 切 active project → 清掉所有 Claude PTY 状态。新 project 的 PTY 用新 cwd 起，
+  // 不带任何 resume/cwdOverride。conversation 在下一个 effect 自动重新 ensure。
+  const lastProjectIdRef = React.useRef(activeProject.id);
+  React.useEffect(() => {
+    if (lastProjectIdRef.current === activeProject.id) return;
+    lastProjectIdRef.current = activeProject.id;
+    setClaudeResumeId(null);
+    setClaudeCwdOverride(null);
+    setClaudeConversationId(null);
+    setClaudeRestartTick((tick) => tick + 1);
+  }, [activeProject.id]);
+
+  // 进 Claude tab 且尚无 conversation → POST /api/conversations 起一条；TerminalPane
+  // 拿到 conversationId 后，后端 PTY route 才会挂上 TurnTeer 把 PTY 输出 mirror 到
+  // messages 表（Q1=B 决策）。失败时静默 swallow——mirror 失效是降级，不阻断 PTY 主流。
+  React.useEffect(() => {
+    if (currentBackend !== 'claude') return;
+    if (claudeConversationId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/api/conversations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: activeProject.id, backend: 'claude' }),
+        });
+        if (!resp.ok || cancelled) return;
+        const conv = (await resp.json()) as { id: string };
+        if (!cancelled) setClaudeConversationId(conv.id);
+      } catch {
+        /* mirror 失效不影响 PTY 本身——TerminalPane 拿不到 conversationId
+         * 时后端跳过 TurnTeer，PTY 文本流仍正常显示 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentBackend, claudeConversationId, activeProject.id]);
+
   const openCwdModal = React.useCallback(async () => {
     setCwdError(null);
     setCwdSubmitting(false);
-    let initial = session?.cwd ?? '';
-    if (!initial) {
-      try {
-        const resp = await fetch(`${API_BASE}/api/projects/active`);
-        if (resp.ok) {
-          const proj = await resp.json();
-          if (typeof proj.path === 'string') initial = proj.path;
+    let initial = '';
+    if (currentBackend === 'claude') {
+      initial = claudeCwdOverride ?? activeProject.path;
+    } else {
+      initial = session?.cwd ?? '';
+      if (!initial) {
+        try {
+          const resp = await fetch(`${API_BASE}/api/projects/active`);
+          if (resp.ok) {
+            const proj = await resp.json();
+            if (typeof proj.path === 'string') initial = proj.path;
+          }
+        } catch {
+          /* ignore — modal 仍能用空值打开 */
         }
-      } catch {
-        /* ignore — modal 仍能用空值打开 */
       }
     }
     setCwdDraft(initial);
     setCwdModalOpen(true);
-  }, [session]);
+  }, [session, currentBackend, claudeCwdOverride, activeProject.path]);
 
   const submitCwdChange = React.useCallback(async () => {
     const next = cwdDraft.trim();
@@ -1016,13 +1080,19 @@ export const WorkbenchTab: React.FC = () => {
     setCwdSubmitting(true);
     setCwdError(null);
     try {
-      // 复用当前 backend；新 session 走 active project 校验路径
-      await handleCreateSession(currentBackend === 'codex' ? 'codex' : null, {
-        cwd: next,
-      });
-      // session.cwd 在 ccSetSession 之后会刷新；handleCreateSession 失败时
-      // pushError 已经报错，这里 modal 仍关闭让用户看到顶部错误条
-      setCwdModalOpen(false);
+      if (currentBackend === 'claude') {
+        // PTY 路径：cwd 直接作为 prop 传给 TerminalPane，key 变化 → 子进程
+        // 重启在新 cwd 下。后端 _resolve_cwd 会校验目录存在性，不存在时 PTY
+        // 起来后立刻报 fatal frame 给前端。
+        setClaudeCwdOverride(next);
+        setClaudeResumeId(null); // 改 cwd 隐含起新会话，丢掉历史 resume
+        setClaudeRestartTick((t) => t + 1);
+        setCwdModalOpen(false);
+      } else {
+        // Codex 沿用旧 SDK 路径：起一条新 session 用新 cwd
+        await handleCreateSession('codex', { cwd: next });
+        setCwdModalOpen(false);
+      }
     } catch (err) {
       setCwdError(String(err));
     } finally {
@@ -1045,9 +1115,22 @@ export const WorkbenchTab: React.FC = () => {
    * 想显式开一条新对话 → 点左侧"会话列表"里的 + 按钮。
    */
   const handleBackendChoose = async (target: 'claude' | 'codex') => {
-    if (currentBackend === target && session) return;
+    if (currentBackend === target && (target === 'claude' || session)) return;
+    if (target === 'claude') {
+      // PTY 路径：切到 claude tab 不需要任何 SDK session——只要把 store 里的
+      // codex session 清掉，currentBackend 默认值就是 'claude'，TerminalPane
+      // 自动渲染。如果之前在 codex 上有 session，先 abort 它的 SSE 流。
+      ccGetAbortController()?.abort();
+      ccSetSession(null);
+      writeLastSessionId(null);
+      // 清 Claude 自己的状态——切回来要"刚进 tab"的体验
+      setClaudeResumeId(null);
+      setClaudeCwdOverride(null);
+      setClaudeRestartTick((t) => t + 1);
+      return;
+    }
     try {
-      const prefix = target === 'codex' ? '/api/codex' : '/api/claude-code';
+      const prefix = '/api/codex';
       const resp = await fetch(`${API_BASE}${prefix}/sessions`);
       if (resp.ok) {
         const data = (await resp.json()) as {
@@ -1071,7 +1154,7 @@ export const WorkbenchTab: React.FC = () => {
     } catch {
       // ignore — fall through to create
     }
-    void handleCreateSession(target === 'codex' ? 'codex' : null);
+    void handleCreateSession('codex');
   };
 
   return (
@@ -1150,15 +1233,35 @@ export const WorkbenchTab: React.FC = () => {
         <div className="rb-chat-title" style={{ minWidth: 0, flex: 1 }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Terminal size={16} style={{ color: 'var(--fg-3)' }} />
-            {session ? `工作台 · ${session.id.slice(0, 8)}` : '工作台'}
+            {currentBackend === 'claude'
+              ? claudeResumeId
+                ? `工作台 · ${claudeResumeId.slice(0, 8)} (resumed)`
+                : '工作台 · Claude PTY'
+              : session
+              ? `工作台 · ${session.id.slice(0, 8)}`
+              : '工作台'}
           </h2>
           <div className="rb-chat-meta">
-            {isRunning ? (
+            {isRunning && currentBackend !== 'claude' ? (
               <span className="rb-cli-status">
                 <i /> 运行中 · {elapsedSec}s
               </span>
             ) : null}
-            {session ? (
+            {currentBackend === 'claude' ? (
+              // Claude PTY 路径——cwd 来自 override 或 active project.path（与 PTY 子进程实际 cwd 一致）
+              <button
+                type="button"
+                className="rb-cli-pill mono"
+                title={`${claudeCwdOverride ?? activeProject.path}\n点击修改工作目录（会起一条新 PTY）`}
+                onClick={() => void openCwdModal()}
+                style={{ cursor: 'pointer' }}
+              >
+                {(() => {
+                  const cwdShown = claudeCwdOverride ?? activeProject.path;
+                  return `cwd=${cwdShown.length > 28 ? `…${cwdShown.slice(-28)}` : cwdShown}`;
+                })()}
+              </button>
+            ) : session ? (
               <button
                 type="button"
                 className="rb-cli-pill mono"
@@ -1176,7 +1279,7 @@ export const WorkbenchTab: React.FC = () => {
                 style={{ cursor: 'pointer' }}
                 title="点击设置工作目录，新对话会用此 cwd"
               >
-                基于 Claude Agent SDK · 首次发送创建会话
+                Codex CLI · 首次发送创建会话
               </button>
             )}
             <button
@@ -1226,7 +1329,23 @@ export const WorkbenchTab: React.FC = () => {
               </button>
             </div>
           </div>
-          {session && !isRunning ? (
+          {currentBackend === 'claude' ? (
+            // 关掉当前 PTY → 起一条新的 fresh PTY（不带 resume）。
+            // 通过 bumpTick + 清 resumeId 触发 TerminalPane key 变化。
+            <button
+              type="button"
+              onClick={() => {
+                setClaudeResumeId(null);
+                setClaudeCwdOverride(null);
+                setClaudeRestartTick((t) => t + 1);
+              }}
+              title="重启 PTY（关掉当前 claude 子进程，起一条新的 fresh 会话）"
+              className="rb-icon-btn"
+              style={{ color: 'var(--danger-fg)' }}
+            >
+              <LogOut size={14} />
+            </button>
+          ) : session && !isRunning ? (
             <button
               type="button"
               onClick={() => void handleEndSession()}
@@ -1272,11 +1391,43 @@ export const WorkbenchTab: React.FC = () => {
             <SessionsPanel
               onSwitchSession={async (id) => {
                 setSessionsOpen(false);
-                await handleSwitchSession(id);
+                // 找出 row.provider 决定走哪条分派；Codex 仍走旧 SDK switch；
+                // Claude（含未指定 provider 的 legacy 行）走 PTY --resume。
+                const row = state.claudeCode.sessionList.find((r) => r.id === id);
+                if (row?.provider === 'codex') {
+                  await handleSwitchSession(id, 'codex');
+                  return;
+                }
+                // Claude 路径：查 conversation_id 绑回 mirror，再切 resumeId
+                try {
+                  const resp = await fetch(
+                    `${API_BASE}/api/conversations/by-session/${id}`,
+                  );
+                  if (resp.ok) {
+                    const data = (await resp.json()) as { conversation_id?: string };
+                    if (data.conversation_id) {
+                      setClaudeConversationId(data.conversation_id);
+                    }
+                  }
+                  // 404 时走当前 conversation——历史消息追加进现有 conv，可接受
+                } catch {
+                  /* 忽略——mirror 失效不阻断 PTY */
+                }
+                setClaudeResumeId(id);
+                setClaudeRestartTick((t) => t + 1);
               }}
               onCreateSession={async (p) => {
                 setSessionsOpen(false);
-                await handleCreateSession(p);
+                if (p === 'codex') {
+                  await handleCreateSession('codex');
+                  return;
+                }
+                // Claude（含 anthropic / 默认）→ 起一条 fresh PTY，conversation 由
+                // ensureConversation effect 兜底；不走 SDK 创建路径。
+                setClaudeResumeId(null);
+                setClaudeCwdOverride(null);
+                setClaudeConversationId(null); // 触发 ensureConversation 起新 conv
+                setClaudeRestartTick((t) => t + 1);
               }}
               onActiveSessionDeleted={handleActiveSessionDeleted}
             />
@@ -1292,31 +1443,52 @@ export const WorkbenchTab: React.FC = () => {
       />
 
       <div className="rb-chat-body">
-        <div ref={scrollRef} className="rb-chat-stream">
-          {items.length === 0 ? (
-            <div className="rb-prompts">
-              <div className="rb-eyebrow">从这里开始</div>
-              <p style={{ color: 'var(--fg-3)', fontSize: 13.5, padding: '8px 10px', margin: 0 }}>
-                输入需求后按 Enter 发送；首次发送会自动创建{' '}
-                {currentBackend === 'codex' ? 'Codex' : 'Claude Code'} 会话，后续轮次共享上下文。
-                右上角点击 claude / codex 切到对应 backend 起新对话；想看历史对话点左上角"会话列表"。
-              </p>
-            </div>
-          ) : (
-            <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
-              {items.map((item) => (
-                <React.Fragment key={item.id}>
-                  <MessageRenderer
-                    message={item.payload}
-                    rawEventsVisible={rawEventsVisible}
-                    suppressedToolUseIds={suppressedToolUseIds}
-                  />
-                </React.Fragment>
-              ))}
-            </div>
-          )}
-        </div>
+        {currentBackend === 'claude' ? (
+          // Claude 路径走 PTY + xterm（plan 2026-05-01 Task 5）。
+          // 4 个 state 任一变 → key 变 → TerminalPane 完整 unmount/remount，
+          // 旧 WS 关、PTY 子进程 terminate、新 WS 连、新 PTY spawn——不依赖
+          // 内部 effect dep 的细微差异，副作用更可预测。
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <TerminalPane
+              key={`claude|${activeProject.id}|${claudeResumeId ?? 'fresh'}|${claudeCwdOverride ?? ''}|${claudeRestartTick}`}
+              backend="claude"
+              cwd={claudeCwdOverride ?? activeProject.path}
+              resumeId={claudeResumeId ?? undefined}
+              conversationId={claudeConversationId ?? undefined}
+              className="h-full w-full bg-[#1e1e1e] p-1"
+              onClose={(reason) => {
+                // PTY 子进程退出 / WS 连续失败 → 把 banner 文本写到错误条供用户感知
+                pushError(`Claude PTY 已断开（${reason}）。点会话列表 + 或顶栏"结束会话"重启一条。`);
+              }}
+            />
+          </div>
+        ) : (
+          <div ref={scrollRef} className="rb-chat-stream">
+            {items.length === 0 ? (
+              <div className="rb-prompts">
+                <div className="rb-eyebrow">从这里开始</div>
+                <p style={{ color: 'var(--fg-3)', fontSize: 13.5, padding: '8px 10px', margin: 0 }}>
+                  输入需求后按 Enter 发送；首次发送会自动创建 Codex 会话，后续轮次共享上下文。
+                  右上角点击 claude / codex 切到对应 backend 起新对话；想看历史对话点左上角"会话列表"。
+                </p>
+              </div>
+            ) : (
+              <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                {items.map((item) => (
+                  <React.Fragment key={item.id}>
+                    <MessageRenderer
+                      message={item.payload}
+                      rawEventsVisible={rawEventsVisible}
+                      suppressedToolUseIds={suppressedToolUseIds}
+                    />
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
+        {currentBackend !== 'claude' ? (
         <div className="rb-composer-wrap">
           {slashQueryActive && slashMatches.length > 0 ? (
             <SlashAutocomplete
@@ -1422,10 +1594,10 @@ export const WorkbenchTab: React.FC = () => {
             </div>
           </form>
           <div className="rb-composer-hint">
-            Enter 发送 · Shift+Enter 换行 · 后端：
-            {currentBackend === 'claude' ? 'Claude Code CLI' : 'Codex CLI'}
+            Enter 发送 · Shift+Enter 换行 · 后端：Codex CLI
           </div>
         </div>
+        ) : null}
       </div>
     </div>
   );

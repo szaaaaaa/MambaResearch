@@ -161,7 +161,7 @@ const AppContent: React.FC = () => {
           />
         );
       case 'bench':
-        return <WorkbenchTab />;
+        return activeProject ? <WorkbenchTab activeProject={activeProject} /> : null;
       case 'skill':
         return <SkillsTab compact={false} />;
       case 'hist':
