@@ -218,10 +218,21 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
       onDataDisposable.dispose();
       window.removeEventListener('resize', sendResize);
       observer?.disconnect();
-      try {
-        wsRef.current?.close();
-      } catch {
-        /* ignore */
+      // 关键：把所有 4 个 handler 都 null 掉再 close。
+      // closedByEffectRef 在新 effect run 时会被重置为 false，旧 ws 的 onclose
+      // 会异步在那之后才 fire——读到 false 就会触发 ghost reconnect，导致同时
+      // 起 2 个 PtyProcess 抢 ConPTY 资源。null handlers 是确定性的"切干净"。
+      const dyingWs = wsRef.current;
+      if (dyingWs) {
+        dyingWs.onopen = null;
+        dyingWs.onmessage = null;
+        dyingWs.onerror = null;
+        dyingWs.onclose = null;
+        try {
+          dyingWs.close();
+        } catch {
+          /* ignore */
+        }
       }
       wsRef.current = null;
       try {

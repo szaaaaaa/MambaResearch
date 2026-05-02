@@ -798,6 +798,9 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
   const [claudeCwdOverride, setClaudeCwdOverride] = React.useState<string | null>(null);
   const [claudeConversationId, setClaudeConversationId] = React.useState<string | null>(null);
   const [claudeRestartTick, setClaudeRestartTick] = React.useState(0);
+  // PTY 断开原因——TerminalPane.onClose 触发；Claude tab 不显示 items 列表，
+  // 这是给用户的唯一可见错误反馈通道。
+  const [claudePtyError, setClaudePtyError] = React.useState<string | null>(null);
 
   // 切 active project → 清掉所有 Claude PTY 状态。新 project 的 PTY 用新 cwd 起，
   // 不带任何 resume/cwdOverride。conversation 在下一个 effect 自动重新 ensure。
@@ -809,11 +812,17 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
     setClaudeCwdOverride(null);
     setClaudeConversationId(null);
     setClaudeRestartTick((tick) => tick + 1);
+    setClaudePtyError(null);
   }, [activeProject.id]);
 
   // 进 Claude tab 且尚无 conversation → POST /api/conversations 起一条；TerminalPane
   // 拿到 conversationId 后，后端 PTY route 才会挂上 TurnTeer 把 PTY 输出 mirror 到
-  // messages 表（Q1=B 决策）。失败时静默 swallow——mirror 失效是降级，不阻断 PTY 主流。
+  // messages 表（Q1=B 决策）。
+  //
+  // 失败兜底：sentinel 'no-mirror' 让 TerminalPane 仍 mount——后端拿到这个
+  // sentinel 时识别成"跳过 TurnTeer"。否则 conv POST 一挂，整个 Claude tab 就
+  // 永远卡"正在创建对话…"。mirror 失效只是降级，不阻断 PTY 主流。
+  const NO_MIRROR_SENTINEL = 'no-mirror';
   React.useEffect(() => {
     if (currentBackend !== 'claude') return;
     if (claudeConversationId) return;
@@ -825,12 +834,19 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ project_id: activeProject.id, backend: 'claude' }),
         });
-        if (!resp.ok || cancelled) return;
+        if (cancelled) return;
+        if (!resp.ok) {
+          // eslint-disable-next-line no-console
+          console.warn('ensureConversation HTTP failed', resp.status);
+          setClaudeConversationId(NO_MIRROR_SENTINEL);
+          return;
+        }
         const conv = (await resp.json()) as { id: string };
         if (!cancelled) setClaudeConversationId(conv.id);
-      } catch {
-        /* mirror 失效不影响 PTY 本身——TerminalPane 拿不到 conversationId
-         * 时后端跳过 TurnTeer，PTY 文本流仍正常显示 */
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('ensureConversation request threw', err);
+        if (!cancelled) setClaudeConversationId(NO_MIRROR_SENTINEL);
       }
     })();
     return () => {
@@ -878,6 +894,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
         setClaudeCwdOverride(next);
         setClaudeResumeId(null); // 改 cwd 隐含起新会话，丢掉历史 resume
         setClaudeRestartTick((t) => t + 1);
+        setClaudePtyError(null);
         setCwdModalOpen(false);
       } else {
         // Codex 沿用旧 SDK 路径：起一条新 session 用新 cwd
@@ -1129,6 +1146,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
                 setClaudeResumeId(null);
                 setClaudeCwdOverride(null);
                 setClaudeRestartTick((t) => t + 1);
+                setClaudePtyError(null);
               }}
               title="重启 PTY（关掉当前 claude 子进程，起一条新的 fresh 会话）"
               className="rb-icon-btn"
@@ -1206,6 +1224,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
                 }
                 setClaudeResumeId(id);
                 setClaudeRestartTick((t) => t + 1);
+                setClaudePtyError(null);
               }}
               onCreateSession={async (p) => {
                 setSessionsOpen(false);
@@ -1219,6 +1238,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
                 setClaudeCwdOverride(null);
                 setClaudeConversationId(null); // 触发 ensureConversation 起新 conv
                 setClaudeRestartTick((t) => t + 1);
+                setClaudePtyError(null);
               }}
               onActiveSessionDeleted={handleActiveSessionDeleted}
             />
@@ -1236,22 +1256,83 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
       <div className="rb-chat-body">
         {currentBackend === 'claude' ? (
           // Claude 路径走 PTY + xterm（plan 2026-05-01 Task 5）。
-          // 4 个 state 任一变 → key 变 → TerminalPane 完整 unmount/remount，
+          // 5 个 state 任一变 → key 变 → TerminalPane 完整 unmount/remount，
           // 旧 WS 关、PTY 子进程 terminate、新 WS 连、新 PTY spawn——不依赖
           // 内部 effect dep 的细微差异，副作用更可预测。
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <TerminalPane
-              key={`claude|${activeProject.id}|${claudeResumeId ?? 'fresh'}|${claudeCwdOverride ?? ''}|${claudeRestartTick}`}
-              backend="claude"
-              cwd={claudeCwdOverride ?? activeProject.path}
-              resumeId={claudeResumeId ?? undefined}
-              conversationId={claudeConversationId ?? undefined}
-              className="h-full w-full bg-[#1e1e1e] p-1"
-              onClose={(reason) => {
-                // PTY 子进程退出 / WS 连续失败 → 把 banner 文本写到错误条供用户感知
-                pushError(`Claude PTY 已断开（${reason}）。点会话列表 + 或顶栏"结束会话"重启一条。`);
-              }}
-            />
+          // **门控**：必须等 claudeConversationId 落定再 mount，避免一次切项目
+          // 跑两遍 connect（先 conversationId=null 起 ws_a，conv POST 完后再起
+          // ws_b）。两个 PtyProcess 抢 ConPTY 资源是 reconnecting 卡死的主因。
+          <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+            {claudePtyError ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  left: 8,
+                  right: 8,
+                  zIndex: 10,
+                  background: '#7f1d1d',
+                  color: '#fecaca',
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>{claudePtyError}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClaudePtyError(null);
+                    setClaudeRestartTick((t) => t + 1);
+                  }}
+                  style={{
+                    background: '#fecaca',
+                    color: '#7f1d1d',
+                    border: 'none',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    fontWeight: 600,
+                  }}
+                >
+                  重启 PTY
+                </button>
+              </div>
+            ) : null}
+            {claudeConversationId ? (
+              <TerminalPane
+                key={`claude|${activeProject.id}|${claudeResumeId ?? 'fresh'}|${claudeCwdOverride ?? ''}|${claudeConversationId}|${claudeRestartTick}`}
+                backend="claude"
+                cwd={claudeCwdOverride ?? activeProject.path}
+                resumeId={claudeResumeId ?? undefined}
+                conversationId={claudeConversationId}
+                className="h-full w-full bg-[#1e1e1e] p-1"
+                onClose={(reason) => {
+                  setClaudePtyError(
+                    `Claude PTY 已断开（${reason}）。点右上角"重启 PTY"或会话列表新建。`,
+                  );
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#94a3b8',
+                  background: '#1e1e1e',
+                  fontSize: 13,
+                }}
+              >
+                正在创建对话…
+              </div>
+            )}
           </div>
         ) : (
           <div ref={scrollRef} className="rb-chat-stream">
