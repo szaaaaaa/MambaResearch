@@ -34,7 +34,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from winpty import PtyProcess
 
@@ -79,13 +79,30 @@ class PtyBridge:
         cwd: str | Path,
         env: Mapping[str, str] | None = None,
         dimensions: tuple[int, int] = DEFAULT_DIMENSIONS,
+        on_input: "Callable[[bytes], None] | None" = None,
+        on_output: "Callable[[str], None] | None" = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        on_input : Callable[[bytes], None] or None
+            每次 ``write_str`` / ``write_bytes`` 时被同步调用，参数是即将写入
+            PTY 的字节（``write_str`` 路径会 utf-8 encode 后再调）。**钩子里
+            抛任何异常都被 swallow** ——绝不影响 PTY 主写入路径。给 Task 3 的
+            output tee（``TurnTeer.on_user_input``）当注入点。
+        on_output : Callable[[str], None] or None
+            每次 ``read_chunks`` yield 一个 chunk 前被同步调用，参数是 PTY 原始
+            ``str`` 输出（含 ANSI）。同样 swallow exceptions。给 Task 3 的
+            ``TurnTeer.on_pty_output`` 当注入点。
+        """
         if not argv:
             raise ValueError("argv must be non-empty")
         self._argv: list[str] = list(argv)
         self._cwd: str = str(cwd)
         self._env: dict[str, str] | None = dict(env) if env is not None else None
         self._dimensions: tuple[int, int] = dimensions
+        self._on_input: Callable[[bytes], None] | None = on_input
+        self._on_output: Callable[[str], None] | None = on_output
         self._pty: PtyProcess | None = None
         self._closed = asyncio.Event()
 
@@ -122,13 +139,23 @@ class PtyBridge:
     def write_str(self, data: str) -> None:
         if not self._pty:
             raise RuntimeError("PtyBridge not started")
+        self._invoke_input_hook(data.encode("utf-8"))
         self._pty.write(data)
 
     def write_bytes(self, data: bytes) -> None:
         """二进制输入透传——pywinpty.write 只接 str，先 utf-8 decode。"""
         if not self._pty:
             raise RuntimeError("PtyBridge not started")
+        self._invoke_input_hook(data)
         self._pty.write(data.decode("utf-8", errors="replace"))
+
+    def _invoke_input_hook(self, data: bytes) -> None:
+        if self._on_input is None:
+            return
+        try:
+            self._on_input(data)
+        except Exception:
+            logger.exception("on_input hook raised; PTY write continues")
 
     def resize(self, cols: int, rows: int) -> None:
         if not self._pty:
@@ -169,6 +196,11 @@ class PtyBridge:
                 # pywinpty 在没数据时偶尔返回空 str 而不是阻塞——避免 busy-loop
                 await asyncio.sleep(0.01)
                 continue
+            if self._on_output is not None:
+                try:
+                    self._on_output(data)
+                except Exception:
+                    logger.exception("on_output hook raised; PTY read continues")
             yield data
 
     async def aclose(self) -> None:

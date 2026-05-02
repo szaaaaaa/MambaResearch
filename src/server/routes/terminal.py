@@ -39,7 +39,9 @@ from src.server.claude_code.providers import (
     ProviderRegistryError,
     get_provider_registry,
 )
+from src.server.projects import messages_store
 from src.server.projects.registry import get_registry
+from src.server.terminal.output_parser import TurnTeer
 from src.server.terminal.pty_bridge import PtyBridge, build_subprocess_env
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,7 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
     cwd_param = websocket.query_params.get("cwd")
     provider_name = websocket.query_params.get("provider")
     resume_id = websocket.query_params.get("resume")
+    conversation_id = websocket.query_params.get("conversation_id")
 
     try:
         cwd = _resolve_cwd(cwd_param)
@@ -134,16 +137,29 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
         return
 
     logger.info(
-        "spawning PTY backend=%s cwd=%s argv=%s provider=%s resume=%s",
+        "spawning PTY backend=%s cwd=%s argv=%s provider=%s resume=%s conv=%s",
         backend,
         cwd,
         argv,
         provider_name or "<default>",
         resume_id or "<new>",
+        conversation_id or "<no-mirror>",
     )
 
+    # conversation_id 给定才挂 tee——没给说明前端不要这条 WS 写 messages 表
+    # （比如纯设置面板里测试 PTY 时）。tee 抛异常不影响 PTY 主流（acceptance #4）。
+    teer: TurnTeer | None = (
+        TurnTeer(conversation_id, messages_store.append_message)
+        if conversation_id
+        else None
+    )
+    on_input = teer.on_user_input if teer else None
+    on_output = teer.on_pty_output if teer else None
+
     try:
-        async with PtyBridge(argv, cwd=cwd, env=env) as pty:
+        async with PtyBridge(
+            argv, cwd=cwd, env=env, on_input=on_input, on_output=on_output
+        ) as pty:
             await _pump(websocket, pty)
     except Exception as exc:
         logger.exception("PTY session crashed")
@@ -152,6 +168,9 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
             await websocket.close(code=1011)
         except Exception:
             pass
+    finally:
+        if teer is not None:
+            teer.aclose()
 
 
 async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
