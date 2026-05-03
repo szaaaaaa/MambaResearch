@@ -42,8 +42,11 @@ from src.server.claude_code.providers import (
 )
 from src.server.projects import messages_store
 from src.server.projects.registry import get_registry
+from src.server.terminal.claude_mount import ensure_claude_mount
 from src.server.terminal.output_parser import TurnTeer
 from src.server.terminal.pty_bridge import PtyBridge, build_subprocess_env
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 logger = logging.getLogger(__name__)
 
@@ -148,8 +151,17 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
     # project 切换时整盘重写到 <project>/.mambaresearch/mcp_config.json；
     # 文件不存在（如未切 active / 写盘失败）则跳过 flag，PTY 仍可用但
     # 看不到 builtin MCP。
+    #
+    # 同时通过 --add-dir 把 mamba 的 8 个 pipeline skill 投递给 spawn 的
+    # claude——cwd 通常是 active project（不在 mamba repo 内），不加这个
+    # flag 子进程根本看不见 /classify-workspace 等 skill。投递目录
+    # `<repo>/.claude-mount` 只含 skill junction，避免暴露 mamba 源码。
     if backend == "claude":
         from src.server.mcp.builtin_writer import builtin_mcp_config_path
+
+        mount_root = ensure_claude_mount(_REPO_ROOT)
+        if mount_root is not None:
+            argv = [argv[0], "--add-dir", str(mount_root), *argv[1:]]
 
         mcp_config = builtin_mcp_config_path(cwd)
         if mcp_config.exists():

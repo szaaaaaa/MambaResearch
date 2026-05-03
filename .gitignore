@@ -64,6 +64,12 @@ frontend/dist/
 !.skills-shared/
 !.skills-shared/**
 
+# .claude-mount/ — runtime-generated 投递目录给 PTY claude 的 --add-dir。
+# 由 src/server/terminal/claude_mount.py 在 PTY spawn 时幂等创建：
+# .claude-mount/.claude/skills/<name> 是同卷 NTFS junction 指向 .skills-shared/<name>。
+# 物理结构每次 spawn 自重建，不入库。
+.claude-mount/
+
 # Self-improvement — project-local Claude learnings, personal dev memory
 .learnings/
 

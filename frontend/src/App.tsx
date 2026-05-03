@@ -17,6 +17,7 @@ import { getActiveProject, Project } from './api/projects';
 import { ContextualTabsProvider, useActiveContextualTab, useContextualTabs } from './store/contextual';
 import { ContextualTabBar } from './components/contextual/ContextualTabBar';
 import { ContextualTabFrame } from './components/contextual/ContextualTabFrame';
+import { CLASSIFY_WORKSPACE_PROMPT } from './components/workbench/ClassifyHintBar';
 
 const UI_PREFERENCES_KEY = 'research-agent-ui-preferences';
 const LAST_NAV_KEY = 'mamba_last_nav';
@@ -86,7 +87,7 @@ const AppContent: React.FC = () => {
   const [bootstrapping, setBootstrapping] = React.useState(true);
   const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>(() => loadLastNav());
   const activeContextualTab = useActiveContextualTab();
-  const { pendingComposerPrompt } = useContextualTabs();
+  const { pendingComposerPrompt, injectComposerPrompt } = useContextualTabs();
 
   // Stage 4 Task 8 — pending prompt 触发时切到 bench；WorkbenchTab 自管 consume
   React.useEffect(() => {
@@ -155,7 +156,7 @@ const AppContent: React.FC = () => {
             description="该项目尚未建立分类索引。"
             icon={FlaskConical}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            onNavigateToWorkbench={() => setActiveNav('bench')}
+            onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
           />
         );
       case 'bench':
@@ -172,7 +173,7 @@ const AppContent: React.FC = () => {
             description="该项目尚未建立分类索引。"
             icon={FileText}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            onNavigateToWorkbench={() => setActiveNav('bench')}
+            onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
           />
         );
       case 'data':
@@ -183,7 +184,7 @@ const AppContent: React.FC = () => {
             description="该项目尚未建立分类索引。"
             icon={Database}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            onNavigateToWorkbench={() => setActiveNav('bench')}
+            onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
           />
         );
       case 'idea':
@@ -194,7 +195,7 @@ const AppContent: React.FC = () => {
             description="该项目尚未建立分类索引。"
             icon={Lightbulb}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            onNavigateToWorkbench={() => setActiveNav('bench')}
+            onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
           />
         );
       case 'mcp':

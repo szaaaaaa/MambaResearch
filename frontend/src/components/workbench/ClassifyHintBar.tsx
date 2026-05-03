@@ -18,7 +18,12 @@ const DISMISS_KEY = 'mamba_classify_hint_dismissed_at';
 const DISMISS_TTL_MS = 24 * 3600 * 1000;
 const STALE_AFTER_S = 24 * 3600;
 const MIN_UNCLASSIFIED = 20;
-const HINT_PROMPT = '运行 classify-workspace skill 帮我整理 workspace';
+
+/**
+ * classify-workspace 注入提示——同时被 4 bucket 空态按钮（``App.tsx``）和
+ * 本组件的"好"按钮共用，避免两处文案漂移。
+ */
+export const CLASSIFY_WORKSPACE_PROMPT = '运行 classify-workspace skill 帮我整理 workspace';
 
 interface Props {
   /** 用户点"好"时把 prompt 注入到 composer。父组件（WorkbenchTab）负责 setPrompt。 */
@@ -73,7 +78,7 @@ export const ClassifyHintBar: React.FC<Props> = ({ onAccept }) => {
   }, []);
 
   const handleAccept = React.useCallback(() => {
-    onAccept(HINT_PROMPT);
+    onAccept(CLASSIFY_WORKSPACE_PROMPT);
     handleDismiss();
   }, [handleDismiss, onAccept]);
 
