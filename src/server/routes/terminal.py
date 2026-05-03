@@ -142,6 +142,19 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
         await websocket.close(code=1011)
         return
 
+    # PTY 模式下 claude CLI 通过 --mcp-config 加载 builtin MCP server
+    # （SDK 模式删除后，这是 builtin MCP 唯一的子进程发现路径）。配置文件由
+    # `_apply_active_project_env` → `write_builtin_mcp_config` 在 active
+    # project 切换时整盘重写到 <project>/.mambaresearch/mcp_config.json；
+    # 文件不存在（如未切 active / 写盘失败）则跳过 flag，PTY 仍可用但
+    # 看不到 builtin MCP。
+    if backend == "claude":
+        from src.server.mcp.builtin_writer import builtin_mcp_config_path
+
+        mcp_config = builtin_mcp_config_path(cwd)
+        if mcp_config.exists():
+            argv = [argv[0], "--mcp-config", str(mcp_config), *argv[1:]]
+
     logger.info(
         "spawning PTY backend=%s cwd=%s argv=%s provider=%s resume=%s conv=%s",
         backend,

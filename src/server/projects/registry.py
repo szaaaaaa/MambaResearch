@@ -245,11 +245,21 @@ def _apply_active_project_env(path: str | None) -> None:
     MCP server 子进程从父进程继承 env，所以这一步会在后续启动的子进程里生效。
     已运行的子进程感知不到——这是预期行为：active project 切换时通常也要重启
     会话才生效。
+
+    切换到非空 active project 时同步重写 ``<project>/.mambaresearch/
+    mcp_config.json`` —— PTY 模式下的 ``claude`` CLI 通过 ``--mcp-config``
+    加载该文件以发现 6 个 builtin MCP server（workspace / zotero / colab /
+    experiment / mamba_history / paper_search）。SDK 模式 plan 在 cli-pty-pivot
+    Task 6a 删除后，这是 builtin MCP 唯一的子进程发现路径。
     """
     if path is None or not str(path).strip():
         os.environ.pop(ACTIVE_PROJECT_ENV_VAR, None)
-    else:
-        os.environ[ACTIVE_PROJECT_ENV_VAR] = str(path)
+        return
+
+    os.environ[ACTIVE_PROJECT_ENV_VAR] = str(path)
+    from src.server.mcp.builtin_writer import write_builtin_mcp_config
+
+    write_builtin_mcp_config(path)
 
 
 def sync_active_project_env() -> None:
