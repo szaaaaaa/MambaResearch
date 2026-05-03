@@ -21,6 +21,19 @@ If you find yourself about to write code without having invoked the applicable o
 - 排查问题尽早暴露，不试图掩盖
 - 代码任务开始前，读 `.learnings/LEARNINGS.md` 和 `.learnings/ERRORS.md`（若存在），避免重复已知失误
 
+# 自主交付循环（2026-05-03 ziang 授权）
+
+权限 / 边界详见 `~/.claude/projects/D--ResearchAgent/memory/feedback_autonomous_dev_authorization.md`。要点：
+
+- ✅ 验证通过（pytest + tsc + npm run build + 浏览器主流程无 console 红错）后自主 commit + push 当前分支
+- ✅ 自己写 plan、选方向、起停 dev server / 子进程、装依赖（装到 ResearchAgent 自己的 npm/python 环境内）、改 CLAUDE.md / 构建配置
+- 🔒 force push / 改 main / amend 已 push commit / `--no-verify` / 删 tracked 文件 / 装系统级软件——永不或必问
+- 🔒 settings.json 必问，**唯一例外**：`env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 由我依 `autocompact_tuning.md` 规则自主调
+- 不可逆动作 ask 信号：以 `🛑 需要你确认：...` 开头
+- 上报暂停条件：blocking dep 缺、改动破坏既有契约、advisor 连续 3 次说停、同一处 pytest 2 次修不好
+
+优先级队列：polish 收尾 → F1 (Codex agent TOML) → 5d (Codex E2E) → Stage 5 (DAG-as-MCP) → ...
+
 # 常用命令
 
 - 后端: `python app.py`
