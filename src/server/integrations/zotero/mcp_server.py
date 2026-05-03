@@ -21,6 +21,7 @@
 - ``get_item``         单 item 详情
 - ``add_tag``          追加 tag
 - ``upload_pdf``       上传本地 PDF（创建 attachment item + 文件）
+- ``download_pdf``     下载 Zotero item 关联 PDF 到本地目录
 """
 
 from __future__ import annotations
@@ -219,6 +220,33 @@ def _tool_descriptors() -> list[dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
+        {
+            "name": "download_pdf",
+            "description": (
+                "把 Zotero item 关联的 PDF 附件下载到本地目录。"
+                "传 attachment item_key 直接下；传 parent item_key（如 journalArticle）"
+                "则自动找首个 PDF 子附件下载。成功返回 path / filename / bytes / attachment_key。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "item_key": {
+                        "type": "string",
+                        "description": "Zotero item key（attachment 本体或 parent item 任一）",
+                    },
+                    "dest_dir": {
+                        "type": "string",
+                        "description": "本地目标目录绝对路径；不存在时自动 mkdir",
+                    },
+                    "filename": {
+                        "type": ["string", "null"],
+                        "description": "可选——写盘文件名；不传则用 attachment 自身 filename",
+                    },
+                },
+                "required": ["item_key", "dest_dir"],
+                "additionalProperties": False,
+            },
+        },
     ]
 
 
@@ -333,12 +361,30 @@ def _call_upload_pdf(arguments: dict[str, Any], client: Any) -> dict[str, Any]:
     return _tool_text_result(result)
 
 
+def _call_download_pdf(arguments: dict[str, Any], client: Any) -> dict[str, Any]:
+    item_key = _coerce_str(arguments.get("item_key"))
+    if item_key is None:
+        return _tool_error_result("item_key 必填")
+    dest_dir = _coerce_str(arguments.get("dest_dir"))
+    if dest_dir is None:
+        return _tool_error_result("dest_dir 必填")
+    filename = _coerce_str(arguments.get("filename"), allow_empty=False)
+    try:
+        result = client.download_attachment(item_key, dest_dir, filename=filename)
+    except Exception as exc:  # noqa: BLE001
+        return _tool_error_result(f"下载 PDF 失败：{exc}")
+    if not result.get("ok"):
+        return _tool_error_result(f"下载 PDF 失败：{result.get('error', 'unknown')}")
+    return _tool_text_result(result)
+
+
 _TOOL_DISPATCH = {
     "search": _call_search,
     "list_collections": _call_list_collections,
     "get_item": _call_get_item,
     "add_tag": _call_add_tag,
     "upload_pdf": _call_upload_pdf,
+    "download_pdf": _call_download_pdf,
 }
 
 

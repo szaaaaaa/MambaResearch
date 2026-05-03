@@ -300,3 +300,148 @@ class ZoteroClient:
                 "error": f"register upload HTTP {reg_resp.status_code}: {reg_resp.text[:200]}",
             }
         return {"ok": True, "item_key": item_key, "title": derived_title}
+
+    def download_attachment(
+        self,
+        item_key: str,
+        dest_dir: str | Path,
+        *,
+        filename: str | None = None,
+    ) -> dict[str, Any]:
+        """下载 Zotero item 的 PDF 附件到本地目录。
+
+        如果 ``item_key`` 指向 attachment（``itemType == "attachment"`` 且
+        ``contentType == "application/pdf"``），直接 GET 其 ``/file``。
+        否则视作 parent item（journalArticle 等），先 GET ``/children`` 取
+        首个 PDF attachment 子条目再下载。
+
+        Parameters
+        ----------
+        item_key
+            Zotero item key（attachment 本体或 parent item 任一）。
+        dest_dir
+            本地目标目录；不存在时按需 mkdir（含父目录）。
+        filename
+            可选——指定写盘文件名；不传则用 attachment ``data.filename``，
+            缺则退回 ``<attachment_key>.pdf``。最终文件名若无 ``.pdf`` 后缀
+            会自动追加。
+
+        Returns
+        -------
+        dict
+            成功::
+
+                {"ok": True, "path": "<abs path>", "filename": "<name>",
+                 "bytes": N, "attachment_key": "<key>"}
+
+            失败::
+
+                {"ok": False, "error": "<message>"}
+
+            失败原因覆盖：item 不存在 / item 非 attachment 且无 PDF child /
+            HTTP 4xx-5xx / 写盘 OSError。
+        """
+        item = self.get_item(item_key)
+        if not item:
+            return {"ok": False, "error": f"item not found: {item_key}"}
+
+        item_type = str(item.get("itemType", ""))
+        item_content_type = str(item.get("contentType", "")).lower()
+
+        if item_type == "attachment":
+            if item_content_type and item_content_type != "application/pdf":
+                return {
+                    "ok": False,
+                    "error": (
+                        f"attachment {item_key} contentType={item_content_type}, "
+                        "expected application/pdf"
+                    ),
+                }
+            attachment_key = item_key
+            attachment_filename = str(item.get("filename") or "") or None
+        else:
+            children_resp = self._request(
+                "GET",
+                self._user_url(f"/items/{item_key}/children"),
+                headers=self._headers(),
+            )
+            if children_resp.status_code >= 400:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"list children HTTP {children_resp.status_code}: "
+                        f"{children_resp.text[:200]}"
+                    ),
+                }
+            try:
+                children = children_resp.json()
+            except ValueError:
+                children = []
+            if not isinstance(children, list):
+                children = []
+
+            attachment_key = None
+            attachment_filename = None
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                data = child.get("data") if isinstance(child.get("data"), dict) else {}
+                if data.get("itemType") != "attachment":
+                    continue
+                child_ct = str(data.get("contentType", "")).lower()
+                if child_ct != "application/pdf":
+                    continue
+                key = str(child.get("key") or "")
+                if not key:
+                    continue
+                attachment_key = key
+                attachment_filename = str(data.get("filename") or "") or None
+                break
+
+            if attachment_key is None:
+                return {
+                    "ok": False,
+                    "error": f"item {item_key} has no PDF attachment child",
+                }
+
+        dl_resp = self._request(
+            "GET",
+            self._user_url(f"/items/{attachment_key}/file"),
+            headers=self._headers(),
+        )
+        if dl_resp.status_code >= 400:
+            return {
+                "ok": False,
+                "error": (
+                    f"download HTTP {dl_resp.status_code}: {dl_resp.text[:200]}"
+                ),
+            }
+        body = dl_resp.content
+        if not body:
+            return {
+                "ok": False,
+                "error": f"empty response for attachment {attachment_key}",
+            }
+
+        dest = Path(dest_dir)
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return {"ok": False, "error": f"mkdir failed: {exc}"}
+
+        final_name = filename or attachment_filename or f"{attachment_key}.pdf"
+        if not final_name.lower().endswith(".pdf"):
+            final_name = f"{final_name}.pdf"
+        target = dest / final_name
+        try:
+            target.write_bytes(body)
+        except OSError as exc:
+            return {"ok": False, "error": f"write failed: {exc}"}
+
+        return {
+            "ok": True,
+            "path": str(target),
+            "filename": final_name,
+            "bytes": len(body),
+            "attachment_key": attachment_key,
+        }

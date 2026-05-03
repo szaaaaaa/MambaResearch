@@ -1,7 +1,6 @@
 import React from 'react';
 import { BookOpen, Download, RefreshCw } from 'lucide-react';
 import { API_BASE } from '../../store';
-import { useContextualTabs } from '../../store/contextual';
 
 interface ZoteroCollection {
   key: string;
@@ -13,6 +12,15 @@ interface ZoteroItem {
   title: string;
   itemType: string;
   creators: Array<Record<string, unknown>>;
+}
+
+interface ImportResult {
+  itemKey: string;
+  status: 'pending' | 'ok' | 'error';
+  path?: string;
+  filename?: string;
+  bytes?: number;
+  error?: string;
 }
 
 function formatCreator(creators: Array<Record<string, unknown>> | undefined): string {
@@ -31,8 +39,9 @@ function formatCreator(creators: Array<Record<string, unknown>> | undefined): st
  *
  * 与 bucket=literature 的区别：bucket 只显示**已分类的本地 PDF**；
  * LibraryTab 显示 **Zotero 服务端**的所有资料，包括尚未拉到本地 workspace
- * 的条目。"拉到 workspace" action 走 prompt 注入让 Claude 调
- * mcp__mamba_zotero 工具完成（保持"用户操作 → Claude 决策"语义）。
+ * 的条目。"下载到 workspace" 按钮直接调 ``POST /api/library/zotero/import``，
+ * 后端 ``ZoteroClient.download_attachment`` 落盘到 active project 的
+ * ``zotero_imports/`` 子目录，下次 workspace scan 会把它收编为 literature。
  */
 export const LibraryTab: React.FC = () => {
   const [collections, setCollections] = React.useState<ZoteroCollection[]>([]);
@@ -41,7 +50,7 @@ export const LibraryTab: React.FC = () => {
   const [query, setQuery] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const { injectComposerPrompt } = useContextualTabs();
+  const [importStatus, setImportStatus] = React.useState<Record<string, ImportResult>>({});
 
   const loadCollections = React.useCallback(async () => {
     setError(null);
@@ -86,15 +95,43 @@ export const LibraryTab: React.FC = () => {
     loadItems();
   }, [loadCollections, loadItems]);
 
-  const handlePullToWorkspace = (item: ZoteroItem) => {
-    injectComposerPrompt(
-      `把 Zotero item ${item.key}（${item.title}）拉到 workspace。`
-        + `参考流程：(1) mcp__mamba_workspace__list 查 source_dirs；`
-        + `(2) 在第一个 source_dir 下建 zotero_pulled 子目录；`
-        + `(3) 调 Zotero API 下载 PDF（mcp__mamba_zotero__get_item 拿元数据，`
-        + `下载需要新加 download_pdf 工具——若不存在告知我）。`,
-    );
-  };
+  const handlePullToWorkspace = React.useCallback(async (item: ZoteroItem) => {
+    setImportStatus((prev) => ({
+      ...prev,
+      [item.key]: { itemKey: item.key, status: 'pending' },
+    }));
+    try {
+      const resp = await fetch(`${API_BASE}/api/library/zotero/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_key: item.key }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${resp.status}`);
+      }
+      const body = await resp.json();
+      setImportStatus((prev) => ({
+        ...prev,
+        [item.key]: {
+          itemKey: item.key,
+          status: 'ok',
+          path: body.path,
+          filename: body.filename,
+          bytes: body.bytes,
+        },
+      }));
+    } catch (err) {
+      setImportStatus((prev) => ({
+        ...prev,
+        [item.key]: {
+          itemKey: item.key,
+          status: 'error',
+          error: String((err as Error).message ?? err),
+        },
+      }));
+    }
+  }, []);
 
   return (
     <div className="flex h-full w-full flex-col bg-white">
@@ -173,26 +210,67 @@ export const LibraryTab: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => (
-                <tr key={it.key} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="max-w-md truncate px-3 py-2 text-slate-800">{it.title || '(no title)'}</td>
-                  <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.itemType}</td>
-                  <td className="px-3 py-2 text-slate-600">{formatCreator(it.creators)}</td>
-                  <td className="px-3 py-2 font-mono text-[11px] text-slate-400">
-                    {String(it.key).slice(0, 10)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => handlePullToWorkspace(it)}
-                      className="flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-100"
-                      title="发 prompt 到工作台让 Claude 拉到 workspace"
-                    >
-                      <Download size={10} /> 拉到 workspace
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {items.map((it) => {
+                const status = importStatus[it.key];
+                const pending = status?.status === 'pending';
+                const ok = status?.status === 'ok';
+                const errored = status?.status === 'error';
+                const buttonLabel = pending
+                  ? '下载中…'
+                  : ok
+                    ? '已下载'
+                    : errored
+                      ? '重试下载'
+                      : '下载到 workspace';
+                return (
+                  <tr key={it.key} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="max-w-md truncate px-3 py-2 text-slate-800">{it.title || '(no title)'}</td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.itemType}</td>
+                    <td className="px-3 py-2 text-slate-600">{formatCreator(it.creators)}</td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-slate-400">
+                      {String(it.key).slice(0, 10)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handlePullToWorkspace(it)}
+                          disabled={pending}
+                          className={`flex items-center gap-1 rounded border px-2 py-1 text-[11px] disabled:opacity-50 ${
+                            ok
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : errored
+                                ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                                : 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                          title={
+                            ok
+                              ? `已落盘：${status?.path}`
+                              : errored
+                                ? status?.error
+                                : '调 POST /api/library/zotero/import 下载到 active project 的 zotero_imports/ 目录'
+                          }
+                        >
+                          <Download size={10} /> {buttonLabel}
+                        </button>
+                        {ok && status?.filename ? (
+                          <span
+                            className="font-mono text-[10px] text-emerald-700"
+                            title={status.path}
+                          >
+                            {status.filename}
+                          </span>
+                        ) : null}
+                        {errored && status?.error ? (
+                          <span className="text-[10px] text-rose-600" title={status.error}>
+                            {status.error.length > 32 ? `${status.error.slice(0, 32)}…` : status.error}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

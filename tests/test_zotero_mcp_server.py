@@ -88,10 +88,17 @@ def test_initialize_returns_protocol_info():
     assert resp["result"]["serverInfo"]["name"] == mcp_server.SERVER_NAME
 
 
-def test_tools_list_lists_5_tools():
+def test_tools_list_lists_6_tools():
     resp = _call("tools/list")
     names = sorted(t["name"] for t in resp["result"]["tools"])
-    assert names == ["add_tag", "get_item", "list_collections", "search", "upload_pdf"]
+    assert names == [
+        "add_tag",
+        "download_pdf",
+        "get_item",
+        "list_collections",
+        "search",
+        "upload_pdf",
+    ]
 
 
 def test_tools_list_search_schema_required_query():
@@ -99,6 +106,7 @@ def test_tools_list_search_schema_required_query():
     tools = {t["name"]: t for t in resp["result"]["tools"]}
     assert tools["search"]["inputSchema"]["required"] == ["query"]
     assert tools["upload_pdf"]["inputSchema"]["required"] == ["local_path"]
+    assert tools["download_pdf"]["inputSchema"]["required"] == ["item_key", "dest_dir"]
 
 
 # ---------------------------------------------------------------------------
@@ -116,13 +124,21 @@ def test_tools_call_returns_isError_when_credentials_missing(no_creds):
 
 
 def test_credential_gating_applies_to_every_tool(no_creds):
-    for tool in ("search", "list_collections", "get_item", "add_tag", "upload_pdf"):
+    for tool in (
+        "search",
+        "list_collections",
+        "get_item",
+        "add_tag",
+        "upload_pdf",
+        "download_pdf",
+    ):
         args = {
             "search": {"query": "x"},
             "list_collections": {},
             "get_item": {"item_key": "K"},
             "add_tag": {"item_key": "K", "tags": ["t"]},
             "upload_pdf": {"local_path": "/tmp/x.pdf"},
+            "download_pdf": {"item_key": "K", "dest_dir": "/tmp/x"},
         }[tool]
         resp = _call("tools/call", {"name": tool, "arguments": args})
         assert _is_error(resp), f"{tool}: should be isError when creds missing"
@@ -282,6 +298,71 @@ def test_upload_pdf_propagates_client_failure(with_creds: MagicMock):
     )
     assert _is_error(resp)
     assert "file not found" in _error_text(resp)
+
+
+# ---------------------------------------------------------------------------
+# download_pdf
+# ---------------------------------------------------------------------------
+
+
+def test_download_pdf_passes_arguments(with_creds: MagicMock):
+    with_creds.download_attachment.return_value = {
+        "ok": True,
+        "path": "/tmp/x/y.pdf",
+        "filename": "y.pdf",
+        "bytes": 123,
+        "attachment_key": "ATT",
+    }
+    resp = _call(
+        "tools/call",
+        {
+            "name": "download_pdf",
+            "arguments": {
+                "item_key": "PARENT",
+                "dest_dir": "/tmp/x",
+                "filename": "y",
+            },
+        },
+    )
+    assert not _is_error(resp)
+    assert _structured(resp)["filename"] == "y.pdf"
+    with_creds.download_attachment.assert_called_once_with(
+        "PARENT", "/tmp/x", filename="y"
+    )
+
+
+def test_download_pdf_rejects_missing_item_key(with_creds):
+    resp = _call(
+        "tools/call",
+        {"name": "download_pdf", "arguments": {"dest_dir": "/tmp"}},
+    )
+    assert _is_error(resp)
+    assert "item_key" in _error_text(resp)
+
+
+def test_download_pdf_rejects_missing_dest_dir(with_creds):
+    resp = _call(
+        "tools/call",
+        {"name": "download_pdf", "arguments": {"item_key": "K"}},
+    )
+    assert _is_error(resp)
+    assert "dest_dir" in _error_text(resp)
+
+
+def test_download_pdf_propagates_client_failure(with_creds: MagicMock):
+    with_creds.download_attachment.return_value = {
+        "ok": False,
+        "error": "no PDF attachment child",
+    }
+    resp = _call(
+        "tools/call",
+        {
+            "name": "download_pdf",
+            "arguments": {"item_key": "K", "dest_dir": "/tmp/x"},
+        },
+    )
+    assert _is_error(resp)
+    assert "no PDF attachment child" in _error_text(resp)
 
 
 # ---------------------------------------------------------------------------

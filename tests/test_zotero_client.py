@@ -325,3 +325,211 @@ def test_client_propagates_credentials_missing(monkeypatch, tmp_path):
     )
     with pytest.raises(ZoteroCredentialsMissing):
         ZoteroClient()
+
+
+# ----- client.py: download_attachment -----------------------------------
+
+
+def _file_response(content: bytes, status: int = 200) -> MagicMock:
+    """Build a mock response whose ``.content`` returns binary file body."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.content = content
+    resp.text = ""
+    if status >= 400:
+        resp.raise_for_status.side_effect = Exception(f"HTTP {status}")
+    else:
+        resp.raise_for_status.return_value = None
+    return resp
+
+
+def test_download_attachment_direct_when_item_is_attachment(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.side_effect = [
+        # GET /items/<key> — item itself is attachment
+        _mock_response(
+            200,
+            json_body={
+                "data": {
+                    "itemType": "attachment",
+                    "contentType": "application/pdf",
+                    "filename": "mamba.pdf",
+                }
+            },
+        ),
+        # GET /items/<key>/file — raw file bytes
+        _file_response(b"%PDF-FAKEDATA"),
+    ]
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("ATT1", tmp_path)
+    assert out["ok"] is True
+    assert out["attachment_key"] == "ATT1"
+    assert out["filename"] == "mamba.pdf"
+    assert out["bytes"] == len(b"%PDF-FAKEDATA")
+    saved = tmp_path / "mamba.pdf"
+    assert saved.read_bytes() == b"%PDF-FAKEDATA"
+    assert sess.request.call_count == 2
+
+
+def test_download_attachment_finds_pdf_child_of_parent_item(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.side_effect = [
+        # GET /items/<key> — parent item
+        _mock_response(
+            200,
+            json_body={"data": {"itemType": "journalArticle", "title": "On SSMs"}},
+        ),
+        # GET /items/<key>/children — first non-pdf, then pdf
+        _mock_response(
+            200,
+            json_body=[
+                {
+                    "key": "NOTE1",
+                    "data": {"itemType": "note"},
+                },
+                {
+                    "key": "ATT_HTML",
+                    "data": {
+                        "itemType": "attachment",
+                        "contentType": "text/html",
+                        "filename": "snapshot.html",
+                    },
+                },
+                {
+                    "key": "ATT_PDF",
+                    "data": {
+                        "itemType": "attachment",
+                        "contentType": "application/pdf",
+                        "filename": "ssm.pdf",
+                    },
+                },
+            ],
+        ),
+        # GET /items/ATT_PDF/file
+        _file_response(b"%PDF-CHILD"),
+    ]
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("PARENT", tmp_path)
+    assert out["ok"] is True
+    assert out["attachment_key"] == "ATT_PDF"
+    assert out["filename"] == "ssm.pdf"
+    assert (tmp_path / "ssm.pdf").read_bytes() == b"%PDF-CHILD"
+
+
+def test_download_attachment_returns_error_when_no_pdf_child(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.side_effect = [
+        _mock_response(200, json_body={"data": {"itemType": "journalArticle"}}),
+        _mock_response(
+            200,
+            json_body=[
+                {"key": "NOTE", "data": {"itemType": "note"}},
+            ],
+        ),
+    ]
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("BARE", tmp_path)
+    assert out["ok"] is False
+    assert "no PDF attachment child" in out["error"]
+
+
+def test_download_attachment_missing_item_returns_error(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    # get_item returns {} when body lacks data section
+    sess.request.return_value = _mock_response(200, json_body={"data": {}})
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("MISSING", tmp_path)
+    assert out["ok"] is False
+    assert "not found" in out["error"]
+
+
+def test_download_attachment_uses_explicit_filename_and_appends_pdf(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.side_effect = [
+        _mock_response(
+            200,
+            json_body={
+                "data": {
+                    "itemType": "attachment",
+                    "contentType": "application/pdf",
+                    "filename": "remote.pdf",
+                }
+            },
+        ),
+        _file_response(b"%PDF-X"),
+    ]
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("ATT", tmp_path, filename="custom-name")
+    assert out["ok"] is True
+    assert out["filename"] == "custom-name.pdf"
+    assert (tmp_path / "custom-name.pdf").read_bytes() == b"%PDF-X"
+
+
+def test_download_attachment_creates_dest_dir(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.side_effect = [
+        _mock_response(
+            200,
+            json_body={
+                "data": {
+                    "itemType": "attachment",
+                    "contentType": "application/pdf",
+                    "filename": "x.pdf",
+                }
+            },
+        ),
+        _file_response(b"%PDF-Y"),
+    ]
+    client = ZoteroClient(credentials=creds, session=sess)
+    nested = tmp_path / "deep" / "nested" / "dir"
+    out = client.download_attachment("ATT", nested)
+    assert out["ok"] is True
+    assert nested.is_dir()
+    assert (nested / "x.pdf").read_bytes() == b"%PDF-Y"
+
+
+def test_download_attachment_propagates_http_error_on_file_get(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.side_effect = [
+        _mock_response(
+            200,
+            json_body={
+                "data": {
+                    "itemType": "attachment",
+                    "contentType": "application/pdf",
+                    "filename": "x.pdf",
+                }
+            },
+        ),
+        _mock_response(404, text="not found"),
+    ]
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("ATT", tmp_path)
+    assert out["ok"] is False
+    assert "404" in out["error"]
+
+
+def test_download_attachment_rejects_non_pdf_attachment(tmp_path):
+    creds = ZoteroCredentials(user_id="12345", api_key="test-key")
+    sess = MagicMock()
+    sess.request.return_value = _mock_response(
+        200,
+        json_body={
+            "data": {
+                "itemType": "attachment",
+                "contentType": "text/html",
+                "filename": "snap.html",
+            }
+        },
+    )
+    client = ZoteroClient(credentials=creds, session=sess)
+    out = client.download_attachment("HTMLATT", tmp_path)
+    assert out["ok"] is False
+    assert "expected application/pdf" in out["error"]
