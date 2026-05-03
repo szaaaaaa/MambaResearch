@@ -1,5 +1,6 @@
 import React from 'react';
 import { Send, FlaskConical, FileText as FileIcon } from 'lucide-react';
+import { API_BASE } from '../../../store';
 import { useContextualTabs } from '../../../store/contextual';
 
 const SUMMARY_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -43,16 +44,16 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
   const [error, setError] = React.useState<string | null>(null);
   const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const { injectComposerPrompt } = useContextualTabs();
-  const fileUrl = `/api/literature/file?path=${encodeURIComponent(path)}`;
+  const fileUrl = `${API_BASE}/api/literature/file?path=${encodeURIComponent(path)}`;
 
   React.useEffect(() => {
     let cancelled = false;
     setError(null);
     Promise.all([
-      fetch(`/api/literature/summary?path=${encodeURIComponent(path)}`).then((r) =>
+      fetch(`${API_BASE}/api/literature/summary?path=${encodeURIComponent(path)}`).then((r) =>
         r.ok ? r.json() : Promise.reject(new Error(`summary HTTP ${r.status}`)),
       ),
-      fetch(`/api/literature/annotation?path=${encodeURIComponent(path)}`).then((r) =>
+      fetch(`${API_BASE}/api/literature/annotation?path=${encodeURIComponent(path)}`).then((r) =>
         r.ok ? r.text() : Promise.reject(new Error(`annotation HTTP ${r.status}`)),
       ),
     ])
@@ -74,7 +75,7 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
     if (annotation === savedAnnotation) return;
     setSaveState('saving');
     try {
-      const resp = await fetch(`/api/literature/annotation?path=${encodeURIComponent(path)}`, {
+      const resp = await fetch(`${API_BASE}/api/literature/annotation?path=${encodeURIComponent(path)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
         body: annotation,

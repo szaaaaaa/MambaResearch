@@ -1,5 +1,6 @@
 import React from 'react';
 import { BookOpen, Download, RefreshCw } from 'lucide-react';
+import { API_BASE } from '../../store';
 import { useContextualTabs } from '../../store/contextual';
 
 interface ZoteroCollection {
@@ -45,7 +46,7 @@ export const LibraryTab: React.FC = () => {
   const loadCollections = React.useCallback(async () => {
     setError(null);
     try {
-      const resp = await fetch('/api/library/zotero/collections');
+      const resp = await fetch(`${API_BASE}/api/library/zotero/collections`);
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${resp.status}`);
@@ -66,7 +67,7 @@ export const LibraryTab: React.FC = () => {
       // 直接过滤；这是已知限制，UX 上 collection dropdown 主要用于"切到该
       // collection 浏览"语义提示。完整 collection 内列表需要 ZoteroClient
       // 加新方法（list_items_in_collection），后续优化。
-      const resp = await fetch(`/api/library/zotero/items?${params.toString()}`);
+      const resp = await fetch(`${API_BASE}/api/library/zotero/items?${params.toString()}`);
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${resp.status}`);
