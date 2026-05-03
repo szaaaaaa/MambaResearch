@@ -5,7 +5,6 @@ import {
   Database,
   Lightbulb,
   LayoutGrid,
-  Users,
   Plug,
   LineChart,
   History,
@@ -35,7 +34,6 @@ export type NavId =
   | 'idea'
   | 'drafts'
   | 'skill'
-  | 'roles'
   | 'mcp'
   | 'bench'
   | 'hist'
@@ -72,7 +70,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: '能力',
     items: [
       { id: 'skill', label: '技能', icon: LayoutGrid },
-      { id: 'roles', label: 'Agent 角色', icon: Users },
       { id: 'mcp', label: 'MCP 工具', icon: Plug },
       { id: 'bench', label: '工作台', icon: LineChart },
       { id: 'library', label: 'Zotero 库', icon: BookOpen },

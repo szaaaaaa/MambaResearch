@@ -1,8 +1,7 @@
 import React from 'react';
-import { FileText, Database, Lightbulb, FlaskConical, Users, Plug } from 'lucide-react';
+import { FileText, Database, Lightbulb, FlaskConical, Plug } from 'lucide-react';
 import { AppProvider } from './store';
 import { MambaSidebar, NavId } from './components/MambaSidebar';
-import { PlaceholderView } from './components/PlaceholderView';
 import { HistoryTab } from './components/tabs/HistoryTab';
 import { SkillsTab } from './components/tabs/SkillsTab';
 import { WorkbenchTab } from './components/tabs/WorkbenchTab';
@@ -60,7 +59,6 @@ function loadLastNav(): Exclude<NavId, 'set'> {
     'idea',
     'drafts',
     'skill',
-    'roles',
     'mcp',
     'bench',
     'hist',
@@ -197,15 +195,6 @@ const AppContent: React.FC = () => {
             icon={Lightbulb}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onNavigateToWorkbench={() => setActiveNav('bench')}
-          />
-        );
-      case 'roles':
-        return (
-          <PlaceholderView
-            icon={Users}
-            title="Agent 角色"
-            description="conductor / researcher / experimenter / analyst / writer / reviewer 六种角色的 LLM 配置。后端已有 roles registry，UI 入口暂在工作台 /agents 命令内。"
-            plannedSource="计划接入：把 frontend/src/components/workbench/panels/AgentsPanel 提为顶层视图，支持模型 / 提示词 / 终止条件配置。"
           />
         );
       case 'mcp':
