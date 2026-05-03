@@ -228,19 +228,21 @@
   - v3.0 release note 列出：dynamic_os 删除 / 8 sub-agent / 7 pipeline SKILL / 6 可视化域全可用
   - CLAUDE.md 红区不再含 dynamic_os 路径
 
-### [PENDING-VERIFY] 10. 验证（Stage 5 done = 整个枢转完成）
+### [PARTIAL-VERIFY] 10. 验证（Stage 5 done = 整个枢转完成）
 
-- **后端**:
-  - `pytest tests/` 全绿（数量 ~479，dynamic_os 60 测 + research_dag 35 测删除是预期行为）
+> **2026-05-03 进度**：自动可验证 6/7 项全过；2 个 orphan tsx (`ExperimentProgress.tsx` / `ReviewStatus.tsx`) 是 Stage 5 漏删的死代码，本次同步删除。`.codex/agents/` 那条 acceptance 因 F1 resolved-by-upgrade（`docs/releases/v2.x-multi-model.md` §5.2）改为 N/A。剩浏览器手测 3 项（10.1/10.2/10.5 pipeline 实跑）prompt-heavy，留下 session 续作。
+
+- **后端** ✅
+  - `pytest tests/` 全绿（404 passed，2026-05-03 实测）
   - `python app.py` 启动无 import error
-  - `curl http://localhost:8000/api/runs/...` 返 404
-- **前端**:
-  - `cd frontend && tsc --noEmit && npm run build` 通过
-  - DOM 不存在 RunTab 相关组件
-  - sidebar 无 'runs' 项
+  - `curl http://localhost:8000/api/runs/` 返 404 ✓
+- **前端** ✅
+  - `cd frontend && tsc --noEmit && npm run build` 通过（4.63s）
+  - DOM 不存在 RunTab 相关组件（`grep -E "\bRunTab\b"` 仅命中 `App.tsx` 两条 historical comment + Stage 4 `ExperimentRunTab` 是不同的 contextual tab）
+  - sidebar 无 'runs' 项 ✓（实测 nav 仅 4 bucket + 草稿箱 + 能力组 + 运行历史/设置）
 - **Sub-agent / Pipeline SKILL**:
-  - `.claude/agents/` 下 8 个文件
-  - `.codex/agents/` 下 8 个 .toml（sync_subagents.py 跑过）
+  - `.claude/agents/` 下 8 个文件 ✓（analyzer / conductor / critic / evidence-extractor / experimenter / paper-searcher / reviewer / writer）
+  - ~~`.codex/agents/` 下 8 个 .toml（sync_subagents.py 跑过）~~ → **N/A**：F1 resolved-by-upgrade，codex 0.124.0 已废弃 `.codex/agents/` 加载，sync 系统已删除（commit `9bee4d7`）
   - `.claude/skills/` 下 7 个 pipeline SKILL.md（不含 Stage 2 的 classify-workspace）
 - **大方向 plan 8 条验收**（更新版）:
   1. 任何阶段不引入"自建 session log / 自建 compact / 自建 memory 基础设施" ✓
@@ -251,12 +253,12 @@
   6. dynamic_os / research_dag MCP / runs.py / RunTab 均不存在 ✓
   7. 8 个 sub-agent + 7 个 pipeline SKILL 完整 ✓
   8. Cross-CLI smoke：Claude / Codex 各开一个会话，触发 structured-lit-review pipeline → 看 sub-agent spawn → workspace 出现 sources.json / evidence.json / analysis.md / report.md
-- **浏览器手测路径（end-to-end，PENDING-VERIFY）**:
-  1. 启动 App → 选 project → 工作台说"做 mamba SSM 文献综述" → Claude 触发 structured-lit-review SKILL → 进度可见
-  2. 切 Codex backend → 同样的请求 → Codex 也能触发 SKILL
-  3. 历史 tab 显示 conversations + experiment_runs 两类
-  4. RunTab 不存在；sidebar 无 runs 项
-  5. 跑一次 experiment-iteration pipeline → 实验 tab 出 metric 流
+- **浏览器手测路径**:
+  1. ⏸ 启动 App → 选 project → 工作台说"做 mamba SSM 文献综述" → Claude 触发 structured-lit-review SKILL → 进度可见（prompt-heavy，next-session）
+  2. ⏸ 切 Codex backend → 同样的请求 → Codex 也能触发 SKILL（prompt-heavy，next-session）
+  3. ✅ 历史 tab 工作正常（2026-05-03 实测）：实现已升级到「按 outputs/<run_id>/ 扫，8 类 pipeline 统一列表」，比原 plan 描述的"conversations + experiment_runs 两类"更进一步；空状态正确显示提示
+  4. ✅ RunTab 不存在；sidebar 无 runs 项（2026-05-03 实测）
+  5. ⏸ 跑一次 experiment-iteration pipeline → 实验 tab 出 metric 流（prompt-heavy，next-session）
 
 ## 不在 Stage 5 做
 
