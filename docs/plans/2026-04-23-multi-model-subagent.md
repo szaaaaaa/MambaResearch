@@ -144,7 +144,7 @@
 
 
 
-### [PENDING-VERIFY] 5d. Codex E2E 验证 + 发现记录
+### [DONE] 5d. Codex E2E 验证 + 发现记录
 > **2026-05-03 scope 调整**：F1 resolved-by-upgrade（codex 0.124.0 已废弃 .codex/agents/ 加载，详见 5a SUPERSEDED + v2.x-multi-model.md §5.2 F1）后 5d 范围收紧：AC 3 自然降级为 L2 已知限制（无需 subagent 委派验证）；AC 4/5 缩到 snapshot-only（只记录现状，不阻塞 5d DONE）。重测预算上限：3 prompt × <50 token，超出按 advisor 建议 STOP 转 Stage 5。
 - **What**: 真实 python app.py 启动后，新建 Codex session，发简单 prompt 验证 SSE 帧链路 + assistant 输出可见；记录 console / SSE 实测到 v2.x-multi-model.md。F4（复杂 prompt 截断）/ F5（approval method 名）的复测留作未来独立任务，不在本次。
 - **Acceptance**（重写 2026-05-03）:
