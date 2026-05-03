@@ -14,6 +14,9 @@
 
 from __future__ import annotations
 
+import sqlite3
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.server.projects.registry import get_registry
@@ -38,6 +41,24 @@ def _require_active_project_path() -> str:
     if project is None:
         raise HTTPException(status_code=409, detail="no active project")
     return project.path
+
+
+def _classification_db_for_active_project():
+    project_path = _require_active_project_path()
+    if not Path(project_path).exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"active project path is not accessible: {project_path}",
+        )
+    try:
+        db = get_db_for_project(project_path)
+        db.connect()
+        return db
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"workspace classification database is not accessible: {exc}",
+        ) from exc
 
 
 @router.get("/api/workspace")
@@ -86,15 +107,15 @@ async def scan(request: Request) -> dict:
     Body: ``{source_dir?: str}``——给定时只扫该目录；未给时扫所有 workspace
     配置的源目录，结果合并。
     """
-    project_path = _require_active_project_path()
     payload = await _parse_json(request)
     source_dir_raw = payload.get("source_dir")
-    db = get_db_for_project(project_path)
+    db = _classification_db_for_active_project()
 
     sources: list[str]
     if isinstance(source_dir_raw, str) and source_dir_raw.strip():
         sources = [source_dir_raw.strip()]
     else:
+        project_path = _require_active_project_path()
         config = load_workspace(project_path)
         sources = list(config.source_dirs)
     if not sources:
@@ -137,8 +158,7 @@ async def scan(request: Request) -> dict:
 
 @router.get("/api/workspace/stats")
 def stats() -> dict:
-    project_path = _require_active_project_path()
-    db = get_db_for_project(project_path)
+    db = _classification_db_for_active_project()
     return db.stats().to_dict()
 
 
@@ -148,13 +168,12 @@ def list_files(
     subtype: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=2000),
 ) -> dict:
-    project_path = _require_active_project_path()
     if bucket is not None and bucket not in PRIMARY_BUCKETS:
         raise HTTPException(
             status_code=400,
             detail=f"invalid bucket: {bucket!r} (must be one of {sorted(PRIMARY_BUCKETS)})",
         )
-    db = get_db_for_project(project_path)
+    db = _classification_db_for_active_project()
     rows = db.list_by_bucket(bucket, subtype=subtype, limit=limit)
     return {"files": [r.to_dict() for r in rows]}
 
@@ -162,7 +181,6 @@ def list_files(
 @router.post("/api/workspace/files/override")
 async def file_override(request: Request) -> dict:
     """用户手动校正某文件的分类。"""
-    project_path = _require_active_project_path()
     payload = await _parse_json(request)
     path = payload.get("path")
     bucket = payload.get("primary_bucket")
@@ -179,7 +197,7 @@ async def file_override(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="subtype must be string or null")
     if not isinstance(tags, list) or any(not isinstance(t, str) for t in tags):
         raise HTTPException(status_code=400, detail="tags must be list of strings")
-    db = get_db_for_project(project_path)
+    db = _classification_db_for_active_project()
     ok = db.set_user_override(path.strip(), bucket, subtype=subtype, tags=tags)
     if not ok:
         raise HTTPException(status_code=404, detail="file not found in classification index")

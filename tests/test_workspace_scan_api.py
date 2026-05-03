@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,40 @@ def test_list_files_invalid_bucket(app) -> None:
     client = TestClient(a)
     resp = client.get("/api/workspace/files", params={"bucket": "nonsense"})
     assert resp.status_code == 400
+
+
+def test_stats_inaccessible_active_project_returns_409(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+    registry_path = tmp_path / "reg.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "projects": [
+                    {
+                        "id": "p-missing",
+                        "name": "missing",
+                        "path": str(missing),
+                        "created_at": 1,
+                        "last_active_at": 1,
+                    }
+                ],
+                "active_project_id": "p-missing",
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = ProjectRegistry(registry_path=registry_path)
+    set_registry_for_tests(registry)
+    try:
+        app = FastAPI()
+        app.include_router(workspace_router)
+        resp = TestClient(app).get("/api/workspace/stats")
+    finally:
+        set_registry_for_tests(None)
+        reset_db_cache()
+
+    assert resp.status_code == 409
+    assert "active project path is not accessible" in resp.json()["detail"]
 
 
 def test_override_changes_bucket(app) -> None:

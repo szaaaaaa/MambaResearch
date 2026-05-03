@@ -37,6 +37,7 @@ tests/.tmp_*/
 tests/.tmp_*.sqlite
 .auth/
 frontend/dist/
+.playwright-mcp/
 
 # Local DB / index artifacts
 *.sqlite

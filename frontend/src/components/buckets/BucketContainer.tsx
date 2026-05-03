@@ -6,6 +6,7 @@ import {
   FileEntry,
   PrimaryBucket,
   WorkspaceConfig,
+  ApiError,
   getActiveProject,
   getWorkspace,
   getWorkspaceStats,
@@ -98,6 +99,11 @@ export const BucketContainer: React.FC<Props> = ({
 
   const { openTab, replaceActiveTab } = useContextualTabs();
 
+  const workspaceUnavailable =
+    error !== null &&
+    (error.includes('active project path is not accessible') ||
+      error.includes('workspace classification database is not accessible'));
+
   const refresh = React.useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -120,7 +126,11 @@ export const BucketContainer: React.FC<Props> = ({
         setAssets([]);
       }
     } catch (err: any) {
-      setError(err?.detail || err?.message || '加载失败');
+      setError(
+        err instanceof ApiError
+          ? err.detail
+          : err?.detail || err?.message || '加载失败',
+      );
     } finally {
       setLoading(false);
     }
@@ -166,6 +176,43 @@ export const BucketContainer: React.FC<Props> = ({
   }
 
   if (error) {
+    if (workspaceUnavailable) {
+      return (
+        <div className="flex flex-col h-full">
+          <div
+            className="flex items-center justify-between"
+            style={{
+              borderBottom: '1px solid var(--line-1)',
+              background: 'var(--bg-3)',
+              padding: '10px 16px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Icon size={16} color="var(--fg-2)" />
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg-1)' }}>
+                {title}
+              </span>
+            </div>
+          </div>
+          <div className="flex-1">
+            <BucketEmptyState
+              icon={Icon}
+              title={title}
+              description={description}
+              tier="no_source_dirs"
+              hint={`当前 active project 的 workspace 元数据不可访问：${error}`}
+              actions={
+                onOpenSettings ? (
+                  <ActionBtn onClick={onOpenSettings} tone="ghost">
+                    打开设置检查项目路径
+                  </ActionBtn>
+                ) : null
+              }
+            />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="p-6">
         <div className="rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
