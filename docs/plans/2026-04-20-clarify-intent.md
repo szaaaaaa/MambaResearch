@@ -35,7 +35,7 @@
   - 首节点约束：触发 planner 后产出的 RoutePlan `nodes[0].skill_id == "clarify_intent"`（测试断言）
   - `pytest tests/integration/test_clarify_intent_flow.py` 通过；全量 `pytest tests/` 不因此 break
 
-### [TODO] 3. 前端 `ClarificationRequest` 渲染组件（独立）
+### [DONE] 3. 前端 `ClarificationRequest` 渲染组件（独立）
 - **What**: 前端新增组件渲染 `ClarificationRequest` artifact，选项式交互（每 question 渲染 2–4 个按钮 + 统一追加"其它（自填）"文本兜底）；多轮场景显示历史问答；接入现有 HITL pause UI。
 - **Files**:
   - 新 `frontend/src/components/ClarificationRequest.tsx`
@@ -60,3 +60,4 @@
 - 2026-04-20：Q3=独立 — Task 2 的 integration test 走 HTTP API 模拟用户回答，不等 Task 3 前端。理由：后端接口稳定前前端会反复改，解耦加速两边迭代。
 - 2026-04-20：Task 顺序 1 → 2 → 3，但 Task 3 可与 Task 2 并行（一旦 Task 2 的 resume API contract 定下）。
 - 2026-04-20：Task 1 执行时改走 A 方案——三种 artifact type 以字符串字面量呈现、payload schema 写在 skill docstring 里，不在 `contracts/artifact.py` 新增常量。理由：现有代码库本就没有 artifact type 常量惯例（全是裸字符串），单为这三个 type 开先例反而不一致。0 个 🔴 改动。
+- 2026-05-03：Task 3 落地确认 — `frontend/src/components/ClarificationModal.tsx` 已实现全部 4 项验收（按钮渲染、历史轮次、自填 textarea、resume body 含 `question_header/label/custom_text`），由浏览器实测和 ToolSearch 检视确认；状态从 `[TODO]` 更新为 `[DONE]`。

@@ -325,13 +325,18 @@ async def get_run_events(run_id: str):
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
     events: list[dict[str, Any]] = []
     try:
-        for line in events_path.read_text(encoding="utf-8").splitlines():
+        for idx, line in enumerate(events_path.read_text(encoding="utf-8").splitlines()):
             line = line.strip()
-            if line:
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # 为 BaseEvent.id 字段引入前持久化的旧 event 补一个稳定 id（行号在单 run 内唯一）
+            if not event.get("id"):
+                event["id"] = f"{run_id}-{idx}"
+            events.append(event)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"failed to read events: {exc}") from exc
     return events

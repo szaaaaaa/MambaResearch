@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class BaseEvent(BaseModel):
@@ -20,6 +21,8 @@ class BaseEvent(BaseModel):
 
     model_config = {"frozen": True}
 
+    # 事件唯一标识（uuid4），用作前端 React key 等去重场景
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     # 事件时间戳（ISO 格式）
     ts: str
     # 所属运行的唯一标识

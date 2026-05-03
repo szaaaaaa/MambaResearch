@@ -394,7 +394,7 @@ function normalizeRunEvent(value: unknown): RunEvent | null {
   }
 
   return {
-    id: String(value.id || `${type}-${String(value.ts || nowIso())}`),
+    id: String(value.id || ''),
     ts: String(value.ts || nowIso()),
     type,
     runId: String(value.run_id || value.runId || ''),

@@ -150,10 +150,10 @@ function latestFailureSummary(conversation: {
   ].filter(Boolean);
   const detail =
     String(failureEvent?.detail || failureEvent?.reason || '').trim() ||
-    'This run stopped before producing a final ResearchReport.';
+    '本次运行在生成最终研究报告前已中止。';
 
   return {
-    title: titleParts.length > 0 ? `Last Failure: ${titleParts.join(' / ')}` : 'No Final ResearchReport',
+    title: titleParts.length > 0 ? `最近失败：${titleParts.join(' / ')}` : '未产出最终研究报告',
     detail,
     artifacts: conversation.artifacts.map(
       (artifact) => `${artifactLabel(artifact.artifact_type)} (${artifact.artifact_id})`,

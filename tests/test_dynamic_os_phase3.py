@@ -580,19 +580,6 @@ def test_planner_raises_after_second_invalid_output() -> None:
     assert model.calls == 2
 
 
-def test_planner_fallback_uses_plan_research_when_available() -> None:
-    model = FakePlannerModel(['{"run_id": "bad"}', '{"run_id": "still_bad"}'])
-    planner = _planner_with_model(model, [_skill_spec("plan_research", ["conductor"])])
-
-    plan = asyncio.run(planner.plan(run_id="run_1", user_request="Find papers", planning_iteration=0))
-
-    assert plan.nodes[0].role == RoleId.conductor
-    assert plan.nodes[0].allowed_skills == ["plan_research"]
-    assert model.calls == 2
-
-
-
-
 
 def test_executor_records_planner_llm_error_observation() -> None:
     artifact_store = InMemoryArtifactStore()

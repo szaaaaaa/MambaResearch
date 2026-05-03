@@ -123,7 +123,7 @@ function normalizeRunEvents(rawEvents: unknown[]): RunEvent[] {
     }
     if (!detail && type === 'policy_block') detail = String(raw.reason || '');
     events.push({
-      id: String(raw.id || `${type}-${String(raw.ts || new Date().toISOString())}`),
+      id: String(raw.id || ''),
       ts: String(raw.ts || new Date().toISOString()),
       type,
       runId: String(raw.run_id || raw.runId || ''),
