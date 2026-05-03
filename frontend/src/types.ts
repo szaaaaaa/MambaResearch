@@ -40,6 +40,8 @@ export interface Credentials {
   GOOGLE_CSE_CX: string;
   BING_API_KEY: string;
   GITHUB_TOKEN: string;
+  ZOTERO_USER_ID: string;
+  ZOTERO_API_KEY: string;
 }
 
 export type CredentialSource = 'missing' | 'dotenv' | 'environment' | 'both';

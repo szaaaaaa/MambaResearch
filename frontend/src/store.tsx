@@ -29,6 +29,8 @@ const defaultCredentials: Credentials = {
   GOOGLE_CSE_CX: '',
   BING_API_KEY: '',
   GITHUB_TOKEN: '',
+  ZOTERO_USER_ID: '',
+  ZOTERO_API_KEY: '',
 };
 
 const defaultCredentialStatus: CredentialStatusMap = {
@@ -42,6 +44,8 @@ const defaultCredentialStatus: CredentialStatusMap = {
   GOOGLE_CSE_CX: { present: false, source: 'missing' },
   BING_API_KEY: { present: false, source: 'missing' },
   GITHUB_TOKEN: { present: false, source: 'missing' },
+  ZOTERO_USER_ID: { present: false, source: 'missing' },
+  ZOTERO_API_KEY: { present: false, source: 'missing' },
 };
 
 const defaultProjectConfig: ProjectConfig = {

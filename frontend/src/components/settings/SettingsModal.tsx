@@ -1,9 +1,10 @@
 import React from 'react';
-import { Folder, Info, Palette, Plug, Terminal, Wand2, X } from 'lucide-react';
+import { Folder, Info, KeyRound, Palette, Plug, Terminal, Wand2, X } from 'lucide-react';
 import { Button } from '../ui';
 import { AboutSection } from './sections/AboutSection';
 import { AppearanceSection } from './sections/AppearanceSection';
 import { CliSection } from './sections/CliSection';
+import { CredentialsSection } from './sections/CredentialsSection';
 import { McpSection } from './sections/McpSection';
 import { ProjectSection } from './sections/ProjectSection';
 import { SkillsSection } from './sections/SkillsSection';
@@ -18,6 +19,12 @@ const CATEGORIES: {
   { id: 'project', label: '项目', description: '管理项目列表与项目级 lazy 配置。', icon: Folder },
   { id: 'cli', label: 'CLI', description: 'Claude Code provider 与 Codex OAuth 状态。', icon: Terminal },
   { id: 'mcp', label: 'MCP', description: 'MCP server 注册表与 user 层 env override。', icon: Plug },
+  {
+    id: 'credentials',
+    label: '凭据',
+    description: 'LLM / 搜索 / Zotero 等 API key 与 token，写入仓库 .env。',
+    icon: KeyRound,
+  },
   { id: 'skills', label: 'Skills & Agents', description: 'pipeline / sub-agent 列表（只读）。', icon: Wand2 },
   { id: 'appearance', label: '外观', description: '聊天界面的视觉偏好。', icon: Palette },
   { id: 'about', label: '关于', description: '系统信息与当前状态。', icon: Info },
@@ -35,6 +42,8 @@ function renderSection(
       return <CliSection />;
     case 'mcp':
       return <McpSection />;
+    case 'credentials':
+      return <CredentialsSection />;
     case 'skills':
       return <SkillsSection />;
     case 'appearance':

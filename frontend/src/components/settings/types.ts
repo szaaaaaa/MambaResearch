@@ -2,6 +2,7 @@ export type SettingsCategoryId =
   | 'project'
   | 'cli'
   | 'mcp'
+  | 'credentials'
   | 'skills'
   | 'appearance'
   | 'about';
