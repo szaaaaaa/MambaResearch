@@ -53,12 +53,9 @@ frontend/dist/
 !.claude/agents/**
 
 # Codex — exclude .codex/ children (local state, history, cache) but keep
-# .codex/agents/ (auto-generated from .claude/agents/ via scripts/sync_subagents.py)
-# and .codex/config.toml (project-level MCP for codex app-server; Task 5).
+# .codex/config.toml (project-level MCP for codex app-server; Task 5).
 # .codex/skills/ is excluded for the same junction reason as .claude/skills/.
 .codex/*
-!.codex/agents/
-!.codex/agents/**
 !.codex/config.toml
 
 # Skills mirror — physical source of truth for both Claude / Codex skill loaders.

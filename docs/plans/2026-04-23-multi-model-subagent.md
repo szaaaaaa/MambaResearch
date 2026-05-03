@@ -189,9 +189,10 @@
   - OAuth 透明：SDK 路径下自动读取 ~/.codex/auth.json（通过环境变量 / 配置入口）
   - app_server_client.py 至少提供 Protocol/ABC 作为 session_manager 的依赖抽象，不阻塞本次提交可 import
   - 现有 HITL / MCP 桥 / slash / 持久化相关 pytest 全部通过
-### [DONE] 5a. Subagent 同步脚本 (.claude/agents → .codex/agents)
-- **What**: 编写 scripts/sync_subagents.py，读取 .claude/agents/*.md 生成 .codex/agents/*.toml，字段映射 name/description/model=gpt-5.5/tools/mcpServers → sandbox_mode、developer_instructions=body；接入 pre-commit hook；生成产物进 repo；配套单元测试。
-- **Acceptance**:
+### [SUPERSEDED] 5a. Subagent 同步脚本 (.claude/agents → .codex/agents)
+> **2026-05-03 superseded**：codex CLI 0.124.0 已废弃从 `.codex/agents/` 加载 agent role 的特性，`scripts/sync_subagents.py` 输出的 toml 文件成为无人消费的孤儿（详见 `docs/releases/v2.x-multi-model.md` §5.2 F1 resolved-by-upgrade）。8 份 `.codex/agents/*.toml` + `scripts/sync_subagents.py` + `tests/test_sync_subagents.py` + `.pre-commit-config.yaml` 的 sync hook + `.gitignore` 例外全部移除。Codex 侧 subagent 机制由 §5.3 L2 描述的"已知限制"承担。Task 5a 的历史 AC 仅作为决策溯源保留，不再代表现状。
+- **历史 What**: 编写 scripts/sync_subagents.py，读取 .claude/agents/*.md 生成 .codex/agents/*.toml，字段映射 name/description/model=gpt-5.5/tools/mcpServers → sandbox_mode、developer_instructions=body；接入 pre-commit hook；生成产物进 repo；配套单元测试。
+- **历史 Acceptance**:
   - scripts/sync_subagents.py 读 .claude/agents/*.md → 生成 .codex/agents/*.toml；字段映射 name/description/model=gpt-5.5/tools/mcpServers → sandbox_mode, developer_instructions=body
   - Pre-commit hook (.pre-commit-config.yaml 或 .git/hooks/pre-commit) 自动触发 sync；.codex/agents/*.toml 进 repo（.gitignore 加 !.codex/agents/**）
   - tests/test_sync_subagents.py 覆盖 5 输入→5 输出、字段映射、空目录、格式错误抛显式 error
