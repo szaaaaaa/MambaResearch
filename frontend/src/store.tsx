@@ -24,7 +24,7 @@ import {
   isOpenAICodexModelRef,
 } from './modelOptions';
 
-export const API_BASE = window.location.port === '3000' ? 'http://localhost:8000' : '';
+export const API_BASE = window.location.port === '3010' ? 'http://localhost:8010' : '';
 
 const UI_SESSIONS_KEY = 'research-agent-chat-sessions';
 const RUN_PLACEHOLDER_TEXT = '正在启动研究任务，稍后会用结构化摘要展示当前进度。';

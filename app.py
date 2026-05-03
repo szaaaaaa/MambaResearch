@@ -10,12 +10,12 @@ from src.server.routes.skills import router as skills_router
 from src.server.settings import FRONTEND_DIST
 
 _ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+    "http://localhost:3010",
     "http://localhost:5173",
-    "http://localhost:8000",
-    "http://127.0.0.1:3000",
+    "http://localhost:8010",
+    "http://127.0.0.1:3010",
     "http://127.0.0.1:5173",
-    "http://127.0.0.1:8000",
+    "http://127.0.0.1:8010",
 ]
 
 app = FastAPI()
@@ -37,4 +37,4 @@ if FRONTEND_DIST.exists():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8010)
