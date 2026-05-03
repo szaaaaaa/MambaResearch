@@ -19,6 +19,10 @@ from src.server.projects.registry import (
     ProjectPathError,
     get_registry,
 )
+from src.server.projects.workspace import (
+    WorkspaceError,
+    add_source_dir,
+)
 
 
 router = APIRouter()
@@ -52,6 +56,17 @@ async def create_project(request: Request) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # 创建后立即激活——大方向 plan 锁定的"新建即进入"流程
     registry.activate_project(project.id)
+    # 默认把项目根目录加为首个 source_dir。让用户从"新建项目 → 看到 bucket
+    # 列出文件"零配置；scanner 自带 .git / node_modules / venv 黑名单，root
+    # 整盘扫不会爆。用户后续可在设置里换更窄的 source_dirs。失败（路径权限
+    # 异常等）只记 warning 不阻塞——空 source_dirs 仍会让 bucket 走原有的
+    # "no_source_dirs" 引导态。
+    try:
+        add_source_dir(project.path, project.path)
+    except WorkspaceError:
+        # path 校验已在 registry.create_project 通过；这里失败只能是写盘权限
+        # 类问题，吞掉即可
+        pass
     return project.model_dump()
 
 

@@ -169,6 +169,25 @@ def test_route_create_auto_activates(
     assert active.json()["id"] == project_id
 
 
+def test_route_create_auto_seeds_project_root_as_source_dir(
+    temp_registry: ProjectRegistry, project_dir: Path
+) -> None:
+    """POST /api/projects 把项目根加为首个 source_dir，让 bucket 视图零配置可用。"""
+    from src.server.projects.workspace import load_workspace
+
+    app = FastAPI()
+    app.include_router(projects_router)
+    client = TestClient(app)
+
+    resp = client.post("/api/projects", json={"name": "p", "path": str(project_dir)})
+    assert resp.status_code == 200, resp.text
+
+    ws = load_workspace(str(project_dir))
+    assert len(ws.source_dirs) == 1
+    # 路径会被 _normalize_existing_dir 转换；resolve 后应等同
+    assert Path(ws.source_dirs[0]).resolve() == project_dir.resolve()
+
+
 def test_route_active_404_when_none(temp_registry: ProjectRegistry) -> None:
     app = FastAPI()
     app.include_router(projects_router)
