@@ -65,7 +65,7 @@ If you find yourself about to write code without having invoked the applicable o
 - `configs/claude_code/providers.json` — Claude Code provider 注册表（`name → {base_url, api_key_env, default_model}`）；优先走 `PATCH /api/cli-providers` 或前端 CLI 视图
 - `configs/mcp/env_overrides.json` — MCP 子进程 user 层 env override（`server_name → {KEY: value}`）；优先走 `PATCH /api/mcp/servers/{name}/env` 或前端 MCP 视图
 - `configs/codex/auth.json` — Codex OAuth profile 绑定（``default_profile`` / ``allowed_profiles``）
-- `<project>/.research-agent/config.toml` — 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`）；优先走 `PATCH /api/project-config`
+- `<project>/.mambaresearch/config.json` — 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`）；优先走 `PATCH /api/project-config`
 
 ## 🟢 安全区 — 可直接修改
 

@@ -142,8 +142,8 @@ export async function getProjectConfig(): Promise<ProjectConfig> {
 }
 
 /**
- * Patch-merge active project 的 config.toml。无 active project → 400。
- * Lazy 写入：toml 不存在时 PATCH 才创建。
+ * Patch-merge active project config. 无 active project → 400。
+ * Lazy 写入：config.json 不存在时 PATCH 才创建。
  */
 export async function patchProjectConfig(updates: Partial<ProjectConfig>): Promise<ProjectConfig> {
   const body = await _json(

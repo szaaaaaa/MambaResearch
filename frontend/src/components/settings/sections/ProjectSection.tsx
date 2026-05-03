@@ -13,10 +13,10 @@ import {
 
 /**
  * 项目视图——列出已注册的项目，切换 active project，编辑 active 项目的 lazy config
- * （``<project>/.research-agent/config.toml``）。
+ * （``<project>/.mambaresearch/config.json``）。
  *
- * config.toml 当前 schema 最小集：``{codex_profile, enabled_mcp_servers}``。
- * patch-merge 写入；如 toml 不存在，PATCH 时才创建。
+ * 当前 schema 最小集：``{codex_profile, enabled_mcp_servers}``。
+ * patch-merge 写入；如 config.json 不存在，PATCH 时才创建。
  */
 export const ProjectSection: React.FC = () => {
   const [projects, setProjects] = React.useState<Project[]>([]);
@@ -155,7 +155,7 @@ export const ProjectSection: React.FC = () => {
 
       <Card
         title="项目级配置"
-        description="存于当前 active project 的 .research-agent/config.toml；首次保存才会创建文件。"
+        description="存于当前 active project 的 .mambaresearch/config.json；首次保存才会创建文件。"
       >
         <Input
           label="Codex profile"

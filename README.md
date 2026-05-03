@@ -184,7 +184,7 @@ MambaResearch/
 | `configs/claude_code/providers.json` | Claude Code provider（`name → {base_url, api_key_env, default_model}`） | 前端 CLI 视图 / `PATCH /api/cli-providers` |
 | `configs/mcp/env_overrides.json` | MCP 子进程 user 层 env override | 前端 MCP 视图 / `PATCH /api/mcp/servers/{name}/env` |
 | `configs/codex/auth.json` | Codex OAuth profile 绑定 | 自动维护，需要时手编 |
-| `<project>/.research-agent/config.toml` | 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
+| `<project>/.mambaresearch/config.json` | 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
 
 MCP server 命令行（`command` / `args`）由 `src/server/integrations/<name>/mcp_server.py` 的 `default_mcp_config()` 硬编码 + `src/server/mcp/registry.py:_read_builtin_helpers()` 注册；UI 只能改 env override，不可改命令行。
 
