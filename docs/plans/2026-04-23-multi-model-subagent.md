@@ -145,13 +145,17 @@
 
 
 ### [PENDING-VERIFY] 5d. Codex E2E 验证 + 发现记录
-- **What**: 真实 python app.py 启动后，新建 Codex session，主 agent 调 3 个 MCP skill（clarify_intent/plan_research/search_papers）返回合法 structuredContent；尝试委派 paper-searcher subagent；所有发现分类记入 docs/releases/v2.x-multi-model.md。
-- **Acceptance**:
-  - Workbench 启动（真实 python app.py）后新建 Codex session 成功进入对话界面
-  - 主 agent 成功调用 3 个 MCP skill（clarify_intent / plan_research / search_papers），每个返回合法 structuredContent 可解析
-  - 尝试委派 paper-searcher subagent 一次；依赖 5a 生成的 .codex/agents/paper-searcher.toml 被 Codex 正确识别
-  - 所有发现（tool_use schema 跑偏 / JSON 格式错 / 指令遵守度差异）按 可接受 / 需修复 分类记录到 docs/releases/v2.x-multi-model.md 的 Codex 兼容性发现 章节
-  - 如 paper-searcher 委派在 Codex 侧与 Claude Task tool 不对等，记录为已知限制并保留 Claude 为主要委派 CLI（Codex 只承担 /agent 手动切换）
+> **2026-05-03 scope 调整**：F1 resolved-by-upgrade（codex 0.124.0 已废弃 .codex/agents/ 加载，详见 5a SUPERSEDED + v2.x-multi-model.md §5.2 F1）后 5d 范围收紧：AC 3 自然降级为 L2 已知限制（无需 subagent 委派验证）；AC 4/5 缩到 snapshot-only（只记录现状，不阻塞 5d DONE）。重测预算上限：3 prompt × <50 token，超出按 advisor 建议 STOP 转 Stage 5。
+- **What**: 真实 python app.py 启动后，新建 Codex session，发简单 prompt 验证 SSE 帧链路 + assistant 输出可见；记录 console / SSE 实测到 v2.x-multi-model.md。F4（复杂 prompt 截断）/ F5（approval method 名）的复测留作未来独立任务，不在本次。
+- **Acceptance**（重写 2026-05-03）:
+  - **AC 1**：Workbench UI 新建 Codex session 成功进入对话界面（0 prompt 消耗）
+  - **AC 2**：发 `reply OK` 简单 prompt → 看到 assistant 文本 + `codex_finished` 终止帧；console 无红错（消耗 1 prompt）
+  - **AC 3**：~~paper-searcher subagent 委派~~ —— 自然降级为 L2 已知限制（详见 v2.x-multi-model.md §5.2 F1）；本次不验证
+  - **AC 4 (deferred)**：HITL Modal——若 AC 1+2 顺利，可选触发；否则 defer 到独立任务
+  - **AC 5 (snapshot-only)**：`/agents` 面板——只记录现状，F1 cleanup 后无 agent role file；不修
+  - 实测数据 + console / SSE 帧 + 任何新发现按可接受 / 需修复分类追加到 v2.x-multi-model.md §5（不删既有 5.1–5.5 内容）
+
+**STOP 条件**：AC 2 turn 截断（F4 重现）→ 文档化新证据后 STOP，5d 维持 PENDING-VERIFY，转 Stage 5；不在 5d 范围内启动 F4 debug。
 ### [DONE] 5c. Codex API 路由 + Workbench 前端对接
 - **What**: src/server/routes/codex.py 新增 POST/GET /api/codex/sessions{/id/messages} 端点对齐 claude_code.py；app.py include_router；前端 NewSessionModal provider 下拉加 codex；WorkbenchTab 按 session.provider 分派端点；SessionListItem pill 区分色；tsc + build 通过。
 - **Acceptance**:
