@@ -5,8 +5,10 @@ import {
   ClassificationStats,
   FileEntry,
   PrimaryBucket,
+  Project,
   WorkspaceConfig,
   ApiError,
+  addSourceDir,
   getActiveProject,
   getWorkspace,
   getWorkspaceStats,
@@ -89,6 +91,7 @@ export const BucketContainer: React.FC<Props> = ({
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [stats, setStats] = React.useState<ClassificationStats | null>(null);
   const [workspace, setWorkspace] = React.useState<WorkspaceConfig | null>(null);
+  const [activeProject, setActiveProject] = React.useState<Project | null>(null);
   // 2026-04-29 asset-centric pivot：bucket 视图顶部加素材网格 section（按
   // asset_kind 过滤的 conversations），点卡片用 contextual tab 打开素材工作台
   const [assets, setAssets] = React.useState<ConversationSummary[]>([]);
@@ -96,6 +99,7 @@ export const BucketContainer: React.FC<Props> = ({
   const [error, setError] = React.useState<string | null>(null);
   const [scanning, setScanning] = React.useState(false);
   const [scanMessage, setScanMessage] = React.useState<string | null>(null);
+  const [seedingRoot, setSeedingRoot] = React.useState(false);
 
   const { openTab, replaceActiveTab } = useContextualTabs();
 
@@ -117,6 +121,7 @@ export const BucketContainer: React.FC<Props> = ({
       setFiles(items);
       setStats(statsResp);
       setWorkspace(ws);
+      setActiveProject(project);
 
       const assetKind = PRIMARY_TO_ASSET_KIND[bucket];
       if (project && assetKind !== undefined) {
@@ -153,6 +158,27 @@ export const BucketContainer: React.FC<Props> = ({
       setScanMessage(`扫描失败：${err?.detail || err?.message || '未知错误'}`);
     } finally {
       setScanning(false);
+    }
+  };
+
+  /**
+   * no_source_dirs 空态的快捷动作：把项目根加为源目录。
+   * 之前要进设置 → 添加源目录三步走，这里给一键路径。
+   */
+  const handleSeedProjectRoot = async () => {
+    if (!activeProject || seedingRoot) return;
+    setSeedingRoot(true);
+    setScanMessage(null);
+    try {
+      await addSourceDir(activeProject.path);
+      await refresh();
+      setScanMessage(`已把项目根 ${activeProject.path} 加为源目录——点上方"扫描 workspace"开始分类。`);
+    } catch (err: any) {
+      setScanMessage(
+        `添加源目录失败：${err instanceof ApiError ? err.detail : err?.detail || err?.message || '未知错误'}`,
+      );
+    } finally {
+      setSeedingRoot(false);
     }
   };
 
@@ -400,9 +426,24 @@ export const BucketContainer: React.FC<Props> = ({
 
     const renderActions = () => {
       if (tier === 'no_source_dirs') {
-        return onOpenSettings ? (
-          <ActionBtn onClick={onOpenSettings}>打开设置 → 添加源目录</ActionBtn>
-        ) : null;
+        return (
+          <>
+            {activeProject ? (
+              <ActionBtn
+                onClick={handleSeedProjectRoot}
+                disabled={seedingRoot}
+                icon={<RefreshCw size={12} className={seedingRoot ? 'animate-spin' : ''} />}
+              >
+                {seedingRoot ? '添加中…' : `把项目根加为源目录`}
+              </ActionBtn>
+            ) : null}
+            {onOpenSettings ? (
+              <ActionBtn onClick={onOpenSettings} tone="ghost">
+                打开设置自定义
+              </ActionBtn>
+            ) : null}
+          </>
+        );
       }
       if (tier === 'never_scanned') {
         return (
