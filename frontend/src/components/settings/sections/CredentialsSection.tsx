@@ -114,6 +114,12 @@ export const CredentialsSection: React.FC = () => {
     try {
       await saveCredentials();
       setSavedAt(Date.now());
+      // 保存后清空所有 draft——避免下次再点保存重复 POST 同样 secret，
+      // 也让 status badge 成为唯一的"已配置"事实来源（后端 GET 已刷新）
+      const cleared = Object.fromEntries(
+        Object.keys(credentials).map((key) => [key, '']),
+      ) as Partial<Credentials>;
+      updateCredentials(cleared);
     } finally {
       setSaving(false);
     }
