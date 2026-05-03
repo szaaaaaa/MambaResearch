@@ -135,6 +135,35 @@ def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
     return key
 
 
+def _format_bib_authors(value) -> str:
+    """把 SourceSet.authors 字段统一成 BibTeX 的 ``A and B and C`` 形式。
+
+    上游可能给 list（每项一名作者）或 string（``;`` / ``,`` / `` and `` 分隔，
+    paper_search_mcp 用 ``;``）。直接 ``for a in value`` 在 string 上会迭代字符，
+    这是过去把 "Jian Shao" 拆成 ``J,i,a,n, ,S,h,a,o`` 的根因。
+    """
+    import re as _re
+
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts = [str(a).strip() for a in value if str(a).strip()]
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        if " and " in text:
+            return text  # 已是 BibTeX 形式
+        if ";" in text:
+            parts = [p.strip() for p in text.split(";") if p.strip()]
+        else:
+            # 没分号也没 "and"，整串视作单作者，避免误把名字里的逗号当分隔
+            parts = [text]
+    else:
+        parts = [str(value).strip()]
+    return " and ".join(parts)
+
+
 def _build_bib_from_artifacts(artifacts: list) -> str:
     """从所有 SourceSet 产物中提取文献信息，生成 BibTeX 格式的参考文献。
 
@@ -160,7 +189,7 @@ def _build_bib_from_artifacts(artifacts: list) -> str:
             seen_papers.add(dedup_id)
 
             key = _make_cite_key(source, seen_keys)
-            authors = " and ".join(str(a_) for a_ in source.get("authors", [])) or "Unknown"
+            authors = _format_bib_authors(source.get("authors")) or "Unknown"
             year = str(source.get("year", "")).strip() or "n.d."
             url = str(source.get("url", source.get("pdf_url", ""))).strip()
             doi = str(source.get("doi", "")).strip()

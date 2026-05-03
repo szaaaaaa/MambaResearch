@@ -250,9 +250,19 @@ class ContextualToolGateway:
         """执行搜索（带网络权限校验）。"""
         if not self._permissions.network:
             raise PolicyViolationError("skill does not allow network access")
-        # 对特殊来源值不做偏好解析
-        preferred_source = source if source not in {"", "auto", "academic", "web"} else "auto"
-        tool_id = self._resolve_tool_id(ToolCapability.search, preferred=preferred_source)
+        # 学术或自动来源优先解析到 wrapper 注册的统一 ``search_papers`` 工具；
+        # 找不到时回退到默认（auto）解析，让下游 allowlist/事件正常运转。
+        if source in {"", "auto", "academic"}:
+            try:
+                tool_id = self._resolve_tool_id(
+                    ToolCapability.search, preferred="search_papers"
+                )
+            except ValueError:
+                tool_id = self._resolve_tool_id(ToolCapability.search, preferred="auto")
+        elif source == "web":
+            tool_id = self._resolve_tool_id(ToolCapability.search, preferred="auto")
+        else:
+            tool_id = self._resolve_tool_id(ToolCapability.search, preferred=source)
         self._ensure_tool_allowed(tool_id)
         return await self._wrap_tool_call(
             tool_id,
