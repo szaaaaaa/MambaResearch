@@ -37,9 +37,8 @@ PTY argv 加 `--add-dir <mount>`。Claude 工具访问域只到这个 mount 目�
 - **必须先杀掉旧后端 PID（pre-改动），重新跑 `python app.py`**
 - 前端：`cd frontend && npm run dev`（dist 已 build 但 dev 模式才能 reload）
 - 浏览器开 DevTools，Console / Network 备用
-- 当前 active project：`G:\我的移动硬盘\project`——**这条路径在你机器上不存在**
-  （`G:\` 实际只有"我的云端硬盘"）。这是独立的环境状态问题，不在本次修复范围。
-  下面 Step 3 起请先在 Mamba 主页激活一个**真实存在**的项目（任意有几个文件的目录都行）
+- 当前 active project：`G:\我的云端硬盘\project`（Google Drive，`.mambaresearch/mcp_config.json`
+  已就绪含 6 个 builtin MCP）。可直接进 Step 3 跑 skill
 
 ---
 
@@ -100,10 +99,9 @@ Get-ChildItem 'D:\ResearchAgent\.claude-mount\.claude\skills\classify-workspace\
 `list(bucket="unknown")` + `classify_one(...)`。
 
 **可能挂的位置**：
-- 如果 active project 路径无效（如 `G:\我的移动硬盘\project`），`mamba_workspace` MCP server
-  可能起不来或报"找不到目录"——不是本次修复范围内的 bug，记下并切到真实 project 重试
-- 如果 `<active_project>/.mambaresearch/mcp_config.json` 不存在，看不到 `mamba_workspace`
-  工具——重新激活 active project 触发写入；仍不行检查 `app.py` 日志
+- 如果 `<active_project>/.mambaresearch/mcp_config.json` 不存在或没列 `mamba_workspace`，
+  Claude 看不到工作区工具——重新激活 active project 触发 `_apply_active_project_env`
+  → `write_builtin_mcp_config`；仍不行查 `app.py` 日志看 OSError
 
 ## 4. ClassifyHintBar 仍可用（回归）
 
