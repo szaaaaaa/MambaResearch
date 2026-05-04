@@ -108,8 +108,9 @@ export const BucketContainer: React.FC<Props> = ({
     (error.includes('active project path is not accessible') ||
       error.includes('workspace classification database is not accessible'));
 
-  const refresh = React.useCallback(async () => {
-    setLoading(true);
+  const refresh = React.useCallback(async (silent: boolean = false) => {
+    // silent=true 用于 polling——不翻 loading 态避免每 5s 闪 "加载中…"
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [items, statsResp, ws, project] = await Promise.all([
@@ -137,13 +138,36 @@ export const BucketContainer: React.FC<Props> = ({
           : err?.detail || err?.message || '加载失败',
       );
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [bucket]);
 
   React.useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // classify-workspace 跑在 Claude PTY 子进程里直写 classification.db，FastAPI
+  // 不知情。本地单用户场景 5s 轮询胜过 push 协议（push 引入的重连/丢事件/MCP↔
+  // FastAPI 鉴权复杂度在 localhost 拿不到对应收益）。仅在 unknown > 0 + tab
+  // 可见时跑；分类清零或 tab 切走立停。
+  const shouldPoll = (stats?.by_bucket?.unknown ?? 0) > 0;
+  React.useEffect(() => {
+    if (!shouldPoll) return;
+    const tick = (): void => {
+      if (document.hidden) return;
+      void refresh(true);
+    };
+    const intervalId = window.setInterval(tick, 5000);
+    const onVisibility = (): void => {
+      // 切回 tab 立刻补一次，不等下个 5s 周期
+      if (!document.hidden) tick();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [shouldPoll, refresh]);
 
   const handleScan = async () => {
     setScanning(true);
