@@ -77,22 +77,22 @@ llm:
   role_models:
     conductor:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
     researcher:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
     experimenter:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
     analyst:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
     writer:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
     reviewer:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
 auth:
   openai_codex:
     default_profile: default
@@ -241,7 +241,7 @@ agent:
   routing:
     planner_llm:
       provider: openrouter
-      model: openai/gpt-5.4
+      model: openai/gpt-4o
       temperature: 0.1
   experiment_plan:
     enabled: true
