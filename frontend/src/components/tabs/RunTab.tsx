@@ -685,10 +685,9 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-40 pt-8 sm:px-6">
-        <div className={`mx-auto w-full ${messageWidthClass}`}>
-          {/* ── 监控视图 ── */}
-          {shouldShowRunInsights && runView === 'monitor' ? (
-            <div className="space-y-[var(--space-section)]">
+        {/* ── 监控视图：用更宽的容器，让运行卡片填满主面板 ── */}
+        {shouldShowRunInsights && runView === 'monitor' ? (
+          <div className="mx-auto w-full max-w-7xl space-y-[var(--space-section)]">
               <section className={`rounded-[var(--radius-xl)] p-[var(--space-card)] shadow-[var(--shadow-card)] ${
                 isActiveConversationRunning
                   ? 'border-2 border-sky-200 bg-sky-50/60'
@@ -805,9 +804,10 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
             </div>
           ) : null}
 
-          {/* ── 对话视图（或 run 无数据时的欢迎页） ── */}
+          {/* ── 对话视图（或 run 无数据时的欢迎页）：保留窄列以保证消息可读性 ── */}
           {(!shouldShowRunInsights || runView === 'chat') ? (
-            hasConversation ? (
+            <div className={`mx-auto w-full ${messageWidthClass}`}>
+            {hasConversation ? (
               <div className={densityClasses.gap}>
                 {visibleMessages.map((message, messageIndex) => {
                   const isUser = message.role === 'user';
@@ -892,9 +892,9 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                   </div>
                 ) : null}
               </div>
-            )
+            )}
+            </div>
           ) : null}
-        </div>
       </div>
 
       <div className="sticky bottom-0 z-10 bg-gradient-to-t from-[var(--app-bg)] via-[var(--app-bg)] to-transparent px-4 pb-6 pt-6 sm:px-6">
