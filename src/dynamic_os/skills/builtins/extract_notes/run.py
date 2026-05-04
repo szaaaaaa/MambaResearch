@@ -98,24 +98,29 @@ async def run(ctx: SkillContext) -> SkillOutput:
         source_inputs=source_input_refs(ctx.input_artifacts),
     )
     if ctx.knowledge_graph is not None:
+        # 延迟导入避免循环依赖；runtime 是 normalize 的权威源，
+        # 直接 ``for a in source["authors"]`` 在 paper_search_mcp 给出 ";" 字符串时
+        # 会按字符迭代，导致 KG 里出现一堆单字符 Researcher 节点。
+        from src.dynamic_os.runtime import normalize_authors
+
         for source in sources:
             paper_id = str(source.get("paper_id") or source.get("id") or "").strip()
             title = str(source.get("title") or "").strip()
             if not paper_id and not title:
                 continue
             node_id_kg = paper_id or f"paper:{title[:64]}"
+            authors_list = normalize_authors(source.get("authors"))
             ctx.knowledge_graph.add_node(
                 node_id=node_id_kg,
                 node_type="Paper",
                 properties={
                     "title": title,
-                    "authors": source.get("authors", []),
+                    "authors": authors_list,
                     "year": source.get("year"),
                     "abstract": str(source.get("abstract") or source.get("summary") or "")[:500],
                 },
             )
-            for author in source.get("authors", []):
-                author_name = str(author).strip()
+            for author_name in authors_list:
                 if author_name:
                     author_node_id = f"researcher:{author_name[:64]}"
                     ctx.knowledge_graph.add_node(

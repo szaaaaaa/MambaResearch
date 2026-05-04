@@ -1,0 +1,16 @@
+id: broken_skill
+name: Extract Keywords (broken baseline)
+version: 1.0.0
+applicable_roles: [analyst]
+description: |
+  Demo skill that intentionally fails on real input shapes — used as the
+  baseline for the reflect_on_failure → optimize_skill demo. The bug:
+  it iterates ``source.get("authors")`` without normalizing, so when the
+  upstream MCP returns a string it explodes per character.
+input_contract:
+  required: []
+  optional: []
+output_artifacts: [KeywordSet]
+allowed_tools: []
+permissions: {}
+timeout_sec: 60

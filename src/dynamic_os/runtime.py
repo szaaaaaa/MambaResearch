@@ -83,6 +83,41 @@ def _format_prior_memories(memories: list, max_chars: int) -> str:
     return result[:max_chars]
 
 
+def normalize_authors(value) -> list[str]:
+    """把作者字段统一成 ``list[str]``，每项为完整作者名。公开 API，供其他模块复用。
+
+    上游可能给：
+
+    - ``None`` → 返回 ``[]``。
+    - ``list[str]``，每项一个完整作者名（理想形态）。
+    - 单字符列表，例如 ``list("Jian Shao")``——上游某处把字符串误 ``list()`` 化的
+      产物，会让 BibTeX 把每个字符当作者，必须先 ``join`` 回字符串再走分隔符解析。
+    - ``str``，``;`` / `` and `` 分隔（paper_search_mcp 用 ``;``），或单作者纯字符串。
+
+    判定单字符列表的启发式：长度 ≥ 4 且每项长度 ≤ 1。这种形态在真实多作者数据里
+    不可能出现（即使 "Yu" / "Li" 也至少 2 字符），单字符列表唯一来源是 bug。
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = [str(a).strip() for a in value if str(a).strip()]
+        if len(items) >= 4 and all(len(a) <= 1 for a in items):
+            joined = "".join(str(a) for a in value if a is not None)
+            return normalize_authors(joined)
+        return items
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if " and " in text:
+            return [p.strip() for p in text.split(" and ") if p.strip()]
+        if ";" in text:
+            return [p.strip() for p in text.split(";") if p.strip()]
+        return [text]
+    text = str(value).strip()
+    return [text] if text else []
+
+
 def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
     """生成 AuthorYear 格式的引用键，如 'vaswani2017attention'。
 
@@ -100,14 +135,14 @@ def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
     """
     import re as _re
 
-    authors_raw = source.get("authors", [])
+    authors_list = normalize_authors(source.get("authors", []))
     year = str(source.get("year", "")).strip()
     title = str(source.get("title", "")).strip()
 
     # 第一作者姓氏
     first_author = ""
-    if authors_raw:
-        name = str(authors_raw[0]).strip()
+    if authors_list:
+        name = authors_list[0]
         parts = name.replace(",", " ").split()
         if parts:
             first_author = _re.sub(r"[^a-zA-Z]", "", parts[-1]).lower() if len(parts) > 1 else _re.sub(r"[^a-zA-Z]", "", parts[0]).lower()
@@ -136,32 +171,8 @@ def _make_cite_key(source: dict, seen_keys: set[str]) -> str:
 
 
 def _format_bib_authors(value) -> str:
-    """把 SourceSet.authors 字段统一成 BibTeX 的 ``A and B and C`` 形式。
-
-    上游可能给 list（每项一名作者）或 string（``;`` / ``,`` / `` and `` 分隔，
-    paper_search_mcp 用 ``;``）。直接 ``for a in value`` 在 string 上会迭代字符，
-    这是过去把 "Jian Shao" 拆成 ``J,i,a,n, ,S,h,a,o`` 的根因。
-    """
-    import re as _re
-
-    if value is None:
-        return ""
-    if isinstance(value, (list, tuple)):
-        parts = [str(a).strip() for a in value if str(a).strip()]
-    elif isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return ""
-        if " and " in text:
-            return text  # 已是 BibTeX 形式
-        if ";" in text:
-            parts = [p.strip() for p in text.split(";") if p.strip()]
-        else:
-            # 没分号也没 "and"，整串视作单作者，避免误把名字里的逗号当分隔
-            parts = [text]
-    else:
-        parts = [str(value).strip()]
-    return " and ".join(parts)
+    """把 SourceSet.authors 字段统一成 BibTeX 的 ``A and B and C`` 形式。"""
+    return " and ".join(normalize_authors(value))
 
 
 def _build_bib_from_artifacts(artifacts: list) -> str:

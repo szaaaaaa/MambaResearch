@@ -411,7 +411,7 @@ MambaResearch/
 | 前端 | React 19 / TypeScript / Vite / Tailwind CSS / Zustand |
 | LLM | OpenRouter / OpenAI / Gemini / SiliconFlow / Codex |
 | 检索 | arXiv / Semantic Scholar / ChromaDB / FAISS / BM25 + Reranking |
-| 工具通信 | MCP stdio（5 个服务器：llm / search / retrieval / exec / paper_search） |
+| 工具通信 | MCP stdio（4 个内置 server：llm / search / retrieval / exec + 集成第三方 paper_search_mcp） |
 | 实验 | 沙箱执行 / 注册表模板（default + generic）/ 快照回滚 |
 | 持久化 | SQLite / 知识图谱 / 技能指标 / 跨 run 用户记忆 |
 | 输出 | LaTeX + BibTeX + pdflatex |
