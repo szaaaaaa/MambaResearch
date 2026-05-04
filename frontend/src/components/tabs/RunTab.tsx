@@ -210,8 +210,37 @@ interface WorkspaceFileState {
   path: string;
 }
 
+function CopyPathButton({ path }: { path: string }) {
+  const [copied, setCopied] = React.useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 安全上下文外的兜底：选中再复制
+      const ta = document.createElement('textarea');
+      ta.value = path;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* noop */ }
+      document.body.removeChild(ta);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+    >
+      {copied ? '已复制' : '复制路径'}
+    </button>
+  );
+}
+
 function WorkspaceFileModal({ detail, onClose }: { detail: WorkspaceFileState; onClose: () => void }) {
   const [content, setContent] = React.useState('');
+  const [absolutePath, setAbsolutePath] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
 
@@ -225,10 +254,11 @@ function WorkspaceFileModal({ detail, onClose }: { detail: WorkspaceFileState; o
           const detail = await res.json().catch(() => ({}));
           throw new Error(detail.detail ?? `HTTP ${res.status}`);
         }
-        return res.json() as Promise<{ content: string }>;
+        return res.json() as Promise<{ content: string; absolute_path?: string }>;
       })
       .then((data) => {
         setContent(data.content);
+        setAbsolutePath(data.absolute_path ?? '');
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -247,16 +277,24 @@ function WorkspaceFileModal({ detail, onClose }: { detail: WorkspaceFileState; o
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
               实验工作区文件
             </span>
             <p className="mt-2 font-mono text-xs text-slate-500">{detail.path}</p>
+            {absolutePath ? (
+              <div className="mt-2 flex items-center gap-2">
+                <p className="truncate font-mono text-[11px] text-slate-400" title={absolutePath}>
+                  {absolutePath}
+                </p>
+                <CopyPathButton path={absolutePath} />
+              </div>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            className="shrink-0 rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
           >
             <X className="h-4 w-4" />
           </button>
@@ -342,6 +380,7 @@ function ExperimentWorkspacePanel({
 }) {
   const [tree, setTree] = React.useState<WorkspaceTreeNode[] | null>(null);
   const [exists, setExists] = React.useState<boolean | null>(null);
+  const [workspacePath, setWorkspacePath] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   const [expanded, setExpanded] = React.useState(false);
@@ -352,11 +391,12 @@ function ExperimentWorkspacePanel({
     fetch(`${API_BASE}/api/runs/${runId}/workspace/tree`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ exists: boolean; tree: WorkspaceTreeNode[] }>;
+        return res.json() as Promise<{ exists: boolean; tree: WorkspaceTreeNode[]; workspace_path?: string }>;
       })
       .then((data) => {
         setExists(data.exists);
         setTree(data.tree);
+        setWorkspacePath(data.workspace_path ?? '');
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -402,6 +442,15 @@ function ExperimentWorkspacePanel({
         </summary>
 
         <div className="mt-4">
+          {workspacePath && exists !== false ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px]">
+              <span className="font-semibold uppercase tracking-[0.2em] text-slate-500">磁盘路径</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-slate-700" title={workspacePath}>
+                {workspacePath}
+              </span>
+              <CopyPathButton path={workspacePath} />
+            </div>
+          ) : null}
           {loading ? (
             <div className="flex items-center gap-2 py-4 text-sm text-slate-500">
               <LoaderCircle className="h-4 w-4 animate-spin" />

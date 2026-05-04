@@ -529,11 +529,15 @@ def _build_workspace_tree(root: Path, current: Path | None = None) -> list[dict[
 
 @router.get("/api/runs/{run_id}/workspace/tree")
 def get_run_workspace_tree(run_id: str):
-    """返回实验工作区目录树。空目录或不存在时返回 ``{"exists": False}``。"""
+    """返回实验工作区目录树 + 工作区绝对路径，让用户能直接到文件系统定位。"""
     ws_dir = _get_experiment_workspace_dir(run_id)
     if not ws_dir.is_dir():
-        return {"exists": False, "tree": []}
-    return {"exists": True, "tree": _build_workspace_tree(ws_dir)}
+        return {"exists": False, "tree": [], "workspace_path": str(ws_dir)}
+    return {
+        "exists": True,
+        "tree": _build_workspace_tree(ws_dir),
+        "workspace_path": str(ws_dir.resolve()),
+    }
 
 
 @router.get("/api/runs/{run_id}/workspace/file")
@@ -563,7 +567,12 @@ def get_run_workspace_file(run_id: str, path: str):
         content = full_path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=415, detail=f"file is not utf-8 text: {exc}") from exc
-    return {"path": rel, "size": size, "content": content}
+    return {
+        "path": rel,
+        "absolute_path": str(full_path),
+        "size": size,
+        "content": content,
+    }
 
 
 def _ensure_bib_on_disk(run_dir: Path) -> None:
