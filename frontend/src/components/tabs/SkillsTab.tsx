@@ -211,6 +211,10 @@ export const SkillsTab: React.FC<{ compact?: boolean }> = ({ compact = false }) 
   };
 
   const handleDelete = async (skillId: string) => {
+    // 二次确认 —— 删除会从磁盘移除整个 evolved skill 目录，不可恢复
+    if (!window.confirm(`确定删除技能「${skillId}」吗？此操作会从磁盘永久移除该 evolved skill 的整个目录。`)) {
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/api/skills/${skillId}`, { method: 'DELETE' });
       if (!res.ok) {
