@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, ChevronRight, Download, LoaderCircle, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ChevronRight, Download, LoaderCircle, X } from 'lucide-react';
 import { API_BASE } from '../../store';
 import { NodeStatusMap, RoutePlan, RoutePlanNode, RouteEdge, RunArtifact, RunEvent } from '../../types';
 import { Button } from '../ui';
@@ -367,7 +367,7 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
   const [runDetail, setRunDetail] = React.useState<HistoryRunDetail | null>(null);
   const [runEvents, setRunEvents] = React.useState<RunEvent[]>([]);
 
-  React.useEffect(() => {
+  const fetchRuns = React.useCallback(() => {
     setLoading(true);
     setError('');
     fetch(`${API_BASE}/api/runs`)
@@ -384,6 +384,8 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
         setLoading(false);
       });
   }, []);
+
+  React.useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
   const selectRun = (runId: string) => {
     setSelectedRunId(runId);
@@ -461,7 +463,13 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
               <LoaderCircle className="h-6 w-6 animate-spin text-slate-400" />
             </div>
           ) : error ? (
-            <p className="rounded-2xl bg-rose-50 px-6 py-4 text-sm text-rose-600">{error}</p>
+            <div className="flex items-center gap-3 rounded-[var(--radius-xl)] border-2 border-rose-200 bg-rose-50/60 p-4">
+              <AlertCircle className="h-5 w-5 shrink-0 text-rose-600" />
+              <p className="text-sm text-rose-700">{error}</p>
+              <Button variant="secondary" onClick={() => fetchRuns()} className="ml-auto rounded-full px-4 text-xs">
+                重试
+              </Button>
+            </div>
           ) : runs.length === 0 ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center text-center">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">暂无历史记录</p>
