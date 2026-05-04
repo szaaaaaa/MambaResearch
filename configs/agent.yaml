@@ -247,21 +247,21 @@ agent:
     enabled: true
     mode: optimize
     max_iterations: 6
-    gpu: cuda
+    gpu: cpu  # 默认 cpu —— 让 LLM 默认产 numpy 代码而非 torch+cuda
     objective: ''
     exec_timeout_sec: 120
     max_per_rq: 2
     require_human_results: false
     workspace:
-      template: generic
+      # numpy_minimal = 纯 numpy 轻量模板（零外部依赖、checkpoint 容错）
+      # 想跑 torch+CIFAR10 改成 generic 或 builtin，并把 gpu 调成 cuda
+      template: numpy_minimal
       custom_path: ''
       mutable_files:
       - configs/hparams.yaml
-      - models/__init__.py
-      - datasets/__init__.py
-      - metrics/__init__.py
       - train.py
       - evaluate.py
+      - models/__init__.py
       entry_point: train.py
       eval_script: evaluate.py
     recovery:

@@ -51,8 +51,8 @@ def _build_first_iteration_prompt(
                 '"files" (object mapping filenames to their new content), '
                 'and "metric_directions" (object mapping each METRIC name your code will output '
                 'to "maximize" or "minimize", e.g. {"accuracy": "maximize", "loss": "minimize"}). '
-                "Every file you modify must be executable as-is."
-                f"{gpu_instruction}"
+                "Every file you modify must be executable as-is.\n\n"
+                + _hard_constraints(gpu_instruction)
             ),
         },
         {
@@ -63,6 +63,28 @@ def _build_first_iteration_prompt(
             ),
         },
     ]
+
+
+def _hard_constraints(gpu_instruction: str) -> str:
+    """实验文件硬约束 —— 兜住 LLM 经常踩的坑（无 GPU、checkpoint 缺失、stderr 噪音误判）。"""
+    return (
+        "## HARD CONSTRAINTS (违反任意一条都会让实验循环卡死)\n"
+        "1. STACK: Default to numpy + pyyaml only. Do NOT import torch / tensorflow / jax / "
+        "sklearn unless the user request explicitly demands them. Importing torch on a CPU-only "
+        "host triggers CUDA-init warnings that get misread as failures.\n"
+        "2. NO EXTERNAL DOWNLOADS: Do NOT call torchvision.datasets / hf datasets / urlopen — "
+        "the sandbox has no network during experiment exec. Generate synthetic data inline.\n"
+        "3. CHECKPOINT CONTRACT: train.py MUST, before exit, save weights via "
+        "``np.savez(checkpoints/best.pt, ...)`` (or torch.save if torch is justified). "
+        "evaluate.py MUST tolerate a missing/corrupt checkpoint by emitting "
+        "``METRIC checkpoint_missing=1`` instead of sys.exit(1) — silent exit-1 kills the loop.\n"
+        "4. METRIC OUTPUT: evaluate.py MUST print AT LEAST ONE line in the exact form "
+        "``METRIC <name>=<float>`` (no quotes, ASCII '='). The experiment runtime parses these "
+        "via regex; any other output format counts as zero metrics → optimize_experiment can't act.\n"
+        "5. NO sys.exit(1) on warnings. If something is suboptimal but not fatal, keep going and "
+        "emit a marker METRIC instead.\n"
+        + (gpu_instruction or "")
+    )
 
 
 def _build_subsequent_iteration_prompt(
@@ -101,8 +123,9 @@ def _build_subsequent_iteration_prompt(
                 '"plan" (string describing what you changed and why), '
                 '"files" (object mapping filenames to their new content), '
                 'and "metric_directions" (object mapping each METRIC name to "maximize" or "minimize"). '
-                "Every file you modify must be executable as-is."
-                f"{gpu_instruction}{strategy_hint}"
+                "Every file you modify must be executable as-is.\n\n"
+                + _hard_constraints(gpu_instruction)
+                + (strategy_hint or "")
             ),
         },
         {

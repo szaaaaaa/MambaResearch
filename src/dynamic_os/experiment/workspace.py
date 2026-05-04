@@ -28,6 +28,13 @@ from pathlib import Path
 # 内置模板目录
 _BUILTIN_TEMPLATE_DIR: Path = Path(__file__).parent / "templates" / "default"
 _GENERIC_TEMPLATE_DIR: Path = Path(__file__).parent / "templates" / "generic"
+_NUMPY_MINIMAL_TEMPLATE_DIR: Path = Path(__file__).parent / "templates" / "numpy_minimal"
+
+_NAMED_TEMPLATES = {
+    "builtin": _BUILTIN_TEMPLATE_DIR,
+    "generic": _GENERIC_TEMPLATE_DIR,
+    "numpy_minimal": _NUMPY_MINIMAL_TEMPLATE_DIR,
+}
 
 
 @dataclass(frozen=True)
@@ -87,9 +94,11 @@ def init_workspace(config: WorkspaceConfig, run_dir: str | Path) -> Path:
     run_dir = Path(run_dir)
     dest = run_dir / "experiment_workspace"  # 工作区固定命名，便于后续定位
 
-    if config.template in ("builtin", "generic"):
-        # builtin = CIFAR-10 专用模板，generic = 通用模板（LLM 可完全重写）
-        source = _GENERIC_TEMPLATE_DIR if config.template == "generic" else _BUILTIN_TEMPLATE_DIR
+    if config.template in _NAMED_TEMPLATES:
+        # builtin = CIFAR-10/torch 专用模板（重型，需 GPU + 数据集下载）
+        # generic = registry-based torch 通用模板（中等，支持自由扩展）
+        # numpy_minimal = 纯 numpy 轻量模板（默认，零外部依赖，适合 LLM 自动迭代）
+        source = _NAMED_TEMPLATES[config.template]
         if not source.is_dir():
             raise FileNotFoundError(
                 f"Template directory not found: {source}"
@@ -112,8 +121,9 @@ def init_workspace(config: WorkspaceConfig, run_dir: str | Path) -> Path:
             )
         shutil.copytree(source, dest, dirs_exist_ok=True)
     else:
+        valid = ", ".join(sorted(list(_NAMED_TEMPLATES) + ["custom"]))
         raise ValueError(
-            f"Unknown template type '{config.template}'; expected 'builtin' or 'custom'"
+            f"Unknown template type '{config.template}'; expected one of: {valid}"
         )
 
     return dest
