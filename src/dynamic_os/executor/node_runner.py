@@ -410,7 +410,17 @@ class NodeRunner:
             suggested_options = ["replan", "choose_different_skill"]
         else:
             status = NodeStatus.needs_replan if node.failure_policy == FailurePolicy.replan else NodeStatus.failed
-            error_type = ErrorType.skill_error
+            # 技能可以通过 metadata["error_type"] 显式标注失败种类。
+            # 例如 run_experiment 跑 LLM 生成的 train.py 失败时标 "workload_error"，
+            # 让规划器 RULE 15 不要错触发 reflect_on_failure（那是修 builtin skill 源码的）。
+            error_type_hint = str(output.metadata.get("error_type", "")).strip()
+            if error_type_hint:
+                try:
+                    error_type = ErrorType(error_type_hint)
+                except ValueError:
+                    error_type = ErrorType.skill_error
+            else:
+                error_type = ErrorType.skill_error
             message = output.error or "技能返回了失败结果"
             suggested_options = ["choose_different_skill", "replan"]
         confidence = output.metadata.get("confidence", 1.0)

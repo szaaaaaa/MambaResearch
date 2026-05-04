@@ -200,8 +200,41 @@ async def run(ctx: SkillContext) -> SkillOutput:
             if not fix_applied:
                 break
 
+    # 失败也产 ExperimentResults artifact —— 让 optimize_experiment 能消费失败上下文，
+    # 走"实验迭代修复"路径（design_experiment 看到 prior_iteration 重写 files），
+    # 而不是被规划器误判为 builtin skill 内部 bug 走 reflect_on_failure。
+    # mutable_files 当前内容快照写进 payload，让下游能看到"什么版本的代码挂了"。
+    failed_files: dict[str, str] = {}
+    for filename in mutable_files:
+        filepath = os.path.join(workspace_path, filename)
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                failed_files[filename] = f.read()
+        except OSError:
+            failed_files[filename] = ""
+
+    failure_artifact = make_artifact(
+        node_id=ctx.node_id,
+        artifact_type="ExperimentResults",
+        producer_role=RoleId(ctx.role_id),
+        producer_skill=ctx.skill_id,
+        payload={
+            "status": "failed",
+            "stdout": str(execution.get("stdout", "")),
+            "stderr": str(execution.get("stderr", "")),
+            "exit_code": execution.get("exit_code"),
+            "metrics": {},
+            "runs": [],
+            "workspace_path": workspace_path,
+            "attempts": attempt + 1,
+            "failure_message": last_error,
+            "mutable_files_snapshot": failed_files,
+        },
+        source_inputs=source_input_refs(ctx.input_artifacts),
+    )
     return SkillOutput(
         success=False,
+        output_artifacts=[failure_artifact],
         error=f"experiment failed after {attempt + 1} attempts: {last_error}",
-        metadata={"execution": execution},
+        metadata={"execution": execution, "error_type": "workload_error"},
     )

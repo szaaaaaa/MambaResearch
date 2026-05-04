@@ -40,7 +40,10 @@ class ErrorType(str, Enum):
     """错误类型枚举 —— 对失败原因的分类标记。
 
     - tool_failure: 外部工具调用失败（如 API 超时、返回错误）
-    - skill_error: 技能内部逻辑错误
+    - skill_error: 技能自身的内部代码 bug（异常、契约违反、解析失败等）
+    - workload_error: 技能本身没问题，但它驱动的"工作负载"失败 —— 例如
+      run_experiment 跑 LLM 生成的 train.py 时 train.py 退出码非 0。
+      区分这一类是为了让规划器走"实验迭代修复"路径而不是"反思 builtin skill 源码"路径。
     - timeout: 执行超时
     - policy_block: 被策略引擎拦截（如权限不足、预算用尽）
     - input_missing: 缺少必要的输入产物
@@ -50,6 +53,7 @@ class ErrorType(str, Enum):
 
     tool_failure = "tool_failure"
     skill_error = "skill_error"
+    workload_error = "workload_error"
     timeout = "timeout"
     policy_block = "policy_block"
     input_missing = "input_missing"

@@ -12,6 +12,7 @@ output_artifacts:
   - ExperimentResults
 allowed_tools:
   - mcp.exec.execute_code
+  - mcp.llm.chat  # 失败重试路径会调 _attempt_debug_fix → ctx.tools.llm_chat
 permissions:
   sandbox_exec: true
 timeout_sec: 120
