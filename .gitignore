@@ -45,3 +45,7 @@ frontend/dist/
 
 # Claude Code — exclude entire .claude/ dir (worktrees, hooks, local state)
 .claude/
+
+# Local agent run outputs / browser MCP artifacts
+$rundir/
+.playwright-mcp/
