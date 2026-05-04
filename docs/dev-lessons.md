@@ -591,6 +591,25 @@ sources.pdf_download:
 
 ---
 
+### 问题 26：改了代码但 bug 依旧——长跑 server 缓存了旧模块
+
+**发生时间**：2026-05-03 run_20260503_105304_283874
+
+**现象**：参考文献中作者名被按字符拆开渲染，例如 `[1] D, a, v, i, d, , M, o, h, e, r, ;, , A, l, e, s, s, a, n, d, r, o, ...`，而非正常的 `David Moher, Alessandro Liberati, ...`。源码层面 `_format_bib_authors` 已经处理了 string vs list 两种输入，但生成出来的 PDF 仍是旧逻辑产物。
+
+**根因**：bug 不在代码——`src/dynamic_os/runtime.py:138` 的 `_format_bib_authors` fix 已经在工作树里（未提交）。真问题是 `python app.py` 长跑进程在 fix 落盘**之前**启动，Python 把 `dynamic_os.runtime` 模块缓存在 `sys.modules`，源码改了不会重新加载。所以新 run 仍然走内存里旧的 `_build_bib_from_artifacts`（内联 `" and ".join(str(a_) for a_ in authors)` —— 当 authors 是字符串时迭代得到字符）。
+
+**解决**：
+- 直接复用 fix 后的源码，本地脚本就地重建 `references.bib` + 重跑 `pdflatex/bibtex/pdflatex×2`，PDF 恢复正常
+- ziang 手动重启 `python app.py`，新 run 自然走新代码
+
+**教训**：
+- **「代码改了 bug 还在」之前先检查 import 进程的启动时间**——长跑 server / Jupyter / pytest --pdb 等都会把模块快照在内存，源码 mtime 和 pyc mtime 都不能证明运行时用的是新版本
+- 调试假设链：①源码对吗 → ②pyc/site-packages 里是不是另一份 → ③运行进程 import 早于 fix 吗
+- 验证手段：`python -c "import sys; sys.path.insert(0,'src'); from dynamic_os.runtime import xxx; print(xxx.__module__, inspect.getsource(xxx))"` 直接看当前 fresh import 的版本，再跟运行时行为对比
+
+---
+
 ## 跨阶段总结：反复出现的模式
 
 ### 必须记住的 5 条铁律
@@ -620,5 +639,5 @@ sources.pdf_download:
 
 ---
 
-*最后更新：2026-04-06*
+*最后更新：2026-05-03*
 *持续追加中——后续开发遇到的问题和解决方案请追加到对应阶段或新建阶段*
