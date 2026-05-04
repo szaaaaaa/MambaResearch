@@ -103,14 +103,37 @@ def _get_data(spec: dict[str, Any], key: str, expected_type: type = list) -> Any
 # matplotlib 模板
 # ---------------------------------------------------------------------------
 
+def _coerce_numeric_pairs(categories: list, values: list) -> tuple[list, list[float]]:
+    """把 (categories, values) 中含 None / 非数值的项剔除掉，配对返回。
+
+    LLM 经常会在 values 里塞 None 表示"未知"，但 matplotlib 直接报
+    ``unsupported operand type(s) for +: 'int' and 'NoneType'``。在 renderer
+    层先 filter 比让 LLM 学会处理 None 可靠得多。
+    """
+    paired_cats: list = []
+    paired_vals: list[float] = []
+    for cat, val in zip(categories, values):
+        if val is None:
+            continue
+        try:
+            paired_vals.append(float(val))
+            paired_cats.append(cat)
+        except (TypeError, ValueError):
+            continue
+    return paired_cats, paired_vals
+
+
 def _bar_chart(spec: dict[str, Any], base_path: Path) -> list[str]:
     """柱状图。"""
     _ensure_mpl()
     data = spec.get("data", {})
-    categories = _get_data(spec, "categories")
-    values = _get_data(spec, "values")
-    if len(categories) != len(values):
-        raise ValueError(f"categories({len(categories)}) and values({len(values)}) length mismatch")
+    raw_categories = _get_data(spec, "categories")
+    raw_values = _get_data(spec, "values")
+    if len(raw_categories) != len(raw_values):
+        raise ValueError(f"categories({len(raw_categories)}) and values({len(raw_values)}) length mismatch")
+    categories, values = _coerce_numeric_pairs(raw_categories, raw_values)
+    if not values:
+        raise ValueError("no usable numeric values after dropping None / non-numeric entries")
 
     horizontal = data.get("horizontal", False)
     fig, ax = plt.subplots(figsize=(max(6, len(categories) * 0.8), 5))
@@ -146,8 +169,10 @@ def _grouped_bar_chart(spec: dict[str, Any], base_path: Path) -> list[str]:
     for i, (name, vals) in enumerate(groups.items()):
         if len(vals) != n_cats:
             raise ValueError(f"group '{name}' length({len(vals)}) != categories({n_cats})")
+        # 同 _bar_chart：把 None / 非数值替成 0，再画。否则 matplotlib 内部 + 失败。
+        clean_vals = [float(v) if v is not None and isinstance(v, (int, float)) else 0.0 for v in vals]
         color = _PALETTE[i % len(_PALETTE)]
-        ax.bar(x + i * width, vals, width, label=name, color=color)
+        ax.bar(x + i * width, clean_vals, width, label=name, color=color)
 
     ax.set_xticks(x + width * (n_groups - 1) / 2)
     ax.set_xticklabels(categories)
@@ -172,8 +197,12 @@ def _line_chart(spec: dict[str, Any], base_path: Path) -> list[str]:
         ys = xy.get("y", [])
         if len(xs) != len(ys):
             raise ValueError(f"series '{name}' x({len(xs)}) and y({len(ys)}) length mismatch")
+        # 同 _bar_chart：剔除 None / 非数值，避免 matplotlib 内部 + 失败
+        xs_clean, ys_clean = _coerce_numeric_pairs(xs, ys)
+        if not ys_clean:
+            continue
         color = _PALETTE[i % len(_PALETTE)]
-        ax.plot(xs, ys, marker="o" if markers else None, label=name, color=color)
+        ax.plot(xs_clean, ys_clean, marker="o" if markers else None, label=name, color=color)
 
     ax.set_xlabel(data.get("x_label", ""))
     ax.set_ylabel(data.get("y_label", ""))
@@ -195,12 +224,15 @@ def _scatter_plot(spec: dict[str, Any], base_path: Path) -> list[str]:
         ys = xy.get("y", [])
         if len(xs) != len(ys):
             raise ValueError(f"series '{name}' x({len(xs)}) and y({len(ys)}) length mismatch")
+        xs_clean, ys_clean = _coerce_numeric_pairs(xs, ys)
+        if not ys_clean:
+            continue
         color = _PALETTE[i % len(_PALETTE)]
-        ax.scatter(xs, ys, label=name, color=color, alpha=0.7)
-        if data.get("trend_line"):
-            z = np.polyfit([float(v) for v in xs], [float(v) for v in ys], 1)
+        ax.scatter(xs_clean, ys_clean, label=name, color=color, alpha=0.7)
+        if data.get("trend_line") and len(xs_clean) >= 2:
+            z = np.polyfit(xs_clean, ys_clean, 1)
             p = np.poly1d(z)
-            x_sorted = sorted(float(v) for v in xs)
+            x_sorted = sorted(xs_clean)
             ax.plot(x_sorted, p(x_sorted), "--", color=color, alpha=0.5)
 
     ax.set_xlabel(data.get("x_label", ""))
@@ -221,7 +253,11 @@ def _heatmap(spec: dict[str, Any], base_path: Path) -> list[str]:
     colormap = data.get("colormap", "Blues")
     annotate = data.get("annotate", True)
 
-    arr = np.array(values, dtype=float)
+    # 把矩阵里的 None / 非数值替成 nan，让 matplotlib 自己处理而不是抛 TypeError
+    arr = np.array(
+        [[(float(v) if v is not None and isinstance(v, (int, float)) else float("nan")) for v in row] for row in values],
+        dtype=float,
+    )
     if arr.shape != (len(y_labels), len(x_labels)):
         raise ValueError(
             f"values shape {arr.shape} != ({len(y_labels)}, {len(x_labels)})"
@@ -249,10 +285,13 @@ def _pie_chart(spec: dict[str, Any], base_path: Path) -> list[str]:
     """饼图。"""
     _ensure_mpl()
     data = spec.get("data", {})
-    labels = _get_data(spec, "labels")
-    values = _get_data(spec, "values")
-    if len(labels) != len(values):
-        raise ValueError(f"labels({len(labels)}) and values({len(values)}) length mismatch")
+    raw_labels = _get_data(spec, "labels")
+    raw_values = _get_data(spec, "values")
+    if len(raw_labels) != len(raw_values):
+        raise ValueError(f"labels({len(raw_labels)}) and values({len(raw_values)}) length mismatch")
+    labels, values = _coerce_numeric_pairs(raw_labels, raw_values)
+    if not values:
+        raise ValueError("no usable numeric values after dropping None / non-numeric entries")
 
     fig, ax = plt.subplots(figsize=(7, 5))
     colors = _PALETTE[: len(labels)]

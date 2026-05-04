@@ -686,6 +686,11 @@ class DynamicResearchRuntime:
             await mcp_runtime.close()
 
             artifacts = artifact_store.list_all()
+            # 已经产出 ResearchReport（最终交付物）就算 completed，
+            # 即使 planner 在 review 之后又乱规划被校验拦下、或撞到其他非致命终止原因。
+            # 不在这里补救会让所有"实质完成 + 后续 planner 抽风"的 run 都被标 failed。
+            if status == "failed" and any(a.artifact_type == "ResearchReport" for a in artifacts):
+                status = "completed"
             observations = observation_store.list_latest(200)
             report_text = _report_text(artifacts=artifacts, observations=observations, status=status)
             route_plan = latest_plan or (plan_store.get_latest().model_dump(mode="json") if plan_store.get_latest() is not None else {})
