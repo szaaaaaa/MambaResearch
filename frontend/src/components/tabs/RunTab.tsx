@@ -196,6 +196,234 @@ interface ArtifactDetailState {
   artifactType: string;
 }
 
+interface WorkspaceTreeNode {
+  type: 'dir' | 'file';
+  name: string;
+  path: string;
+  size?: number;
+  viewable?: boolean;
+  children?: WorkspaceTreeNode[];
+}
+
+interface WorkspaceFileState {
+  runId: string;
+  path: string;
+}
+
+function WorkspaceFileModal({ detail, onClose }: { detail: WorkspaceFileState; onClose: () => void }) {
+  const [content, setContent] = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    setLoading(true);
+    setError('');
+    const url = `${API_BASE}/api/runs/${detail.runId}/workspace/file?path=${encodeURIComponent(detail.path)}`;
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail ?? `HTTP ${res.status}`);
+        }
+        return res.json() as Promise<{ content: string }>;
+      })
+      .then((data) => {
+        setContent(data.content);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+  }, [detail.runId, detail.path]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/35 px-4 py-8 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[var(--shadow-modal)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-5 flex items-start justify-between gap-3">
+          <div>
+            <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
+              实验工作区文件
+            </span>
+            <p className="mt-2 font-mono text-xs text-slate-500">{detail.path}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" />
+          </div>
+        ) : error ? (
+          <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
+        ) : (
+          <pre className="max-h-[70vh] overflow-auto rounded-2xl bg-slate-900 px-4 py-4 font-mono text-xs leading-6 text-slate-100">
+            <code>{content || '(空文件)'}</code>
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceTreeView({
+  nodes,
+  depth,
+  onPick,
+}: {
+  nodes: WorkspaceTreeNode[];
+  depth: number;
+  onPick: (path: string) => void;
+}) {
+  return (
+    <ul className="space-y-1">
+      {nodes.map((node) => {
+        const indent = { paddingLeft: `${depth * 14}px` };
+        if (node.type === 'dir') {
+          return (
+            <li key={node.path}>
+              <details open={depth < 1} className="group">
+                <summary
+                  className="cursor-pointer list-none rounded-md px-2 py-1 text-sm text-slate-700 transition hover:bg-slate-100"
+                  style={indent}
+                >
+                  <span className="mr-1.5 inline-block w-3 text-slate-400 group-open:rotate-90 transition">▸</span>
+                  <span className="font-medium">{node.name}/</span>
+                </summary>
+                <div className="mt-1">
+                  <WorkspaceTreeView nodes={node.children ?? []} depth={depth + 1} onPick={onPick} />
+                </div>
+              </details>
+            </li>
+          );
+        }
+        const isViewable = node.viewable !== false;
+        return (
+          <li key={node.path}>
+            <button
+              type="button"
+              disabled={!isViewable}
+              onClick={() => isViewable && onPick(node.path)}
+              className={`flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm transition ${
+                isViewable
+                  ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  : 'cursor-not-allowed text-slate-400'
+              }`}
+              style={indent}
+              title={isViewable ? '点击查看内容' : '不支持预览（二进制或过大）'}
+            >
+              <span className="truncate font-mono">{node.name}</span>
+              <span className="ml-2 shrink-0 text-[11px] text-slate-400">{node.size ?? 0} B</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function ExperimentWorkspacePanel({
+  runId,
+  onPickFile,
+}: {
+  runId: string;
+  onPickFile: (path: string) => void;
+}) {
+  const [tree, setTree] = React.useState<WorkspaceTreeNode[] | null>(null);
+  const [exists, setExists] = React.useState<boolean | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [expanded, setExpanded] = React.useState(false);
+
+  const refresh = React.useCallback(() => {
+    setLoading(true);
+    setError('');
+    fetch(`${API_BASE}/api/runs/${runId}/workspace/tree`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<{ exists: boolean; tree: WorkspaceTreeNode[] }>;
+      })
+      .then((data) => {
+        setExists(data.exists);
+        setTree(data.tree);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+  }, [runId]);
+
+  // 首次展开时拉取，避免无实验的 run 也发请求
+  React.useEffect(() => {
+    if (expanded && tree === null && !loading) {
+      refresh();
+    }
+  }, [expanded, tree, loading, refresh]);
+
+  const fileCount = React.useMemo(() => {
+    if (!tree) return 0;
+    let count = 0;
+    const walk = (nodes: WorkspaceTreeNode[]) => {
+      for (const node of nodes) {
+        if (node.type === 'file') count += 1;
+        else if (node.children) walk(node.children);
+      }
+    };
+    walk(tree);
+    return count;
+  }, [tree]);
+
+  return (
+    <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
+      <details className="group" onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">实验工作区</p>
+            <h3 className="mt-2 text-base font-semibold text-slate-900">LLM 生成的实验代码</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              点开查看 train.py / evaluate.py / hparams.yaml / checkpoints 等真文件 —— 实验循环每轮都会改写这些
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 transition group-open:bg-slate-900 group-open:text-white">
+            {tree === null ? '展开' : exists === false ? '无' : `${fileCount} 文件`}
+          </span>
+        </summary>
+
+        <div className="mt-4">
+          {loading ? (
+            <div className="flex items-center gap-2 py-4 text-sm text-slate-500">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              加载工作区目录…
+            </div>
+          ) : error ? (
+            <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
+          ) : exists === false ? (
+            <p className="text-sm text-slate-500">此 run 没有实验工作区（design_experiment 没运行过或目录已被清理）。</p>
+          ) : tree && tree.length > 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <WorkspaceTreeView nodes={tree} depth={0} onPick={onPickFile} />
+            </div>
+          ) : tree ? (
+            <p className="text-sm text-slate-500">工作区目录为空。</p>
+          ) : null}
+        </div>
+      </details>
+    </section>
+  );
+}
+
 function ArtifactDetailModal({
   detail,
   onClose,
@@ -268,6 +496,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
   const { conversations, activeConversationId, runOverrides } = state;
   const [runStartError, setRunStartError] = React.useState('');
   const [artifactDetail, setArtifactDetail] = React.useState<ArtifactDetailState | null>(null);
+  const [workspaceFile, setWorkspaceFile] = React.useState<WorkspaceFileState | null>(null);
   const [runView, setRunView] = React.useState<'monitor' | 'chat'>('monitor');
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
@@ -313,6 +542,9 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
     <div className="flex h-full flex-col overflow-hidden">
       {artifactDetail ? (
         <ArtifactDetailModal detail={artifactDetail} onClose={() => setArtifactDetail(null)} />
+      ) : null}
+      {workspaceFile ? (
+        <WorkspaceFileModal detail={workspaceFile} onClose={() => setWorkspaceFile(null)} />
       ) : null}
 
       {activeConversation.clarificationState && activeConversation.clarificationState.questions.length > 0 ? (
@@ -507,6 +739,13 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                   </div>
                   </details>
                 </section>
+              ) : null}
+
+              {activeConversation.runId && activeConversation.artifacts.some((a) => a.artifact_type === 'ExperimentPlan' || a.artifact_type === 'ExperimentResults') ? (
+                <ExperimentWorkspacePanel
+                  runId={activeConversation.runId}
+                  onPickFile={(path) => setWorkspaceFile({ runId: activeConversation.runId!, path })}
+                />
               ) : null}
 
               <BehaviorTimeline events={activeConversation.runEvents} />

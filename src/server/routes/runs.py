@@ -477,6 +477,95 @@ async def get_run_latex_zip(run_id: str):
     )
 
 
+def _get_experiment_workspace_dir(run_id: str) -> Path:
+    """实验工作区不在 outputs/ 而在 <data_dir>/runs/<run_id>/experiment_workspace。"""
+    config = load_yaml(CONFIG_PATH) if CONFIG_PATH.exists() else {}
+    cfg = config if isinstance(config, dict) else {}
+    raw = get_by_dotted(cfg, "project.data_dir") or "data"
+    data_dir = resolve_path(ROOT, str(raw), cfg)
+    return data_dir / "runs" / run_id / "experiment_workspace"
+
+
+# 工作区文件查看的安全限制：单文件最大 256KB（够容纳 train.py / METRIC 行 / hparams）
+_WORKSPACE_FILE_MAX_BYTES = 256 * 1024
+# 文件扩展名白名单：演示用途下只暴露文本类
+_WORKSPACE_TEXT_EXTS = {".py", ".yaml", ".yml", ".json", ".csv", ".txt", ".md", ".log"}
+
+
+def _build_workspace_tree(root: Path, current: Path | None = None) -> list[dict[str, Any]]:
+    """递归列出工作区目录下所有项；目录在前、按字母序。
+
+    ``root`` 始终是工作区根，``current`` 是当前递归到的目录。
+    所有 path 字段都是相对 root 的 POSIX 路径，方便前端拼接。
+    """
+    cur = current if current is not None else root
+    if not cur.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for child in sorted(cur.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        rel = child.relative_to(root).as_posix()
+        if child.is_dir():
+            entries.append({
+                "type": "dir",
+                "name": child.name,
+                "path": rel,
+                "children": _build_workspace_tree(root, child),
+            })
+        else:
+            try:
+                size = child.stat().st_size
+            except OSError:
+                size = 0
+            ext = child.suffix.lower()
+            entries.append({
+                "type": "file",
+                "name": child.name,
+                "path": rel,
+                "size": size,
+                "viewable": ext in _WORKSPACE_TEXT_EXTS and size <= _WORKSPACE_FILE_MAX_BYTES,
+            })
+    return entries
+
+
+@router.get("/api/runs/{run_id}/workspace/tree")
+def get_run_workspace_tree(run_id: str):
+    """返回实验工作区目录树。空目录或不存在时返回 ``{"exists": False}``。"""
+    ws_dir = _get_experiment_workspace_dir(run_id)
+    if not ws_dir.is_dir():
+        return {"exists": False, "tree": []}
+    return {"exists": True, "tree": _build_workspace_tree(ws_dir)}
+
+
+@router.get("/api/runs/{run_id}/workspace/file")
+def get_run_workspace_file(run_id: str, path: str):
+    """返回实验工作区下某文件内容（仅文本类、有大小上限、防路径穿越）。"""
+    ws_dir = _get_experiment_workspace_dir(run_id).resolve()
+    if not ws_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"workspace not found for run {run_id!r}")
+    rel = path.replace("\\", "/").lstrip("/")
+    try:
+        full_path = (ws_dir / rel).resolve()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
+    # 防路径穿越：解析后必须仍在工作区根下
+    try:
+        full_path.relative_to(ws_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="path escapes workspace") from exc
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {rel}")
+    size = full_path.stat().st_size
+    if size > _WORKSPACE_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"file too large ({size} bytes); limit {_WORKSPACE_FILE_MAX_BYTES}")
+    if full_path.suffix.lower() not in _WORKSPACE_TEXT_EXTS:
+        raise HTTPException(status_code=415, detail=f"file type not viewable: {full_path.suffix}")
+    try:
+        content = full_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=415, detail=f"file is not utf-8 text: {exc}") from exc
+    return {"path": rel, "size": size, "content": content}
+
+
 def _ensure_bib_on_disk(run_dir: Path) -> None:
     bib_path = run_dir / "references.bib"
     if bib_path.exists():
