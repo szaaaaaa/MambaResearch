@@ -31,7 +31,7 @@ from src.dynamic_os.contracts.events import (
     RunTerminateEvent,
 )
 from src.dynamic_os.contracts.observation import ErrorType, NodeStatus, Observation
-from src.dynamic_os.contracts.route_plan import EdgeCondition, PlanEdge, PlanNode, RoleId, RoutePlan
+from src.dynamic_os.contracts.route_plan import EdgeCondition, FailurePolicy, PlanEdge, PlanNode, RoleId, RoutePlan
 from src.dynamic_os.executor.node_runner import NodeExecutionResult, NodeRunner
 from src.dynamic_os.planner.planner import Planner, PlannerOutputError
 from src.dynamic_os.policy.engine import BudgetExceededError, PolicyEngine
@@ -260,6 +260,21 @@ class Executor:
                             replan_reason="clarification_response_received",
                         )
 
+                    # needs_review=true 的成功节点：在主节点完成后合成一个 reviewer 子节点，
+                    # 复用 node_runner 完整流程（事件 / 观测 / 产物存储统一），
+                    # 失败按 skip 处理，不影响主节点成功状态、不触发 replan。
+                    if (
+                        node.needs_review
+                        and result.observation.status == NodeStatus.success
+                    ):
+                        await self._run_auto_review(
+                            run_id=plan.run_id,
+                            origin_node=node,
+                            artifacts=result.artifacts,
+                            user_request=user_request,
+                            observations=observations,
+                        )
+
                     if result.should_replan:
                         return PlanExecutionResult(
                             observations=observations,
@@ -458,6 +473,51 @@ class Executor:
                 response=json.dumps(answers, ensure_ascii=False),
             )
         )
+
+    async def _run_auto_review(
+        self,
+        *,
+        run_id: str,
+        origin_node: PlanNode,
+        artifacts: list[ArtifactRecord],
+        user_request: str,
+        observations: list[Observation],
+    ) -> None:
+        """needs_review=true 触发的自动审查。
+
+        在主节点产出 ResearchReport 后合成一个 reviewer 子节点，调用
+        ``review_artifact`` 技能产出 ReviewVerdict。审查节点失败按 skip
+        处理：观测记录入栈但不影响主节点状态、不触发 replan。
+        """
+        report = next((a for a in artifacts if a.artifact_type == "ResearchReport"), None)
+        if report is None:
+            # needs_review 只在 ResearchReport 产出时有意义；其他情况静默跳过
+            return
+
+        synthetic = PlanNode(
+            node_id=f"{origin_node.node_id}_autoreview",
+            role=RoleId.reviewer,
+            goal=f"自动审查 {origin_node.node_id} 产出的研究报告",
+            inputs=[_artifact_ref(report)],
+            allowed_skills=["review_artifact"],
+            success_criteria=["生成 ReviewVerdict"],
+            failure_policy=FailurePolicy.skip,
+            expected_outputs=["ReviewVerdict"],
+            hitl_question="",
+            needs_review=False,
+        )
+        try:
+            review_result = await self._node_runner.run_node(
+                run_id=run_id,
+                node=synthetic,
+                user_request=user_request,
+            )
+        except BudgetExceededError:
+            # 预算耗尽是硬限制，让外层主循环统一处理
+            raise
+        except Exception:  # noqa: BLE001 — auto-review 失败按 skip 处理
+            return
+        observations.append(review_result.observation)
 
     def _is_ready(self, node: PlanNode, edges: list[PlanEdge], statuses: dict[str, NodeStatus]) -> bool:
         """判断节点是否满足所有入边条件，可以开始执行。"""

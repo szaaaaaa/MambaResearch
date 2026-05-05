@@ -89,6 +89,10 @@ class PlanNode(BaseModel):
     expected_outputs: list[str] = Field(default_factory=list)
     # 人机交互时向用户提出的问题
     hitl_question: str = ""
+    # 是否在该节点成功执行后自动触发 reviewer 审查
+    # 当为 true 且节点产出 ResearchReport 时，runtime 会合成一个 autoreview
+    # 子节点调用 review_artifact 技能；失败不影响主节点状态，避免一票否决。
+    needs_review: bool = False
 
 
 class EdgeCondition(str, Enum):

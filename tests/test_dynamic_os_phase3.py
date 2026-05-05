@@ -1970,6 +1970,117 @@ def test_executor_short_circuits_when_final_artifact_is_produced_without_review_
     assert events[-1].type == "run_terminate"
 
 
+def test_executor_auto_reviews_when_node_has_needs_review_flag() -> None:
+    """needs_review=true 的 writer 节点完成后，runtime 自动合成 reviewer 子节点。
+
+    避免 planner 显式排 reviewer 时撞上 post-review 角色限制；
+    这是 Path 2b 的核心行为契约。
+    """
+    role_registry = RoleRegistry.from_file()
+    artifact_store = InMemoryArtifactStore()
+    observation_store = InMemoryObservationStore()
+    events: list[object] = []
+
+    async def report_runner(ctx):
+        del ctx
+        return SkillOutput(
+            success=True,
+            output_artifacts=[
+                ArtifactRecord(
+                    artifact_id="report_autoreview_1",
+                    artifact_type="ResearchReport",
+                    producer_role=RoleId.writer,
+                    producer_skill="draft_report",
+                    payload={"report": "Final report"},
+                )
+            ],
+        )
+
+    async def review_runner(ctx):
+        # 验证 auto-review 把上游 ResearchReport 作为输入传进来
+        assert any(a.artifact_type == "ResearchReport" for a in ctx.input_artifacts)
+        return SkillOutput(
+            success=True,
+            output_artifacts=[
+                ArtifactRecord(
+                    artifact_id="verdict_autoreview_1",
+                    artifact_type="ReviewVerdict",
+                    producer_role=RoleId.reviewer,
+                    producer_skill="review_artifact",
+                    payload={"verdict": "accept", "weighted_score": 8.0, "threshold": 6.0},
+                )
+            ],
+        )
+
+    skill_registry = FakeSkillRegistry(
+        [
+            _skill_spec("draft_report", ["writer"], output_artifacts=["ResearchReport"]),
+            _skill_spec("review_artifact", ["reviewer"], output_artifacts=["ReviewVerdict"]),
+        ],
+        runners={"draft_report": report_runner, "review_artifact": review_runner},
+    )
+    policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
+    tools = ToolGateway(
+        registry=ToolRegistry.from_servers([]),
+        policy=policy,
+        mcp_invoker=lambda tool, payload: "unused",
+        event_sink=events.append,
+    )
+    node_runner = NodeRunner(
+        role_registry=role_registry,
+        skill_registry=skill_registry,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        tools=tools,
+        policy=policy,
+        event_sink=events.append,
+    )
+    planner = SequencePlanner(
+        [
+            RoutePlan(
+                run_id="run_autoreview",
+                planning_iteration=0,
+                horizon=1,
+                nodes=[
+                    PlanNode(
+                        node_id="node_report_1",
+                        role=RoleId.writer,
+                        goal="Write the report and request review",
+                        inputs=[],
+                        allowed_skills=["draft_report"],
+                        success_criteria=["report_drafted"],
+                        failure_policy="replan",
+                        expected_outputs=["ResearchReport"],
+                        needs_review=True,
+                    )
+                ],
+                edges=[],
+                planner_notes=[],
+                terminate=True,
+            )
+        ]
+    )
+    executor = Executor(
+        planner=planner,
+        node_runner=node_runner,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        policy=policy,
+        event_sink=events.append,
+    )
+
+    result = asyncio.run(executor.run(user_request="Write a report", run_id="run_autoreview"))
+
+    # writer 产出 ResearchReport + auto-review 产出 ReviewVerdict 都进了 final_artifacts
+    assert "artifact:ResearchReport:report_autoreview_1" in result.final_artifacts
+    assert "artifact:ReviewVerdict:verdict_autoreview_1" in result.final_artifacts
+
+    # 合成的 reviewer 节点 ID 形式：<原节点>_autoreview
+    saved_artifacts = artifact_store.list_all()
+    review_record = next(a for a in saved_artifacts if a.artifact_type == "ReviewVerdict")
+    assert review_record is not None
+
+
 def test_phase6_api_run_streams_dynamic_runtime_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.server.routes import runs as runs_route
     monkeypatch.setattr(runs_route, "_preflight_run_config", lambda: [])
