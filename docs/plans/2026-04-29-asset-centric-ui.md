@@ -59,7 +59,16 @@
   - tab 右键菜单可"关闭" / "关闭其他"
   - `npm run build` + `npx tsc --noEmit` 通过
 
-### [PENDING-VERIFY] 4. 工作台双栏 — 素材抽屉 + 对话主区
+### [DONE] 4. 工作台双栏 — 素材抽屉 + 对话主区
+
+**2026-05-16 收尾**：右"对话主区"在原 commit 链路里只落了 placeholder 提示文字。
+本次 commit `3a508c1` 把右栏接通真实 ``WorkbenchTab``：
+
+- ``WorkbenchTab`` 新加可选 ``conversation?: ConversationSummary`` prop；prop 存在时 ``currentBackend`` 跟 ``conversation.backend`` 走，``claudeConversationId`` 用 prop 值跳过 ``ensureConversation`` POST，新 effect 拉 segments 取最近 ``cli_session_id`` 作 ``claudeResumeId`` / Codex switchSession，并 hydrate messages 表
+- ``AssetWorkspace`` 删 placeholder，双栏 = ``AssetDrawer`` (320) + ``WorkbenchTab``；草稿单栏 = 仅 ``WorkbenchTab``
+- ``BucketContainer`` / ``DraftsTab`` 开 asset tab 时透传 ``activeProject`` 到 props
+- 验证：tsc clean、build 3.69s、playwright drafts→继续对话 → asset tab 右栏渲染 WorkbenchTab header/composer/PTY 区（替换原 placeholder 文字）；双栏布局静态验证（``isDraft`` 分支共用同一 WorkbenchTab），未做浏览器双栏可视化验证
+- 70 分留债：全局 ``store.claudeCode`` 仍是单例，asset tab → sidebar 工作台 nav 切回时 store 残留 asset 的 items；按 conversation 隔离的 store 重构留作后续
 - **What**: active 素材 tab 内显示双栏布局；左 320 是新组件 `AssetDrawer.tsx`（素材标识 72 + 关联文件树 + 底部关联管理按钮）；右是现有 `WorkbenchTab` 改造的对话主区。草稿 tab（无 asset_kind）走单栏（无 AssetDrawer）。AssetDrawer 文件树聚合：（a）该 conversation 关联的 `outputs/<run_id>/` 子目录；（b）classification.py 里位于该 asset_label 关联目录下的文件。显式"上传文件挂到素材"功能不在本 task 范围。
 - **Files**:
   - `frontend/src/components/workbench/AssetDrawer.tsx`（新文件）
