@@ -23,7 +23,7 @@
 
 MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
 
-- 提供 6 个研究向可视化域（工作台、技能、Agent 角色、4 bucket 文件管理、MCP 功能、情境性 tab）
+- 侧栏 4 bucket（实验/文献/数据集/灵感）+ 草稿箱 + 能力视图（技能、MCP 工具、工作台、Zotero 库）+ 运行历史/设置；右侧按需开情境性 tab
 - **多对话并行**：每条 conversation 绑死一个 backend（Claude 或 Codex），永不切换；不同 backend 的对话在 sidebar 上并列共存
 - 跨对话引用通过 `mamba_history` MCP tool 按需取（backend 主动调，懒拉不预 push）
 - LLM 智能完全交给已订阅的 Claude Code / Codex CLI
@@ -37,7 +37,7 @@ MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ MambaResearch UI（薄壳，本仓库写的）                         │
-│   - 6 个可视化域                                             │
+│   - sidebar 视图 + 右侧情境性 tab                            │
 │   - 项目注册表 + 会话编排薄表                                │
 │   - 文件分类索引 (.mambaresearch/classification.db)          │
 └──────────────────────┬───────────────────────────────────────┘
@@ -106,6 +106,9 @@ cd MambaResearch
 pip install -e .
 cd frontend && npm ci && cd ..
 
+# 一次性建好 .claude/skills 与 .codex/skills 的 NTFS junction → .skills-shared/
+pwsh scripts/skills_mirror.ps1 -Scope project
+
 # 启动
 python app.py              # 后端 → http://127.0.0.1:8000
 cd frontend && npm run dev  # 前端 → http://localhost:3000
@@ -123,23 +126,27 @@ python scripts/sync_subagents.py
 
 会把 8 个 .md 同步成 `.codex/agents/*.toml`，让 Codex CLI 也能 spawn 同一组 sub-agent。
 
-## 📦 6 个可视化域
+## 📦 视图布局
 
-| 域 | 做什么 |
+| 视图 | 做什么 |
 |---|---|
-| 工作台（Workbench） | Claude / Codex 会话主界面，含 slash 命令、HITL、CLI 切换 |
+| 4 bucket（实验/文献/数据集/灵感） | 项目文件按 LLM 增量分类的 4 个虚拟视图，分类期间统计实时刷新 |
+| 草稿箱 | 未素材化（未挂到 bucket）的 conversation 收纳处 |
 | 技能 | 列出 `.claude/skills/` 下所有 pipeline SKILL.md |
-| Agent 角色 | 占位（后续可扩展为 sub-agent 配置面板） |
-| 4 bucket（实验/文献/数据集/灵感） | 项目文件按 LLM 增量分类的 4 个虚拟视图 |
-| MCP 功能 | 5 子视图：servers / tools / 调用历史 / sandbox 试调 / 配置编辑 |
-| 情境性 tab | VSCode 风格 ephemeral：开 PDF 开文献 tab，跑实验开执行 tab，关掉消失 |
+| MCP 工具 | 5 子视图：servers / tools / 调用历史 / sandbox 试调 / 配置编辑 |
+| 工作台（Workbench） | Claude / Codex 会话主界面，含 slash 命令、HITL、CLI 切换 |
+| Zotero 库 | 内嵌 Zotero 浏览器 + 选中 PDF 一键拉到 workspace |
+| 运行历史 | 跨 conversation 的运行时间轴 |
+| 设置 | provider / MCP env / credentials / 项目级 lazy 配置 |
+| 情境性 tab（右侧） | VSCode 风格 ephemeral：开 PDF 开文献 tab，跑实验开执行 tab，关掉消失 |
 
 ## 🔌 内置 MCP Servers
 
-由 `src/server/integrations/*/mcp_server.py` 通过项目级 `.mcp.json` 暴露给 Claude PTY 子进程 / Codex app-server：
+由 `src/server/integrations/*/mcp_server.py` 注册；Claude PTY 通过 `--mcp-config` 注入运行时合并配置，Codex 走 app-server 协议加载：
 
 - **workspace.\*** — 文件分类索引读写
-- **zotero.\*** — Zotero Web API 客户端
+- **mamba_history.\*** — 跨 conversation 历史检索（`search_conversations` / `get_conversation_messages`），backend 按需懒拉
+- **zotero.\*** — Zotero Web API 客户端 + PDF 直接落到 workspace bucket
 - **colab.\*** — Drive Desktop 元数据 → Colab URL
 - **experiment.\*** — 本地 Python 子进程 + metric 流（`outputs/<run_id>/experiments/<exp_id>/result.json`）
 - **paper_search.\*** — 6 source（arXiv / Semantic Scholar / OpenAlex / Crossref / DOAJ / IEEE 部分）
@@ -153,11 +160,14 @@ MambaResearch/
 │   ├── claude_code/providers.json  # Claude Code provider 注册表
 │   ├── mcp/env_overrides.json      # MCP 子进程 user 层 env override
 │   └── codex/auth.json             # Codex OAuth profile 绑定
+├── .skills-shared/                 # pipeline SKILL.md 真相源（7 pipeline + classify-workspace）
 ├── .claude/
-│   ├── agents/                     # 8 个 sub-agent 真相源（.md）
-│   └── skills/                     # 7 + 1 个 SKILL.md（pipeline + classify-workspace）
+│   ├── agents/                     # 8 个 sub-agent 真相源（.md，git tracked）
+│   └── skills/                     # NTFS junction → .skills-shared/（gitignore）
 ├── .codex/
-│   └── agents/                     # 8 个 .toml（由 sync_subagents.py 生成）
+│   ├── agents/                     # 8 个 .toml（sync_subagents.py 生成，gitignore）
+│   ├── skills/                     # NTFS junction → .skills-shared/（gitignore）
+│   └── config.toml                 # 项目级 MCP for codex app-server
 ├── src/
 │   ├── server/
 │   │   ├── projects/               # 项目注册表 + active project env
@@ -172,7 +182,8 @@ MambaResearch/
 │   └── common/                     # 共享 utils
 ├── frontend/src/                   # React 19 + Tailwind + Zustand
 └── scripts/
-    └── sync_subagents.py           # .md → .toml 同步
+    ├── sync_subagents.py           # .claude/agents/*.md → .codex/agents/*.toml
+    └── skills_mirror.ps1           # 建/补 .claude/skills 与 .codex/skills 的 junction
 ```
 
 ## ⚙ 配置
@@ -188,7 +199,7 @@ MambaResearch/
 
 MCP server 命令行（`command` / `args`）由 `src/server/integrations/<name>/mcp_server.py` 的 `default_mcp_config()` 硬编码 + `src/server/mcp/registry.py:_read_builtin_helpers()` 注册；UI 只能改 env override，不可改命令行。
 
-API key 等凭证仍在 `.env`，通过设置面板"凭证"段落写入。
+API key（含 `ZOTERO_USER_ID` / `ZOTERO_API_KEY` 等）通过设置面板的 **credentials editor** 段落写入 `.env`，保存后清空输入框；后端读取时按需热加载。
 
 ## 🔁 自动化开发流程（/pipeline）
 
@@ -211,7 +222,7 @@ API key 等凭证仍在 `.env`，通过设置面板"凭证"段落写入。
 | 前端 | React 19 / TypeScript / Vite / Tailwind CSS |
 | LLM 出口 | Claude Code CLI（Pro/Max 订阅）或 Codex CLI（ChatGPT 订阅） |
 | 跨 CLI 桥 | continues v4.0.12 |
-| MCP servers | workspace / zotero / colab / experiment / paper_search |
+| MCP servers | workspace / mamba_history / zotero / colab / experiment / paper_search |
 | 持久化 | `~/.mambaresearch/mamba.db` + `<project>/.mambaresearch/*.db` |
 | 项目记忆 | `<project>/.mambaresearch/memory/*.md` + `@import` 双侧暴露给 CLAUDE.md / AGENTS.md |
 

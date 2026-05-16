@@ -17,7 +17,7 @@ import {
   listConversations,
   promoteToAsset,
 } from '../../api/conversations';
-import { getActiveProject } from '../../api/projects';
+import { getActiveProject, type Project } from '../../api/projects';
 import { useContextualTabs } from '../../store/contextual';
 
 const KIND_OPTIONS: { value: AssetKind; label: string; icon: LucideIcon }[] = [
@@ -247,6 +247,7 @@ const formatRelative = (ts: number): string => {
  */
 export const DraftsTab: React.FC = () => {
   const [drafts, setDrafts] = React.useState<ConversationSummary[]>([]);
+  const [activeProject, setActiveProject] = React.useState<Project | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [promoting, setPromoting] = React.useState<ConversationSummary | null>(null);
@@ -257,6 +258,7 @@ export const DraftsTab: React.FC = () => {
     setError(null);
     try {
       const project = await getActiveProject();
+      setActiveProject(project);
       if (!project) {
         setDrafts([]);
         return;
@@ -275,11 +277,12 @@ export const DraftsTab: React.FC = () => {
   }, [refresh]);
 
   const onContinue = (conv: ConversationSummary) => {
+    if (!activeProject) return;
     openTab({
       type: 'asset',
       title: conv.title || conv.id.slice(0, 8),
       key: conv.id,
-      props: { conversation: conv },
+      props: { conversation: conv, activeProject },
     });
   };
 

@@ -2,7 +2,11 @@ import React from 'react';
 import { LogOut, MessagesSquare, Send, Square, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
 import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
-import { getConversationMessages } from '../../api/conversations';
+import {
+  getConversationMessages,
+  type ConversationMessage,
+  type ConversationSummary,
+} from '../../api/conversations';
 import { parseSseFrames } from '../../utils/sse';
 import { MessageRenderer } from '../workbench/MessageRenderer';
 import { PermissionModal } from '../workbench/PermissionModal';
@@ -85,9 +89,25 @@ const writeLastConvId = (id: string | null) => {
 
 export interface WorkbenchTabProps {
   activeProject: Project;
+  /**
+   * 2026-04-29 asset-centric pivot：素材 tab 在右侧渲染 WorkbenchTab 时传入。
+   *
+   * 注入后行为：
+   * - currentBackend 用 ``conversation.backend``（绕过 ``session?.provider`` 推断）
+   * - ``claudeConversationId`` 直接用 ``conversation.id``，跳过 ``ensureConversation``
+   *   effect（不创建新 conv）
+   * - 拉 ``/api/conversations/<id>/segments`` 取最近 ``cli_session_id``：
+   *   Claude 设为 ``claudeResumeId`` 让 PTY 走 ``claude --resume <id>``；Codex
+   *   触发 ``handleSwitchSession`` 切到对应 SDK session
+   * - 从 ``conversation.messages`` hydrate 全局 store.claudeCode.items
+   *
+   * 不传则走原 sidebar 工作台 nav 路径——首次进 Claude tab 时
+   * ensureConversation 起新 conv。
+   */
+  conversation?: ConversationSummary;
 }
 
-export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => {
+export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conversation }) => {
   const {
     state,
     ccSetSession,
@@ -770,9 +790,14 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
     }
   };
 
-  // 当前后端：根据 session.provider 推断；无 session 时默认 claude（首次发送时会创建）。
-  // v3.3 multi-conversation：一条 conversation 绑死一个 backend，永不切换。
-  const currentBackend: 'claude' | 'codex' = session?.provider === 'codex' ? 'codex' : 'claude';
+  // 当前后端：v3.3 multi-conversation —— 一条 conversation 绑死一个 backend，永不切换。
+  // asset-centric pivot：``conversation`` prop 直接给定 backend（信号最强，跳过 session 推断）；
+  // 否则按 session.provider 推断；都没有时默认 claude（首次发送时会创建）。
+  const currentBackend: 'claude' | 'codex' = conversation
+    ? conversation.backend
+    : session?.provider === 'codex'
+      ? 'codex'
+      : 'claude';
 
   // 当前会话所属的 conversation_id（绑定 backend 后写入；mirror 写入 / hydrate 用）
   const conversationIdRef = React.useRef<string | null>(null);
@@ -819,12 +844,22 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
   // 拿到 conversationId 后，后端 PTY route 才会挂上 TurnTeer 把 PTY 输出 mirror 到
   // messages 表（Q1=B 决策）。
   //
+  // asset-centric pivot：``conversation`` prop 注入时直接用 prop.id，不发 POST
+  // （这条 conversation 已经在 bucket 里存在，复用即可）。
+  //
   // 失败兜底：sentinel 'no-mirror' 让 TerminalPane 仍 mount——后端拿到这个
   // sentinel 时识别成"跳过 TurnTeer"。否则 conv POST 一挂，整个 Claude tab 就
   // 永远卡"正在创建对话…"。mirror 失效只是降级，不阻断 PTY 主流。
   const NO_MIRROR_SENTINEL = 'no-mirror';
   React.useEffect(() => {
     if (currentBackend !== 'claude') return;
+    if (conversation) {
+      // 注入路径：用 prop 给定的 conversation.id；segment / resume 由下一个 effect 处理
+      if (claudeConversationId !== conversation.id) {
+        setClaudeConversationId(conversation.id);
+      }
+      return;
+    }
     if (claudeConversationId) return;
     let cancelled = false;
     void (async () => {
@@ -852,7 +887,88 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject }) => 
     return () => {
       cancelled = true;
     };
-  }, [currentBackend, claudeConversationId, activeProject.id]);
+  }, [currentBackend, claudeConversationId, activeProject.id, conversation]);
+
+  // asset-centric pivot —— 注入 conversation 时的全套同步：
+  //   1. 拉 /api/conversations/<id>/segments 取最大 segment_index 的 cli_session_id
+  //   2. Claude：设 claudeResumeId（PTY 走 claude --resume <id>），bump restart tick
+  //      Codex：fetch session detail 设为 active session（让 sendToBackend 找得到）
+  //   3. clearItems + hydrate from /api/conversations/<id>/messages
+  // lastInjectedConvIdRef 防止同 conversation 重复 inject；conversation prop 切到
+  // 新 id 时重新跑。
+  const lastInjectedConvIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!conversation) {
+      lastInjectedConvIdRef.current = null;
+      return;
+    }
+    if (lastInjectedConvIdRef.current === conversation.id) return;
+    lastInjectedConvIdRef.current = conversation.id;
+
+    let cancelled = false;
+    void (async () => {
+      let lastSessionId: string | null = null;
+      try {
+        const segResp = await fetch(
+          `${API_BASE}/api/conversations/${conversation.id}/segments`,
+        );
+        if (segResp.ok) {
+          const data = (await segResp.json()) as {
+            segments: Array<{ cli_session_id: string; segment_index: number }>;
+          };
+          const segs = data.segments ?? [];
+          if (segs.length > 0) {
+            const last = segs.reduce((a, b) => (a.segment_index >= b.segment_index ? a : b));
+            lastSessionId = last.cli_session_id;
+          }
+        }
+      } catch {
+        /* segments 不可读 → 后续走"无 resume / 空 history"路径 */
+      }
+      if (cancelled) return;
+
+      let messages: ConversationMessage[] = [];
+      try {
+        messages = await getConversationMessages(conversation.id);
+      } catch {
+        /* messages 不可读 → 空 hydrate */
+      }
+      if (cancelled) return;
+
+      ccClearItems();
+      if (messages.length > 0) {
+        ccHydrateFromMessages(messages);
+      }
+
+      if (conversation.backend === 'claude') {
+        setClaudeResumeId(lastSessionId);
+        setClaudeRestartTick((t) => t + 1);
+        setClaudePtyError(null);
+      } else if (lastSessionId) {
+        try {
+          const detailResp = await fetch(
+            `${API_BASE}/api/codex/sessions/${lastSessionId}`,
+          );
+          if (!cancelled && detailResp.ok) {
+            const info = (await detailResp.json()) as ClaudeCodeSessionInfo;
+            sessionRef.current = info;
+            ccSetSession(info);
+            writeLastSessionId(lastSessionId);
+          }
+        } catch {
+          /* session 已被 evict —— 下一次发送时会 requireSessionForSend 提示新建 */
+        }
+      } else {
+        // Codex 注入但还没有 segment —— 清掉 session 让用户感知"需要新建"
+        sessionRef.current = null;
+        ccSetSession(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversation, ccClearItems, ccHydrateFromMessages, ccSetSession]);
 
   const openCwdModal = React.useCallback(async () => {
     setCwdError(null);

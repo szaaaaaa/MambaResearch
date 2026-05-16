@@ -273,15 +273,17 @@ export const BucketContainer: React.FC<Props> = ({
   }
 
   // 单击素材卡：替换当前 active asset tab；Cmd/Ctrl/中键：新 tab 打开
+  // props 含 activeProject —— AssetWorkspace → WorkbenchTab 必备（PTY cwd / project_id）
   const openAssetTab = (
     conv: ConversationSummary,
     mode: 'replace' | 'new',
   ): void => {
+    if (!activeProject) return;
     const init = {
       type: 'asset' as const,
       title: conv.asset_label || conv.title || conv.id.slice(0, 8),
       key: conv.id,
-      props: { conversation: conv },
+      props: { conversation: conv, activeProject },
     };
     if (mode === 'new') {
       openTab(init);
