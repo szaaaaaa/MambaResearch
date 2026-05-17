@@ -2,6 +2,8 @@ import React from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { FileEntry } from '../../api/projects';
 import { useContextualTabs } from '../../store/contextual';
+import { API_BASE } from '../../store';
+import { MarkdownBlock } from '../workbench/MarkdownBlock';
 
 interface Props {
   file: FileEntry;
@@ -228,7 +230,7 @@ export const FileItemRow: React.FC<Props> = ({ file, onAction }) => {
             </div>
           ) : null}
           {previewOpen ? (
-            <PreviewModal path={file.path} onClose={() => setPreviewOpen(false)} />
+            <PreviewModal file={file} onClose={() => setPreviewOpen(false)} />
           ) : null}
         </div>
       </div>
@@ -236,32 +238,293 @@ export const FileItemRow: React.FC<Props> = ({ file, onAction }) => {
   );
 };
 
-/** 简化预览 modal：只显示路径 + "暂未实装"提示。预览功能本身留待后续。 */
-const PreviewModal: React.FC<{ path: string; onClose: () => void }> = ({ path, onClose }) => (
-  <div
-    className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-    onClick={onClose}
-    role="dialog"
-    aria-modal="true"
-  >
+/**
+ * 文件预览 modal —— 按 subtype 分发渲染器：
+ * - ``sketch``        → ``<img>`` 直接 embed
+ * - ``markdown_note`` → fetch text → 复用 ``MarkdownBlock`` 渲染
+ * - ``csv``           → fetch text → 手写 split parse → ``<table>``
+ * - ``parquet`` / ``npz`` / ``npy`` → 显示元信息 + 提示后端 sample API 待接入
+ * - 其它 / 无 subtype → fetch text → ``<pre>`` 显示头 ``MAX_TEXT_LINES`` 行
+ *
+ * 文件字节走现有 ``/api/literature/file?path=`` 端点（已 generic，不限 PDF）。
+ * 安全：后端 ``_require_indexed_file`` 校验 path 在分类索引内，避免任意路径读取。
+ */
+const MAX_TEXT_LINES = 200;
+const MAX_TEXT_BYTES = 256 * 1024;
+const MAX_CSV_ROWS = 200;
+
+const PreviewModal: React.FC<{ file: FileEntry; onClose: () => void }> = ({
+  file,
+  onClose,
+}) => {
+  const filename = basename(file.path);
+  const subtype = file.subtype ?? '';
+  const fileUrl = `${API_BASE}/api/literature/file?path=${encodeURIComponent(file.path)}`;
+
+  return (
     <div
-      className="max-w-lg rounded bg-white p-4 shadow-lg"
-      onClick={(e) => e.stopPropagation()}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
     >
-      <div className="mb-2 text-sm font-semibold">预览</div>
-      <div className="font-mono text-xs text-slate-600 break-all">{path}</div>
-      <div className="mt-3 text-xs text-slate-500">
-        预览实装暂留——目前显示路径供复制。CSV / Parquet 表格预览待后续接入。
+      <div
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-slate-900">{filename}</div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-slate-500" title={file.path}>
+              {file.path}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-3 rounded bg-slate-100 px-3 py-1 text-xs hover:bg-slate-200"
+          >
+            关闭
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          <PreviewBody file={file} subtype={subtype} fileUrl={fileUrl} />
+        </div>
       </div>
-      <div className="mt-3 text-right">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded bg-slate-100 px-3 py-1 text-xs hover:bg-slate-200"
-        >
-          关闭
-        </button>
-      </div>
+    </div>
+  );
+};
+
+const PreviewBody: React.FC<{ file: FileEntry; subtype: string; fileUrl: string }> = ({
+  file,
+  subtype,
+  fileUrl,
+}) => {
+  if (subtype === 'sketch') {
+    return <ImagePreview src={fileUrl} alt={basename(file.path)} />;
+  }
+  if (subtype === 'parquet' || subtype === 'npz' || subtype === 'npy') {
+    return <BinaryPlaceholder file={file} />;
+  }
+  if (subtype === 'csv') {
+    return <CsvPreview fileUrl={fileUrl} />;
+  }
+  if (subtype === 'markdown_note') {
+    return <MarkdownPreview fileUrl={fileUrl} />;
+  }
+  return <TextPreview fileUrl={fileUrl} />;
+};
+
+const ImagePreview: React.FC<{ src: string; alt: string }> = ({ src, alt }) => (
+  <div className="flex items-center justify-center">
+    <img src={src} alt={alt} className="max-h-[70vh] max-w-full object-contain" />
+  </div>
+);
+
+const BinaryPlaceholder: React.FC<{ file: FileEntry }> = ({ file }) => (
+  <div className="space-y-3 text-sm text-slate-700">
+    <div>
+      <span className="text-slate-500">大小：</span>
+      {formatSize(file.size)}
+    </div>
+    <div>
+      <span className="text-slate-500">subtype：</span>
+      <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">{file.subtype}</code>
+    </div>
+    <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      二进制列式 / numpy 数据需要后端解析 sample（pyarrow / numpy）。该端点尚未实装，可通过
+      工作台让 Claude 直接调 Read 工具或写一段 Python 看头 N 行。
     </div>
   </div>
 );
+
+interface FetchTextState {
+  text: string;
+  truncated: boolean;
+  error: string | null;
+  loading: boolean;
+}
+
+function useFileText(fileUrl: string, maxBytes: number = MAX_TEXT_BYTES): FetchTextState {
+  const [state, setState] = React.useState<FetchTextState>({
+    text: '',
+    truncated: false,
+    error: null,
+    loading: true,
+  });
+  React.useEffect(() => {
+    let cancelled = false;
+    setState({ text: '', truncated: false, error: null, loading: true });
+    void (async () => {
+      try {
+        const resp = await fetch(fileUrl);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        const truncated = blob.size > maxBytes;
+        const slice = truncated ? blob.slice(0, maxBytes) : blob;
+        const text = await slice.text();
+        if (!cancelled) setState({ text, truncated, error: null, loading: false });
+      } catch (err) {
+        if (!cancelled)
+          setState({
+            text: '',
+            truncated: false,
+            error: err instanceof Error ? err.message : String(err),
+            loading: false,
+          });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileUrl, maxBytes]);
+  return state;
+}
+
+const LoadingHint: React.FC = () => (
+  <div className="text-xs text-slate-400">加载中…</div>
+);
+
+const ErrorHint: React.FC<{ error: string }> = ({ error }) => (
+  <div className="rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+    加载失败：{error}
+  </div>
+);
+
+const TextPreview: React.FC<{ fileUrl: string }> = ({ fileUrl }) => {
+  const { text, truncated, error, loading } = useFileText(fileUrl);
+  if (loading) return <LoadingHint />;
+  if (error) return <ErrorHint error={error} />;
+  const lines = text.split(/\r?\n/);
+  const displayLines = lines.slice(0, MAX_TEXT_LINES);
+  const moreLines = lines.length > MAX_TEXT_LINES;
+  return (
+    <div>
+      <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-slate-800">
+        {displayLines.join('\n')}
+      </pre>
+      {(moreLines || truncated) && (
+        <div className="mt-3 text-xs text-slate-500">
+          仅显示前 {MAX_TEXT_LINES} 行 · 文件{truncated ? '过大已截断到首段' : '更长'}。
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MarkdownPreview: React.FC<{ fileUrl: string }> = ({ fileUrl }) => {
+  const { text, truncated, error, loading } = useFileText(fileUrl);
+  if (loading) return <LoadingHint />;
+  if (error) return <ErrorHint error={error} />;
+  return (
+    <div>
+      <MarkdownBlock>{text}</MarkdownBlock>
+      {truncated && (
+        <div className="mt-3 text-xs text-slate-500">文件过大，仅渲染首段。</div>
+      )}
+    </div>
+  );
+};
+
+/** 简单 CSV 解析：仅支持双引号包裹的字段 + 内部双重引号转义；不处理 \r 内嵌、unicode BOM
+ *  以外的奇特 dialect。MVP 够用，复杂表格让用户拉 Pandas/DuckDB 看。 */
+function parseCsv(text: string, maxRows: number): { rows: string[][]; truncated: boolean } {
+  // 去掉 UTF-8 BOM
+  const clean = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const rows: string[][] = [];
+  let field = '';
+  let row: string[] = [];
+  let inQuotes = false;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (clean[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ',') {
+      row.push(field);
+      field = '';
+      continue;
+    }
+    if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && clean[i + 1] === '\n') i++;
+      row.push(field);
+      rows.push(row);
+      field = '';
+      row = [];
+      if (rows.length >= maxRows) {
+        return { rows, truncated: i < clean.length - 1 };
+      }
+      continue;
+    }
+    field += ch;
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return { rows, truncated: false };
+}
+
+const CsvPreview: React.FC<{ fileUrl: string }> = ({ fileUrl }) => {
+  const { text, truncated: fetchTruncated, error, loading } = useFileText(fileUrl);
+  if (loading) return <LoadingHint />;
+  if (error) return <ErrorHint error={error} />;
+  const { rows, truncated } = parseCsv(text, MAX_CSV_ROWS);
+  if (rows.length === 0) {
+    return <div className="text-xs text-slate-500">（空表）</div>;
+  }
+  const [header, ...body] = rows;
+  return (
+    <div className="overflow-auto">
+      <table className="min-w-full border-collapse border border-slate-200 text-xs">
+        <thead className="sticky top-0 bg-slate-50">
+          <tr>
+            {header.map((cell, i) => (
+              <th
+                key={i}
+                className="border border-slate-200 px-2 py-1 text-left font-semibold text-slate-700"
+              >
+                {cell}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri} className={ri % 2 ? 'bg-slate-50' : ''}>
+              {r.map((cell, ci) => (
+                <td
+                  key={ci}
+                  className="border border-slate-200 px-2 py-1 align-top font-mono text-slate-700"
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {(truncated || fetchTruncated) && (
+        <div className="mt-3 text-xs text-slate-500">
+          仅显示前 {MAX_CSV_ROWS} 行 · {fetchTruncated ? '文件过大已截断至首段' : '表更长'}。
+        </div>
+      )}
+    </div>
+  );
+};
