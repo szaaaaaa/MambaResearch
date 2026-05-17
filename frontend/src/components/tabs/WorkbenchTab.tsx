@@ -896,11 +896,43 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
   //   3. clearItems + hydrate from /api/conversations/<id>/messages
   // lastInjectedConvIdRef 防止同 conversation 重复 inject；conversation prop 切到
   // 新 id 时重新跑。
+  //
+  // sidebar 工作台 nav 路径（无 conversation prop）：从 cc_last_conversation_id
+  // localStorage 拉上次的 conv，ccClearItems + ccHydrateFromMessages 覆盖
+  // 全局 store.items。这条路径同时承担两件事：
+  //   - 浏览器刷新后恢复上次工作台对话内容（原本就该有的能力）
+  //   - 关闭 asset tab 切回 sidebar 时，覆盖 asset 在全局 store 留下的残留
+  //     （store 单例 70 分债的最小手术修复，避免按 conversation 隔离整套重构）
+  // sidebar 路径无 lastConvId（fresh boot）时只 ccClearItems，保持空状态。
+  // 守护：lastInjectedConvIdRef 双用——asset tab 路径存 conversation.id 防重复 inject；
+  // sidebar 路径用 sentinel SIDEBAR_HYDRATED 防 effect 每次 render 都跑（cc* mutator
+  // 在 store.tsx 里不是 useCallback，引用每次 render 都变，dep 变化会触发死循环）。
+  const SIDEBAR_HYDRATED = '<sidebar-hydrated>';
   const lastInjectedConvIdRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (!conversation) {
-      lastInjectedConvIdRef.current = null;
-      return;
+      if (lastInjectedConvIdRef.current === SIDEBAR_HYDRATED) return;
+      lastInjectedConvIdRef.current = SIDEBAR_HYDRATED;
+      const lastConvId = readLastConvId();
+      let cancelled = false;
+      void (async () => {
+        let messages: ConversationMessage[] = [];
+        if (lastConvId) {
+          try {
+            messages = await getConversationMessages(lastConvId);
+          } catch {
+            /* 拉失败 → 走空 hydrate（清掉残留） */
+          }
+        }
+        if (cancelled) return;
+        ccClearItems();
+        if (messages.length > 0) {
+          ccHydrateFromMessages(messages);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
     if (lastInjectedConvIdRef.current === conversation.id) return;
     lastInjectedConvIdRef.current = conversation.id;
