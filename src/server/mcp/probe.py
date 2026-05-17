@@ -147,11 +147,19 @@ async def _run_probe_subprocess(
         env=env,
     )
 
+    # MCP spec 要求 initialize.params 含 protocolVersion + capabilities + clientInfo。
+    # 我们 builtin server 的手写 _handle_initialize 不校验 clientInfo，但严格走
+    # MCP SDK 的上游 server（如 paper_search_mcp）会用 pydantic ClientRequest 校验
+    # 整个 schema，缺 clientInfo 直接 -32602 Invalid request parameters。
     init_req = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "initialize",
-        "params": {"protocolVersion": "2024-11-05", "capabilities": {}},
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "mambaresearch-probe", "version": "1.0.0"},
+        },
     }
     list_req = {
         "jsonrpc": "2.0",
