@@ -907,6 +907,17 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
   // 守护：lastInjectedConvIdRef 双用——asset tab 路径存 conversation.id 防重复 inject；
   // sidebar 路径用 sentinel SIDEBAR_HYDRATED 防 effect 每次 render 都跑（cc* mutator
   // 在 store.tsx 里不是 useCallback，引用每次 render 都变，dep 变化会触发死循环）。
+  // mutator 在 store.tsx 内不是 useCallback，每次 render 引用都变；放进 effect dep
+  // 列表会让 effect 反复跑 → cleanup 立刻把 IIFE cancel → hydrate 永远到不了 commit。
+  // 用 ref 抓最新引用，effect dep 只放 ``conversation?.id`` 与 backend，保证只在
+  // conversation 真正变化时跑。
+  const ccClearItemsRef = React.useRef(ccClearItems);
+  const ccHydrateFromMessagesRef = React.useRef(ccHydrateFromMessages);
+  const ccSetSessionRef = React.useRef(ccSetSession);
+  ccClearItemsRef.current = ccClearItems;
+  ccHydrateFromMessagesRef.current = ccHydrateFromMessages;
+  ccSetSessionRef.current = ccSetSession;
+
   const SIDEBAR_HYDRATED = '<sidebar-hydrated>';
   const lastInjectedConvIdRef = React.useRef<string | null>(null);
   React.useEffect(() => {
@@ -925,13 +936,18 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
           }
         }
         if (cancelled) return;
-        ccClearItems();
+        ccClearItemsRef.current();
         if (messages.length > 0) {
-          ccHydrateFromMessages(messages);
+          ccHydrateFromMessagesRef.current(messages);
         }
       })();
       return () => {
         cancelled = true;
+        // React 18 StrictMode：dev 模式下 mount → cleanup → mount 两次。如果不
+        // reset ref，第二次 mount 看到 ref===SIDEBAR_HYDRATED 直接跳过 hydrate，
+        // 但第一次的 IIFE 已经被 cancelled=true 阻断在 commit 前 → hydrate 永远不
+        // 跑。reset 让第二次 mount 重新启动一次 IIFE 完整跑通。
+        lastInjectedConvIdRef.current = null;
       };
     }
     if (lastInjectedConvIdRef.current === conversation.id) return;
@@ -967,9 +983,9 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
       }
       if (cancelled) return;
 
-      ccClearItems();
+      ccClearItemsRef.current();
       if (messages.length > 0) {
-        ccHydrateFromMessages(messages);
+        ccHydrateFromMessagesRef.current(messages);
       }
 
       if (conversation.backend === 'claude') {
@@ -984,7 +1000,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
           if (!cancelled && detailResp.ok) {
             const info = (await detailResp.json()) as ClaudeCodeSessionInfo;
             sessionRef.current = info;
-            ccSetSession(info);
+            ccSetSessionRef.current(info);
             writeLastSessionId(lastSessionId);
           }
         } catch {
@@ -993,14 +1009,17 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
       } else {
         // Codex 注入但还没有 segment —— 清掉 session 让用户感知"需要新建"
         sessionRef.current = null;
-        ccSetSession(null);
+        ccSetSessionRef.current(null);
       }
     })();
 
     return () => {
       cancelled = true;
+      // React 18 StrictMode reset 同 sidebar 路径——dev 双 mount 时让第二次 mount
+      // 重新 inject，避免第一次 IIFE 被 cancel 永久阻塞 hydrate。
+      lastInjectedConvIdRef.current = null;
     };
-  }, [conversation, ccClearItems, ccHydrateFromMessages, ccSetSession]);
+  }, [conversation?.id, conversation?.backend]);
 
   const openCwdModal = React.useCallback(async () => {
     setCwdError(null);
