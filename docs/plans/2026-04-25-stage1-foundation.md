@@ -1,7 +1,7 @@
 # Plan: Stage 1 — 基座（Project Registry + Workspace + 启动流 + Sidebar IA + Workbench cwd 绑定）
 
 **Created**: 2026-04-26
-**Status**: planning
+**Status**: DONE（Project Registry / Workspace 概念 / Home Picker / Sidebar IA / Workbench cwd 绑定全落地 — 详见 [[project_mamba_pivot_progress]]）
 **Scope**: MambaResearch 架构枢转的第一阶段——把"研究 Project"做成一等公民、Workspace 概念落地、Home Picker 启动流、Sidebar 解锁 placeholder、工作台 session 绑定 project 的 cwd。
 **所属大方向 plan**: `C:\Users\ziang\.claude\plans\project-llm-dag-claude-code-cli-codex-breezy-quill.md`
 

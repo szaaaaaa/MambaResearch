@@ -1,7 +1,7 @@
 # Plan: Stage 4 — 外部集成（Zotero / Colab / 实验执行）+ 情境性 tab（实验 / 文献 / Agent 思考）
 
 **Created**: 2026-04-26
-**Status**: planning（依赖 Stage 1+2+3）
+**Status**: DONE（zotero/colab/experiment 3 MCP server + 3 情境 tab + LibraryTab + 文件 action 浮条全落地；9 项浏览器手测仍 PENDING-VERIFY，详见 plan 末尾进度日志）
 **Scope**: 三个外部集成 MCP server（zotero/colab/experiment）+ 三个 VSCode 风格 ephemeral 情境 tab + 文件 action 浮条按 subtype 实装。
 **所属大方向 plan**: `C:\Users\ziang\.claude\plans\project-llm-dag-claude-code-cli-codex-breezy-quill.md`
 

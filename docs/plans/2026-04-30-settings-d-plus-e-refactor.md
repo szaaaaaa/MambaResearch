@@ -1,7 +1,7 @@
 # Plan: 设置面板 D+E 方案重构
 
 **Created**: 2026-04-30
-**Status**: in-progress
+**Status**: DONE（`configs/agent.yaml` 物理删 → 4 个 json 注册表 + `.mambaresearch/config.json` 项目级 lazy 配置全落地；SettingsModal 4 自描述视图）
 **Scope**: 拆掉 `configs/agent.yaml`，把启动配置物理拆成 3 个 json 注册表；为 active project 加 lazy-write 的 `.research-agent/config.toml`；前端 SettingsModal 删 9 个错位 section，改成 4 个自描述视图（项目 / CLI / MCP / Skills&Agents）。目标是让"设置"成为系统真实结构的镜像，而不是再积累 dead 字段的全局 yaml。
 
 ## Tasks

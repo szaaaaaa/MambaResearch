@@ -1,7 +1,7 @@
 # Plan: Stage 2 — 文件管理可视化（Classification Index + 4 bucket 全部实装）
 
 **Created**: 2026-04-26
-**Status**: planning（依赖 Stage 1 完成）
+**Status**: DONE（classification.db schema / 增量 scanner / workspace.* MCP 5 工具 / 4 bucket 视图 + subtype 分组 / ClassifyHintBar / BucketEmptyState 4 tier 分级全落地）
 **Scope**: 给 Stage 1 已激活的 project / workspace 加文件分类索引；4 bucket（实验 / 文献 / 数据集 / 灵感）从空态升级为真实视图；workspace.* MCP server 让 Claude Code 通过自然语言分类、查询、纠正。
 **所属大方向 plan**: `C:\Users\ziang\.claude\plans\project-llm-dag-claude-code-cli-codex-breezy-quill.md`
 

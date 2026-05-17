@@ -1,7 +1,7 @@
 # Plan: Stage 3 — MCP 可视化（含 sandbox 试调） + 跨 CLI 桥
 
 **Created**: 2026-04-26
-**Status**: planning（依赖 Stage 1 + Stage 2）
+**Status**: DONE（MCP 可视化层 5 子视图 / mcp_calls 表 v2 migration / continues 桥 / conversation_switch 路由全落地 — Task 4 PUT 端点 lean 实现，Task 5 设计偏离详见 plan 内 "Stage 3 偏离 / 待补" 段）
 **Scope**: MCP 工具 tab 五子视图全部实装；continues 桥集成让工作台能在 Claude / Codex 之间无缝切换；conversation_segments 表的写入逻辑落地。
 **所属大方向 plan**: `C:\Users\ziang\.claude\plans\project-llm-dag-claude-code-cli-codex-breezy-quill.md`
 

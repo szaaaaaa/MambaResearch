@@ -1,5 +1,7 @@
 # 2026-04-27 架构枢转：层级 3 — 多对话并行 + 撤回 hybrid master transcript
 
+**Status**: DONE（v3.3 multi-conversation 6 commit 链全落地 — 撤回 v3.2 hybrid MT + auto-compact / conversations 表加 backend 列 / mamba_history.* MCP server 上线 / messages 表降级为 read-only mirror）
+
 ## TL;DR
 
 v3.2 的 hybrid master transcript（messages 表作为真相源 + 切换时 first-message 注入 + auto-compact）是为了维护"单对话无缝切 backend"这个**伪需求**而做的整套机制。真实科研工作流是多线并行的（找文献 / 跑实验 / 写报告），不同 backend 各自专精，强塞同一 conversation 反而乱。

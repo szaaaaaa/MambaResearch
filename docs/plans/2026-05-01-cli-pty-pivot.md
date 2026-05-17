@@ -1,7 +1,7 @@
 # Plan: 聊天面板从 SDK + 自定义 React 渲染切到 xterm + PTY + 直 spawn CLI
 
 **Created**: 2026-05-01
-**Status**: in-progress
+**Status**: DONE（PTY 桥 + xterm 整套落地，Claude SDK chat backend 全删 commits 437f1f4 / 1989935 / dde73e2；Task 10 浏览器手测仍 PENDING-VERIFY）
 **Scope**: 把 Claude Code 聊天 tab 从"`claude_agent_sdk` SDK 集成 + 自定义事件渲染 + Modal HITL"重构为"xterm.js + 后端 PTY 桥 + 直接 spawn `claude` 二进制 + CLI 自带 y/n"。Codex 暂保留旧 SDK 路径不动（下个 plan 处理）。设置 / 项目 / MCP / Skills 视图整套保留不动。messages 表保留，PTY stdout 做 output tee + 启发式切 turn 写入，让 mamba_history MCP 仍能查到聊天历史。
 
 ## Tasks

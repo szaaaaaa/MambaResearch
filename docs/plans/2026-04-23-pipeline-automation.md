@@ -1,7 +1,7 @@
 # Plan: 自动化开发 Pipeline
 
 **Created**: 2026-04-23
-**Status**: in-progress
+**Status**: DONE（`/pipeline` skill 已在 `.skills-shared/` 落地并被实际使用）
 **Scope**: 建设 `/pipeline` 元 skill，使规划阶段集中所有决策、执行阶段完全无人介入；升级 `/plan` template 强制写 DP/EP/FP/SSP 四段；失败就暴露不兜底。
 
 ## Tasks
