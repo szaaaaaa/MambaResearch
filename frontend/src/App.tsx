@@ -153,7 +153,6 @@ const AppContent: React.FC = () => {
           <BucketContainer
             bucket="experiment"
             title="实验"
-            description="该项目尚未建立分类索引。"
             icon={FlaskConical}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
@@ -170,7 +169,6 @@ const AppContent: React.FC = () => {
           <BucketContainer
             bucket="literature"
             title="文献"
-            description="该项目尚未建立分类索引。"
             icon={FileText}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
@@ -181,7 +179,6 @@ const AppContent: React.FC = () => {
           <BucketContainer
             bucket="dataset"
             title="数据集"
-            description="该项目尚未建立分类索引。"
             icon={Database}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}
@@ -192,7 +189,6 @@ const AppContent: React.FC = () => {
           <BucketContainer
             bucket="idea"
             title="灵感"
-            description="该项目尚未建立分类索引。"
             icon={Lightbulb}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)}

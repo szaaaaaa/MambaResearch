@@ -35,7 +35,6 @@ const PRIMARY_TO_ASSET_KIND: Partial<Record<PrimaryBucket, AssetKind>> = {
 interface Props {
   bucket: PrimaryBucket;
   title: string;
-  description: string;
   icon: LucideIcon;
   /** Stage 2 Task 7 — bucket 空态分级用。父组件提供"打开设置 / 跳工作台"两条出口。 */
   onOpenSettings?: () => void;
@@ -83,7 +82,6 @@ const ActionBtn: React.FC<ButtonProps> = ({
 export const BucketContainer: React.FC<Props> = ({
   bucket,
   title,
-  description,
   icon: Icon,
   onOpenSettings,
   onNavigateToWorkbench,
@@ -248,7 +246,6 @@ export const BucketContainer: React.FC<Props> = ({
             <BucketEmptyState
               icon={Icon}
               title={title}
-              description={description}
               tier="no_source_dirs"
               hint={`当前 active project 的 workspace 元数据不可访问：${error}`}
               actions={
@@ -544,7 +541,6 @@ export const BucketContainer: React.FC<Props> = ({
           <BucketEmptyState
             icon={Icon}
             title={title}
-            description={description}
             tier={tier}
             hint={scanMessage ?? undefined}
             actions={renderActions()}
