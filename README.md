@@ -142,7 +142,7 @@ python scripts/sync_subagents.py
 
 ## 🔌 内置 MCP Servers
 
-由 `src/server/integrations/*/mcp_server.py` 注册；Claude PTY 通过 `--mcp-config` 注入运行时合并配置，Codex 走 app-server 协议加载：
+由 `src/server/integrations/*/mcp_server.py` 注册；Workbench 的 Claude / Codex 聊天主路径都走 CLI PTY。Claude PTY 通过 `--mcp-config` 注入运行时合并配置；Codex PTY 继承 Codex CLI 自身的 auth/config。
 
 - **workspace.\*** — 文件分类索引读写
 - **mamba_history.\*** — 跨 conversation 历史检索（`search_conversations` / `get_conversation_messages`），backend 按需懒拉
@@ -167,14 +167,14 @@ MambaResearch/
 ├── .codex/
 │   ├── agents/                     # 8 个 .toml（sync_subagents.py 生成，gitignore）
 │   ├── skills/                     # NTFS junction → .skills-shared/（gitignore）
-│   └── config.toml                 # 项目级 MCP for codex app-server
+│   └── config.toml                 # Codex CLI 项目级配置
 ├── src/
 │   ├── server/
 │   │   ├── projects/               # 项目注册表 + active project env
 │   │   ├── workspace/              # 分类索引 + workspace MCP
-│   │   ├── terminal/               # Claude PTY 桥（pywinpty）+ ANSI strip + turn tee
+│   │   ├── terminal/               # Claude/Codex PTY 桥（pywinpty）+ ANSI strip + turn tee
 │   │   ├── claude_code/            # provider 注册表 + 历史 session 存储（GET-only）
-│   │   ├── codex/                  # Codex app-server 会话编排（仍走 SDK，下个 plan PTY pivot）
+│   │   ├── codex/                  # Legacy Codex app-server 兼容层（非聊天主路径）
 │   │   ├── integrations/           # zotero / colab / experiment MCP servers
 │   │   ├── mcp/                    # MCP server registry
 │   │   ├── bridge/                 # cross-CLI continues 桥（v3.2 hybrid MT 已撤回）

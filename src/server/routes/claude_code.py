@@ -1,6 +1,6 @@
-"""Claude Code 会话只读路由（plan 2026-05-01-cli-pty-pivot Task 6a）。
+"""Claude Code 会话只读路由。
 
-经 Task 6 删除 SDK 集成后，本路由只负责"会话列表 popover"用的最小 CRUD：
+经 CLI PTY pivot 后，本路由只负责"会话列表 popover"用的最小 CRUD：
 
 - ``GET    /api/claude-code/sessions``                 列出 DB 里所有 session
 - ``GET    /api/claude-code/sessions/{id}/messages``   拉 session 历史事件流（前端

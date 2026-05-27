@@ -1,4 +1,4 @@
-"""PTY 输出解析与 turn tee —— Task 3 of plan 2026-05-01-cli-pty-pivot。
+"""PTY 输出解析与 turn tee。
 
 模块职责
 --------
@@ -113,9 +113,16 @@ class TurnTeer:
     * ``store_writer`` 抛任何异常都吞到 logger，**绝不**让 PTY 主流断（acceptance #4）。
     """
 
-    def __init__(self, conversation_id: str, store_writer: StoreWriter) -> None:
+    def __init__(
+        self,
+        conversation_id: str,
+        store_writer: StoreWriter,
+        *,
+        assistant_served_by: str = "claude",
+    ) -> None:
         self._conv_id = conversation_id
         self._writer = store_writer
+        self._assistant_served_by = assistant_served_by
         self._user_buf: list[str] = []
         self._asst_buf: list[str] = []
         self._closed = False
@@ -168,7 +175,9 @@ class TurnTeer:
             self._asst_buf.clear()
             clean = strip_ansi(raw).strip()
             if clean:
-                self._safe_write(role="assistant", text=clean, served_by="claude")
+                self._safe_write(
+                    role="assistant", text=clean, served_by=self._assistant_served_by
+                )
         # 再 flush 用户输入
         if self._user_buf:
             user_raw = "".join(self._user_buf)

@@ -1,8 +1,8 @@
 """PTY 桥模块——把 ``claude`` / ``codex`` CLI 二进制以 ConPTY 子进程方式跑，
 通过 WebSocket 把 stdin/stdout 字节流双向桥到浏览器 xterm。
 
-设计动机见 ``docs/plans/2026-05-01-cli-pty-pivot.md``——CLI 自带 HITL 提示 /
-slash 命令 / session 生命周期，前端没必要在 SDK 之上再实现一遍。
+设计动机：CLI 自带 HITL 提示 / slash 命令 / session 生命周期，前端没必要在
+SDK 之上再实现一遍；Workbench 的 Claude / Codex 聊天主路径统一走这里。
 
 模块外露入口：
 

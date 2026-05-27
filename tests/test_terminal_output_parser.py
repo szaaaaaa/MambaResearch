@@ -1,4 +1,4 @@
-"""``output_parser`` 的单元测试 —— Task 3 of plan 2026-05-01-cli-pty-pivot。
+"""``output_parser`` 的单元测试。
 
 覆盖：
 * :func:`strip_ansi` —— CSI / OSC / 控制字符 / \\r\\n 折叠
@@ -110,6 +110,18 @@ def test_turn_teer_user_then_assistant_round_trip() -> None:
     assert all(c["conversation_id"] == "conv-A" for c in writer.calls)
     assert writer.calls[0]["served_by"] == "user"
     assert writer.calls[1]["served_by"] == "claude"
+
+
+def test_turn_teer_can_tag_assistant_as_codex() -> None:
+    writer = _RecordingWriter()
+    teer = TurnTeer("conv-C", writer, assistant_served_by="codex")
+
+    teer.on_user_input(b"hello\r")
+    teer.on_pty_output("hi from codex")
+    teer.aclose()
+
+    asst = next(c for c in writer.calls if c["role"] == "assistant")
+    assert asst["served_by"] == "codex"
 
 
 def test_turn_teer_three_turns_meets_80pct_threshold() -> None:

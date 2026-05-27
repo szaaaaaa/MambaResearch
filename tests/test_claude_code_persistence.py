@@ -1,7 +1,6 @@
 """Claude Code 会话 SQLite 持久化（``ClaudeCodeStore``）的单元测试。
 
-plan 2026-05-01-cli-pty-pivot Task 6c：删除 SDK 集成后，``SessionManager`` /
-REST API 相关测试一并移除；本文件只保留纯存储层 CRUD 测试——storage.py 仍是
+CLI PTY pivot 后，``SessionManager`` / REST API 相关测试一并移除；本文件只保留纯存储层 CRUD 测试——storage.py 仍是
 聊天历史 mirror 的事实源（PTY tee + 新简化的 GET 端点都依赖它）。
 """
 

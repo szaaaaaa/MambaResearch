@@ -52,9 +52,9 @@ If you find yourself about to write code without having invoked the applicable o
 - `src/server/projects/registry.py` — active project 单例 + 进程级 env 管理；改动会影响所有 session 创建路径与 MCP 子进程启动
 - `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
 - `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
-- `src/server/terminal/pty_bridge.py` — Claude PTY 子进程桥（pywinpty + provider env 注入）；改完跑 `pytest tests/test_terminal_pty_bridge.py`
+- `src/server/terminal/pty_bridge.py` — Claude/Codex PTY 子进程桥（pywinpty + provider env 注入）；改完跑 `pytest tests/test_terminal_pty_bridge.py`
 - `src/server/terminal/output_parser.py` — PTY → messages 表 mirror 的 ANSI strip + turn 切分；改完跑 `pytest tests/test_terminal_output_parser.py`
-- `src/server/codex/session_manager.py` — Codex app-server 会话编排（Codex 仍走 SDK，下个 plan 再 PTY pivot）；改完跑对应测试
+- `src/server/codex/session_manager.py` — legacy Codex app-server 兼容层；Workbench 聊天主路径走 `src/server/terminal/`，不要用它恢复旧 SSE/composer 方向
 
 规则：改完运行 `pytest tests/`；失败必须修复。
 

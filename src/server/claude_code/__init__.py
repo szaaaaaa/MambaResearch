@@ -1,6 +1,6 @@
 """Claude Code 历史会话存储层。
 
-经 plan 2026-05-01-cli-pty-pivot Task 6 删除 SDK 集成后，本包只剩两块：
+经 CLI PTY pivot 后，本包只剩两块：
 
 * :mod:`storage` —— DB 持久化（sessions + messages），路由层只读使用
 * :mod:`providers` —— provider registry，被 ``terminal/pty_bridge`` 与

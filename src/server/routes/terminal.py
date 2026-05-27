@@ -3,8 +3,7 @@
 端点
 ----
 ``WS /api/terminal/{backend}``
-    建立一条 PTY 通道。``backend`` 当前只支持 ``claude``（``codex`` 留待下个
-    plan）。query params:
+    建立一条 PTY 通道。``backend`` 当前支持 ``claude`` / ``codex``。query params:
 
     * ``cwd`` —— 子进程工作目录；不传则用 active project 路径。必须存在。
     * ``provider`` —— provider registry 键（如 ``anthropic`` / ``deepseek``）；
@@ -30,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -52,8 +52,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-SUPPORTED_BACKENDS = {"claude"}
+SUPPORTED_BACKENDS = {"claude", "codex"}
 NO_MIRROR_SENTINEL = "no-mirror"
+
+
+def _resolve_codex_bin() -> str:
+    for candidate in ("codex.cmd", "codex.exe", "codex"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    raise ValueError("codex binary not found on PATH. Run `codex doctor` or install Codex CLI.")
 
 
 def _resolve_argv(backend: str, *, resume: str | None) -> list[str]:
@@ -63,6 +71,11 @@ def _resolve_argv(backend: str, *, resume: str | None) -> list[str]:
         if resume:
             argv.extend(["--resume", resume])
         return argv
+    if backend == "codex":
+        codex_bin = _resolve_codex_bin()
+        if resume:
+            return [codex_bin, "resume", "--no-alt-screen", resume]
+        return [codex_bin, "--no-alt-screen"]
     raise ValueError(f"unsupported backend: {backend!r}")
 
 
@@ -180,7 +193,11 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
     # conversation_id 给定才挂 tee——没给说明前端不要这条 WS 写 messages 表
     # （比如纯设置面板里测试 PTY 时）。tee 抛异常不影响 PTY 主流（acceptance #4）。
     teer: TurnTeer | None = (
-        TurnTeer(conversation_id, messages_store.append_message)
+        TurnTeer(
+            conversation_id,
+            messages_store.append_message,
+            assistant_served_by=backend,
+        )
         if _should_mirror(conversation_id)
         else None
     )

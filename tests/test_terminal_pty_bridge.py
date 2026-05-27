@@ -1,4 +1,4 @@
-"""PTY 桥模块测试（plan 2026-05-01-cli-pty-pivot Task 2）。
+"""PTY 桥模块测试。
 
 不依赖 ``claude`` CLI——用 Windows 自带 ``cmd /c echo`` / 短 python 子进程做
 dummy spawn，覆盖 ``PtyBridge`` 的 spawn / write / resize / signal /
@@ -229,6 +229,26 @@ def test_terminal_no_mirror_sentinel_disables_turn_teer() -> None:
     assert _should_mirror(None) is False
     assert _should_mirror("no-mirror") is False
     assert _should_mirror("conv-real") is True
+
+
+def test_terminal_resolve_argv_codex_prefers_cmd(monkeypatch) -> None:
+    from src.server.routes import terminal as terminal_routes
+
+    def fake_which(name: str) -> str | None:
+        return "C:/bin/codex.cmd" if name == "codex.cmd" else None
+
+    monkeypatch.setattr(terminal_routes.shutil, "which", fake_which)
+
+    assert terminal_routes._resolve_argv("codex", resume=None) == [
+        "C:/bin/codex.cmd",
+        "--no-alt-screen",
+    ]
+    assert terminal_routes._resolve_argv("codex", resume="abc123") == [
+        "C:/bin/codex.cmd",
+        "resume",
+        "--no-alt-screen",
+        "abc123",
+    ]
 
 
 def test_bridge_aclose_terminates_subprocess(tmp_cwd: Path) -> None:
