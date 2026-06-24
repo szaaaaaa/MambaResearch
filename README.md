@@ -215,6 +215,8 @@ cd frontend && npm ci && cd ..
 
 cp .env.example .env
 # 编辑 .env 填入 OPENAI_API_KEY 或 OPENROUTER_API_KEY 等
+cp configs/agent.example.yaml configs/agent.yaml
+# configs/agent.yaml 是本地配置，前端设置页会写这个文件
 
 # 启动两个进程
 python app.py                # 后端 → http://127.0.0.1:8010
@@ -283,7 +285,7 @@ cd frontend && npm run dev   # 前端 → http://127.0.0.1:3010
 ```
 MambaResearch/
 ├── app.py                          # FastAPI 入口（端口 8010）
-├── configs/agent.yaml              # 主配置（LLM / MCP / 预算 / 审稿阈值 等）
+├── configs/agent.example.yaml      # 配置模板；复制为本地 configs/agent.yaml
 ├── src/
 │   ├── dynamic_os/
 │   │   ├── runtime.py              # 运行时入口

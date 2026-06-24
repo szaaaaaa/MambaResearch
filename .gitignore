@@ -24,12 +24,17 @@ dist/
 *.egg-info/
 
 # Runtime data
+configs/agent.yaml
+configs/agent.local.*
 data/
 outputs/
 logs/
 evolved_skills/
 *.log
 .pytest_cache/
+.pytest_cache*
+.pytest_fix_*
+tmp_pytest_*
 .tmp/
 .tmp_*
 .tmp_*/
@@ -49,3 +54,4 @@ frontend/dist/
 # Local agent run outputs / browser MCP artifacts
 $rundir/
 .playwright-mcp/
+.learnings/
