@@ -3,6 +3,10 @@ import { AgentRoleId } from '../../../types';
 import {
   getFirstModelForProvider,
   getModelOptionsForProvider,
+  getModelsForProviderVendor,
+  getVendorFromProviderModel,
+  getVendorOptionsForProvider,
+  isVendorScopedProvider,
   LLM_PROVIDER_OPTIONS,
 } from '../../../modelOptions';
 import { useAppContext, API_BASE } from '../../../store';
@@ -99,7 +103,15 @@ export const ModelsSection: React.FC = () => {
             const providerOptions = provider
               ? LLM_PROVIDER_OPTIONS
               : [{ value: '', label: '请选择提供方' }, ...LLM_PROVIDER_OPTIONS];
-            const modelOptions = provider ? getModelOptionsForProvider(provider, catalogs) : [];
+            const isVendorScoped = isVendorScopedProvider(provider);
+            const vendorOptions = isVendorScoped ? getVendorOptionsForProvider(provider, catalogs) : [];
+            const vendorValue = isVendorScoped ? getVendorFromProviderModel(provider, roleConfig.model, catalogs) : '';
+            const modelOptions =
+              provider && isVendorScoped
+                ? getModelsForProviderVendor(provider, vendorValue, catalogs)
+                : provider
+                  ? getModelOptionsForProvider(provider, catalogs)
+                  : [];
             const safeOptions =
               modelOptions.length > 0
                 ? modelOptions
@@ -122,7 +134,7 @@ export const ModelsSection: React.FC = () => {
             return (
               <div key={target.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                 <div className="mb-4 text-sm font-semibold text-slate-900">{target.label}</div>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className={`grid gap-4 ${isVendorScoped ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
                   <Select
                     label="提供方"
                     options={providerOptions}
@@ -168,6 +180,19 @@ export const ModelsSection: React.FC = () => {
                       });
                     }}
                   />
+                  {isVendorScoped ? (
+                    <Select
+                      label="厂商"
+                      options={vendorOptions.length > 0 ? vendorOptions : [{ value: '', label: '正在加载厂商...' }]}
+                      value={vendorValue}
+                      disabled={!provider || vendorOptions.length === 0}
+                      onChange={(event) => {
+                        const nextVendor = event.target.value;
+                        const nextModel = getModelsForProviderVendor(provider, nextVendor, catalogs)[0]?.value || '';
+                        target.update({ model: nextModel });
+                      }}
+                    />
+                  ) : null}
                   <Select
                     label="模型"
                     options={safeOptions}

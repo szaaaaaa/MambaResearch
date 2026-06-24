@@ -77,22 +77,22 @@ llm:
   role_models:
     conductor:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
     researcher:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
     experimenter:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
     analyst:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
     writer:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
     reviewer:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
 auth:
   openai_codex:
     default_profile: default
@@ -241,20 +241,18 @@ agent:
   routing:
     planner_llm:
       provider: openrouter
-      model: openai/gpt-4o
+      model: openai/gpt-5.5
       temperature: 0.1
   experiment_plan:
     enabled: true
     mode: optimize
     max_iterations: 6
-    gpu: cpu  # 默认 cpu —— 让 LLM 默认产 numpy 代码而非 torch+cuda
+    gpu: cpu
     objective: ''
     exec_timeout_sec: 120
     max_per_rq: 2
     require_human_results: false
     workspace:
-      # numpy_minimal = 纯 numpy 轻量模板（零外部依赖、checkpoint 容错）
-      # 想跑 torch+CIFAR10 改成 generic 或 builtin，并把 gpu 调成 cuda
       template: numpy_minimal
       custom_path: ''
       mutable_files:
