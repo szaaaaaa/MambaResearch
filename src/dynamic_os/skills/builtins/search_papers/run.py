@@ -12,9 +12,15 @@ async def run(ctx: SkillContext) -> SkillOutput:
 
     payload = dict(search_plan.payload)
     queries = [str(item).strip() for item in payload.get("search_queries", []) if str(item).strip()]
+    if not queries:
+        return SkillOutput(
+            success=False,
+            error="search_papers requires non-empty SearchPlan.search_queries",
+        )
+
     routes = dict(payload.get("query_routes", {})) if isinstance(payload.get("query_routes"), dict) else {}
     recommended_sources = [str(s).strip() for s in payload.get("recommended_sources", []) if str(s).strip()]
-    resolved_queries = queries or [ctx.user_request or ctx.goal]
+    resolved_queries = queries
     results: list[dict] = []
     warnings: list[str] = []
     seen: set[str] = set()
