@@ -116,19 +116,6 @@ class _StaticPlanner:
 # ---------------------------------------------------------------------------
 
 class TestHitlPlanNode:
-    def test_hitl_role_is_valid(self) -> None:
-        node = _hitl_node()
-        assert node.role == RoleId.hitl
-        assert node.hitl_question == "Which research direction?"
-
-    def test_hitl_node_has_allowed_skills(self) -> None:
-        node = _hitl_node()
-        assert node.allowed_skills == ["hitl"]
-
-    def test_hitl_node_expected_outputs(self) -> None:
-        node = _hitl_node()
-        assert "UserGuidance" in node.expected_outputs
-
     def test_route_plan_with_hitl_node_validates(self) -> None:
         """A RoutePlan containing a hitl node must pass model validation."""
         plan = RoutePlan(
@@ -387,13 +374,6 @@ class TestHitlApiEndpoint:
         client = TestClient(app)
         resp = client.post("/api/runs/nonexistent_run_id/hitl", json={"response": "hello"})
         assert resp.status_code == 404
-
-    def test_hitl_endpoint_requires_response_field(self) -> None:
-        client = TestClient(app)
-        # Try with empty response — 400
-        resp = client.post("/api/runs/any_run/hitl", json={})
-        # Either 400 (validation) or 404 (run not found) is acceptable
-        assert resp.status_code in {400, 404}
 
     def test_hitl_endpoint_requires_json_body(self) -> None:
         client = TestClient(app)

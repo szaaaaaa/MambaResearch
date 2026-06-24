@@ -251,6 +251,8 @@ export interface RunArtifact {
   artifact_type: string;
   producer_role: string;
   producer_skill: string;
+  created_at?: string;
+  source_inputs?: string[];
 }
 
 export interface RunEvent {
@@ -272,6 +274,34 @@ export interface RunEvent {
   producerSkill?: string;
   iteration: number | null;
   detail: string;
+}
+
+export interface RunTraceNode {
+  node_id: string;
+  role: string;
+  goal: string;
+  allowed_skills: string[];
+  inputs: string[];
+  statuses: Record<string, unknown>[];
+  skill_invocations: Record<string, unknown>[];
+  tool_calls: Record<string, unknown>[];
+  observations: Record<string, unknown>[];
+  produced_artifacts: string[];
+}
+
+export interface RunTrace {
+  run_id: string;
+  status: string;
+  route_plan: Record<string, unknown> | null;
+  planner_rounds: Record<string, unknown>[];
+  nodes: RunTraceNode[];
+  tool_calls: Record<string, unknown>[];
+  artifacts: RunArtifact[];
+  policy_blocks: Record<string, unknown>[];
+  replans: Record<string, unknown>[];
+  errors: Record<string, unknown>[];
+  final_artifacts: unknown[];
+  events: Record<string, unknown>[];
 }
 
 export interface HitlRequest {

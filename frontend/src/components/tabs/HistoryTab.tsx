@@ -1,11 +1,11 @@
 import React from 'react';
 import { AlertCircle, ArrowLeft, ChevronRight, Download, LoaderCircle, X } from 'lucide-react';
 import { API_BASE } from '../../store';
-import { NodeStatusMap, RoutePlan, RoutePlanNode, RouteEdge, RunArtifact, RunEvent } from '../../types';
+import { NodeStatusMap, RoutePlan, RoutePlanNode, RouteEdge, RunArtifact, RunEvent, RunTrace, RunTraceNode } from '../../types';
 import { Button } from '../ui';
 import { RouteGraph } from '../RouteGraph';
 import { BehaviorTimeline } from '../BehaviorTimeline';
-import { artifactLabel, roleLabel, formatTimestamp } from '../../labels';
+import { artifactLabel, eventTypeLabel, formatTime, nodeStatusLabel, roleLabel, skillLabel, toolLabel } from '../../labels';
 
 interface HistoryRunSummary {
   run_id: string;
@@ -146,6 +146,272 @@ function normalizeRunEvents(rawEvents: unknown[]): RunEvent[] {
   return events;
 }
 
+interface ReplayTimelineItem {
+  id: string;
+  type: string;
+  ts: string;
+  title: string;
+  detail: string;
+  nodeId: string;
+}
+
+function traceNodeId(record: Record<string, unknown>): string {
+  const observation = isRecord(record.observation) ? record.observation : null;
+  return String(record.node_id || record.nodeId || observation?.node_id || '');
+}
+
+function traceTimestamp(record: Record<string, unknown>): string {
+  return String(record.ts || record.created_at || '');
+}
+
+function traceText(record: Record<string, unknown>): string {
+  const observation = isRecord(record.observation) ? record.observation : null;
+  return String(record.reason || record.detail || record.error || record.message || observation?.what_happened || '').trim();
+}
+
+function traceStatus(record: Record<string, unknown>): string {
+  const observation = isRecord(record.observation) ? record.observation : null;
+  return String(record.status || observation?.status || '');
+}
+
+function latestNodeStatus(node: RunTraceNode): string {
+  const latest = node.statuses.length > 0 ? node.statuses[node.statuses.length - 1] : null;
+  return latest ? traceStatus(latest) : '';
+}
+
+function nodeDuration(node: RunTraceNode): string {
+  const timestamps = [...node.statuses, ...node.skill_invocations, ...node.tool_calls]
+    .map(traceTimestamp)
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (timestamps.length < 2) return '';
+  const ms = timestamps[timestamps.length - 1] - timestamps[0];
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function buildReplayTimeline(trace: RunTrace): ReplayTimelineItem[] {
+  const items: ReplayTimelineItem[] = [];
+  trace.planner_rounds.forEach((round, idx) => {
+    const plan = isRecord(round.plan) ? round.plan : null;
+    const nodes = Array.isArray(plan?.nodes) ? plan.nodes.length : 0;
+    items.push({
+      id: `planner-${idx}`,
+      type: 'plan_update',
+      ts: traceTimestamp(round),
+      title: `Planner round ${round.planning_iteration ?? idx + 1}`,
+      detail: nodes ? `${nodes} nodes planned` : '',
+      nodeId: '',
+    });
+  });
+  trace.nodes.forEach((node) => {
+    node.statuses.forEach((status, idx) => {
+      const value = traceStatus(status);
+      items.push({
+        id: `node-${node.node_id}-${idx}`,
+        type: 'node_status',
+        ts: traceTimestamp(status),
+        title: `${roleLabel(node.role)} / ${node.node_id}`,
+        detail: value ? nodeStatusLabel(value) : node.goal,
+        nodeId: node.node_id,
+      });
+    });
+  });
+  trace.tool_calls.forEach((call, idx) => {
+    items.push({
+      id: `tool-${idx}`,
+      type: 'tool_invoke',
+      ts: traceTimestamp(call),
+      title: toolLabel(String(call.tool_id || call.toolId || 'tool')),
+      detail: [skillLabel(String(call.skill_id || call.skillId || '')), traceNodeId(call)].filter(Boolean).join(' / '),
+      nodeId: traceNodeId(call),
+    });
+  });
+  trace.artifacts.forEach((artifact, idx) => {
+    items.push({
+      id: `artifact-${artifact.artifact_id || idx}`,
+      type: 'artifact_created',
+      ts: artifact.created_at || '',
+      title: artifactLabel(artifact.artifact_type),
+      detail: [artifact.artifact_id, roleLabel(artifact.producer_role), skillLabel(artifact.producer_skill)].filter(Boolean).join(' / '),
+      nodeId: '',
+    });
+  });
+  trace.policy_blocks.forEach((block, idx) => {
+    items.push({
+      id: `policy-${idx}`,
+      type: 'policy_block',
+      ts: traceTimestamp(block),
+      title: 'Policy block',
+      detail: traceText(block),
+      nodeId: traceNodeId(block),
+    });
+  });
+  trace.errors.forEach((error, idx) => {
+    items.push({
+      id: `error-${idx}`,
+      type: 'error',
+      ts: traceTimestamp(error),
+      title: 'Error',
+      detail: traceText(error) || traceStatus(error),
+      nodeId: traceNodeId(error),
+    });
+  });
+  trace.replans.forEach((replan, idx) => {
+    items.push({
+      id: `replan-${idx}`,
+      type: 'replan',
+      ts: traceTimestamp(replan),
+      title: 'Replan',
+      detail: traceText(replan),
+      nodeId: traceNodeId(replan),
+    });
+  });
+  return items.sort((a, b) => {
+    const left = a.ts ? new Date(a.ts).getTime() : Number.MAX_SAFE_INTEGER;
+    const right = b.ts ? new Date(b.ts).getTime() : Number.MAX_SAFE_INTEGER;
+    return left - right;
+  });
+}
+
+function ReplayWorkbench({ trace }: { trace: RunTrace | null }) {
+  const [selectedNodeId, setSelectedNodeId] = React.useState('');
+  React.useEffect(() => {
+    setSelectedNodeId((current) =>
+      trace?.nodes.some((node) => node.node_id === current) ? current : trace?.nodes[0]?.node_id || ''
+    );
+  }, [trace]);
+
+  if (!trace) return null;
+  const timeline = buildReplayTimeline(trace);
+  const selectedNode = trace.nodes.find((node) => node.node_id === selectedNodeId) || trace.nodes[0] || null;
+  const nodeErrors = selectedNode
+    ? trace.errors.filter((item) => traceNodeId(item) === selectedNode.node_id)
+    : [];
+  const nodeReplans = selectedNode
+    ? trace.replans.filter((item) => !traceNodeId(item) || traceNodeId(item) === selectedNode.node_id)
+    : [];
+
+  return (
+    <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">REPLAY</p>
+          <h3 className="mt-2 text-base font-semibold text-slate-900">运行回放</h3>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            ['plan_update', trace.planner_rounds.length],
+            ['node_status', trace.nodes.length],
+            ['tool_invoke', trace.tool_calls.length],
+            ['artifact_created', trace.artifacts.length],
+            ['policy_block', trace.policy_blocks.length],
+            ['error', trace.errors.length],
+            ['replan', trace.replans.length],
+          ].map(([type, count]) => (
+            <span key={String(type)} className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+              {eventTypeLabel(String(type))} {count}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+        <div className="space-y-2">
+          {timeline.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => item.nodeId && setSelectedNodeId(item.nodeId)}
+              className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                item.nodeId && item.nodeId === selectedNode?.node_id
+                  ? 'border-slate-900 bg-slate-900 text-white'
+                  : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700">
+                  {eventTypeLabel(item.type)}
+                </span>
+                {item.ts ? <span className="text-[11px] opacity-70">{formatTime(item.ts)}</span> : null}
+              </div>
+              <p className="mt-2 text-sm font-semibold">{item.title}</p>
+              {item.detail ? <p className="mt-1 text-xs opacity-75">{item.detail}</p> : null}
+            </button>
+          ))}
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">NODE DETAIL</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {trace.nodes.map((node) => (
+              <button
+                key={node.node_id}
+                type="button"
+                onClick={() => setSelectedNodeId(node.node_id)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                  selectedNode?.node_id === node.node_id
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {node.node_id}
+              </button>
+            ))}
+          </div>
+
+          {selectedNode ? (
+            <div className="mt-5 space-y-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
+                    {roleLabel(selectedNode.role)}
+                  </span>
+                  <span className="font-mono text-xs text-slate-500">{selectedNode.node_id}</span>
+                </div>
+                <p className="mt-2 text-sm font-medium leading-6 text-slate-900">{selectedNode.goal}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Status</p>
+                  <p className="mt-1 text-sm text-slate-700">{nodeStatusLabel(latestNodeStatus(selectedNode))}</p>
+                </div>
+                <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Duration</p>
+                  <p className="mt-1 text-sm text-slate-700">{nodeDuration(selectedNode) || '-'}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Input refs</p>
+                <p className="mt-1 break-words font-mono text-xs leading-6 text-slate-600">
+                  {selectedNode.inputs.length ? selectedNode.inputs.join(' / ') : '-'}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Output refs</p>
+                <p className="mt-1 break-words font-mono text-xs leading-6 text-slate-600">
+                  {selectedNode.produced_artifacts.length ? selectedNode.produced_artifacts.join(' / ') : '-'}
+                </p>
+              </div>
+              {nodeErrors.length || nodeReplans.length ? (
+                <div className="space-y-2">
+                  {[...nodeErrors, ...nodeReplans].map((item, idx) => (
+                    <p key={idx} className="rounded-2xl bg-white px-3 py-2 text-xs leading-5 text-slate-600 ring-1 ring-slate-200">
+                      {traceText(item) || traceStatus(item)}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function renderArtifactPayload(payload: Record<string, unknown>): React.ReactNode {
   const keys = Object.keys(payload);
   if (keys.length === 0) {
@@ -241,10 +507,12 @@ function ArtifactDetailModal({ detail, onClose }: { detail: ArtifactDetailState;
 function RunDetailView({
   detail,
   events,
+  trace,
   onBack,
 }: {
   detail: HistoryRunDetail;
   events: RunEvent[];
+  trace: RunTrace | null;
   onBack: () => void;
 }) {
   const [artifactDetail, setArtifactDetail] = React.useState<ArtifactDetailState | null>(null);
@@ -281,6 +549,8 @@ function RunDetailView({
           {routePlan?.nodes.length ? (
             <RouteGraph routePlan={routePlan} nodeStatus={detail.node_status} />
           ) : null}
+
+          <ReplayWorkbench trace={trace} />
 
           {detail.artifacts.length > 0 ? (
             <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
@@ -366,6 +636,7 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
   const [detailError, setDetailError] = React.useState('');
   const [runDetail, setRunDetail] = React.useState<HistoryRunDetail | null>(null);
   const [runEvents, setRunEvents] = React.useState<RunEvent[]>([]);
+  const [runTrace, setRunTrace] = React.useState<RunTrace | null>(null);
 
   const fetchRuns = React.useCallback(() => {
     setLoading(true);
@@ -393,19 +664,21 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
     setDetailError('');
     setRunDetail(null);
     setRunEvents([]);
+    setRunTrace(null);
     Promise.all([
       fetch(`${API_BASE}/api/runs/${runId}/state`).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<HistoryRunDetail>;
       }),
-      fetch(`${API_BASE}/api/runs/${runId}/events`).then((res) => {
+      fetch(`${API_BASE}/api/runs/${runId}/trace`).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<unknown[]>;
+        return res.json() as Promise<RunTrace>;
       }),
     ])
-      .then(([state, rawEvents]) => {
+      .then(([state, trace]) => {
         setRunDetail(state);
-        setRunEvents(normalizeRunEvents(rawEvents));
+        setRunTrace(trace);
+        setRunEvents(normalizeRunEvents(trace.events));
         setDetailLoading(false);
       })
       .catch((err: unknown) => {
@@ -418,6 +691,7 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
     setSelectedRunId(null);
     setRunDetail(null);
     setRunEvents([]);
+    setRunTrace(null);
     setDetailError('');
   };
 
@@ -441,7 +715,7 @@ export const HistoryTab: React.FC<{ compact?: boolean }> = ({ compact = false })
       );
     }
     if (runDetail) {
-      return <RunDetailView detail={runDetail} events={runEvents} onBack={handleBack} />;
+      return <RunDetailView detail={runDetail} events={runEvents} trace={runTrace} onBack={handleBack} />;
     }
   }
 

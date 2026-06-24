@@ -218,13 +218,6 @@ def test_get_run_state_returns_404_when_missing(tmp_path: Path, monkeypatch: pyt
     assert response.status_code == 404
 
 
-def test_get_run_state_404_when_outputs_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(runs_route, "ROOT", tmp_path)
-    client = TestClient(app)
-    response = client.get("/api/runs/run_nonexistent/state")
-    assert response.status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # GET /api/runs/{run_id}/events
 # ---------------------------------------------------------------------------
@@ -287,6 +280,79 @@ def test_get_run_events_returns_empty_list_for_empty_log(tmp_path: Path, monkeyp
     response = client.get("/api/runs/run_test_empty_log/events")
     assert response.status_code == 200
     assert response.json() == []
+
+
+# ---------------------------------------------------------------------------
+# GET /api/runs/{run_id}/trace
+# ---------------------------------------------------------------------------
+
+
+def test_get_run_trace_returns_trace_and_redacts_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    run_dir = outputs / "run_trace_test"
+    run_dir.mkdir()
+    state = {
+        "run_id": "run_trace_test",
+        "status": "completed",
+        "route_plan": {},
+        "node_status": {"node_1": "success"},
+        "artifacts": [{"artifact_id": "art_1", "artifact_type": "SourceSet", "producer_role": "researcher", "producer_skill": "search_papers"}],
+        "report_text": "",
+    }
+    plan = {
+        "nodes": [
+            {
+                "node_id": "node_1",
+                "role": "researcher",
+                "goal": "Search papers",
+                "allowed_skills": ["search_papers"],
+                "inputs": ["artifact:SearchPlan:plan_1"],
+            }
+        ],
+        "edges": [],
+    }
+    events = [
+        {"type": "plan_update", "ts": "2026-03-13T12:00:00+00:00", "run_id": "run_trace_test", "planning_iteration": 0, "plan": plan},
+        {"type": "node_status", "ts": "2026-03-13T12:00:01+00:00", "run_id": "run_trace_test", "node_id": "node_1", "role": "researcher", "status": "running"},
+        {"type": "skill_invoke", "ts": "2026-03-13T12:00:02+00:00", "run_id": "run_trace_test", "node_id": "node_1", "skill_id": "search_papers", "phase": "start"},
+        {"type": "tool_invoke", "ts": "2026-03-13T12:00:03+00:00", "run_id": "run_trace_test", "node_id": "node_1", "skill_id": "search_papers", "tool_id": "mcp.search.query", "phase": "start", "headers": "Authorization: Bearer sk-bearer-secret"},
+        {"type": "artifact_created", "ts": "2026-03-13T12:00:04+00:00", "run_id": "run_trace_test", "artifact_id": "art_1", "artifact_type": "SourceSet", "producer_role": "researcher", "producer_skill": "search_papers"},
+        {"type": "observation", "ts": "2026-03-13T12:00:05+00:00", "run_id": "run_trace_test", "observation": {"node_id": "node_1", "status": "success", "produced_artifacts": ["artifact:SourceSet:art_1"]}},
+        {"type": "policy_block", "ts": "2026-03-13T12:00:06+00:00", "run_id": "run_trace_test", "blocked_action": "env read", "reason": "OPENAI_API_KEY=sk-test-secret"},
+        {"type": "replan", "ts": "2026-03-13T12:00:07+00:00", "run_id": "run_trace_test", "reason": "retry with narrower query", "previous_iteration": 0, "new_iteration": 1},
+        {"type": "run_terminate", "ts": "2026-03-13T12:00:08+00:00", "run_id": "run_trace_test", "reason": "done", "final_artifacts": ["artifact:SourceSet:art_1"]},
+    ]
+    artifacts = [
+        {
+            "artifact_id": "art_1",
+            "artifact_type": "SourceSet",
+            "producer_role": "researcher",
+            "producer_skill": "search_papers",
+            "payload": {"api_key": "sk-test-secret", "sources": [{"title": "A paper"}]},
+        }
+    ]
+    (run_dir / "research_state.json").write_text(json.dumps(state), encoding="utf-8")
+    (run_dir / "events.log").write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+    (run_dir / "artifacts_full.json").write_text(json.dumps(artifacts), encoding="utf-8")
+    monkeypatch.setattr(runs_route, "ROOT", tmp_path)
+
+    client = TestClient(app)
+    response = client.get("/api/runs/run_trace_test/trace")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] == "run_trace_test"
+    assert len(data["planner_rounds"]) == 1
+    assert data["nodes"][0]["node_id"] == "node_1"
+    assert data["nodes"][0]["produced_artifacts"] == ["artifact:SourceSet:art_1"]
+    assert data["tool_calls"][0]["tool_id"] == "mcp.search.query"
+    assert data["tool_calls"][0]["headers"] == "Authorization=[REDACTED]"
+    assert data["policy_blocks"][0]["reason"] == "OPENAI_API_KEY=[REDACTED]"
+    dumped = json.dumps(data)
+    assert "sk-test-secret" not in dumped
+    assert "sk-bearer-secret" not in dumped
+    assert "[REDACTED]" in dumped
 
 
 # ---------------------------------------------------------------------------

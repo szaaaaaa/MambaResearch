@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import traceback
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,10 @@ _ACTIVE_RUNS: dict[str, asyncio.Task[None]] = {}
 _ACTIVE_RUNS_LOCK = asyncio.Lock()
 _ACTIVE_RUNTIMES: dict[str, DynamicResearchRuntime] = {}
 _ACTIVE_RUNTIMES_LOCK = asyncio.Lock()
+_SENSITIVE_KEY_PARTS = ("api_key", "apikey", "token", "secret", "password", "credential", "authorization", "env")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([a-z0-9_-]*(?:api[_-]?key|token|secret|password|credential|authorization))\b\s*[:=]\s*((?:[a-z][a-z0-9+.-]*\s+)?[^\s,;]+)"
+)
 
 
 def _configured_llm_providers(config: dict[str, Any]) -> set[str]:
@@ -320,6 +325,10 @@ async def get_run_state(run_id: str):
 
 @router.get("/api/runs/{run_id}/events")
 async def get_run_events(run_id: str):
+    return _load_run_events(run_id)
+
+
+def _load_run_events(run_id: str) -> list[dict[str, Any]]:
     events_path = _get_outputs_dir() / run_id / "events.log"
     if not events_path.exists():
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
@@ -340,6 +349,145 @@ async def get_run_events(run_id: str):
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"failed to read events: {exc}") from exc
     return events
+
+
+def _redact_trace(value: Any, key: str = "") -> Any:
+    lowered = key.lower()
+    if any(part in lowered for part in _SENSITIVE_KEY_PARTS):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {k: _redact_trace(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_trace(item, key) for item in value]
+    if isinstance(value, str):
+        return _SECRET_ASSIGNMENT_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", value)
+    return value
+
+
+def _latest_route_plan(state: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    latest = state.get("route_plan") if isinstance(state.get("route_plan"), dict) else {}
+    for event in events:
+        if event.get("type") == "plan_update" and isinstance(event.get("plan"), dict):
+            latest = event["plan"]
+    return latest if isinstance(latest, dict) else {}
+
+
+def _trace_nodes(route_plan: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    nodes_by_id: dict[str, dict[str, Any]] = {}
+    for raw_node in route_plan.get("nodes") or []:
+        if not isinstance(raw_node, dict):
+            continue
+        node_id = str(raw_node.get("node_id") or raw_node.get("id") or "").strip()
+        if not node_id:
+            continue
+        nodes_by_id[node_id] = {
+            "node_id": node_id,
+            "role": raw_node.get("role", ""),
+            "goal": raw_node.get("goal", ""),
+            "allowed_skills": list(raw_node.get("allowed_skills") or []),
+            "inputs": list(raw_node.get("inputs") or []),
+            "statuses": [],
+            "skill_invocations": [],
+            "tool_calls": [],
+            "observations": [],
+            "produced_artifacts": [],
+        }
+
+    def node_entry(node_id: str) -> dict[str, Any]:
+        return nodes_by_id.setdefault(
+            node_id,
+            {
+                "node_id": node_id,
+                "role": "",
+                "goal": "",
+                "allowed_skills": [],
+                "inputs": [],
+                "statuses": [],
+                "skill_invocations": [],
+                "tool_calls": [],
+                "observations": [],
+                "produced_artifacts": [],
+            },
+        )
+
+    for event in events:
+        node_id = str(event.get("node_id") or "").strip()
+        observation = event.get("observation")
+        if not node_id and isinstance(observation, dict):
+            node_id = str(observation.get("node_id") or "").strip()
+        if not node_id:
+            continue
+        entry = node_entry(node_id)
+        event_type = event.get("type")
+        if event_type == "node_status":
+            entry["statuses"].append(event)
+            if event.get("role"):
+                entry["role"] = event.get("role")
+        elif event_type == "skill_invoke":
+            entry["skill_invocations"].append(event)
+        elif event_type == "tool_invoke":
+            entry["tool_calls"].append(event)
+        elif event_type == "observation" and isinstance(observation, dict):
+            entry["observations"].append(observation)
+            for ref in observation.get("produced_artifacts") or []:
+                if ref not in entry["produced_artifacts"]:
+                    entry["produced_artifacts"].append(ref)
+    return list(nodes_by_id.values())
+
+
+def _trace_errors(events: list[dict[str, Any]], state: dict[str, Any]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("type") == "skill_invoke" and event.get("phase") == "error":
+            errors.append(event)
+        if event.get("type") == "node_status" and event.get("status") in {"failed", "needs_replan"}:
+            errors.append(event)
+    if str(state.get("status") or "") == "failed":
+        errors.extend(event for event in events if event.get("type") == "run_terminate")
+    return errors
+
+
+def _build_run_trace(run_id: str, state: dict[str, Any], events: list[dict[str, Any]], artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+    route_plan = _latest_route_plan(state, events)
+    terminate_events = [event for event in events if event.get("type") == "run_terminate"]
+    trace = {
+        "run_id": str(state.get("run_id") or run_id),
+        "status": str(state.get("status") or ""),
+        "route_plan": route_plan,
+        "planner_rounds": [
+            {
+                "event_id": event.get("id", ""),
+                "ts": event.get("ts", ""),
+                "planning_iteration": event.get("planning_iteration"),
+                "plan": event.get("plan", {}),
+            }
+            for event in events
+            if event.get("type") == "plan_update"
+        ],
+        "nodes": _trace_nodes(route_plan, events),
+        "tool_calls": [event for event in events if event.get("type") == "tool_invoke"],
+        "artifacts": artifacts or list(state.get("artifacts") or []),
+        "policy_blocks": [event for event in events if event.get("type") == "policy_block"],
+        "replans": [event for event in events if event.get("type") == "replan"],
+        "errors": _trace_errors(events, state),
+        "final_artifacts": terminate_events[-1].get("final_artifacts", []) if terminate_events else [],
+        "events": events,
+    }
+    return _redact_trace(trace)
+
+
+@router.get("/api/runs/{run_id}/trace")
+async def get_run_trace(run_id: str):
+    state_path = _get_outputs_dir() / run_id / "research_state.json"
+    if not state_path.exists():
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=f"failed to read state: {exc}") from exc
+    events = _load_run_events(run_id)
+    artifacts = _load_artifacts_full_from_disk(run_id) or []
+    return _build_run_trace(run_id, state if isinstance(state, dict) else {}, events, artifacts)
 
 
 def _load_artifacts_full_from_disk(run_id: str) -> list[dict[str, Any]] | None:
