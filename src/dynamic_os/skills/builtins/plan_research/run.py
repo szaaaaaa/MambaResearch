@@ -5,7 +5,25 @@ import re
 
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.route_plan import RoleId
-from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
+from src.dynamic_os.contracts.skill_io import (
+    SkillContext,
+    SkillOutput,
+    find_artifact as _find_artifact,
+    serialize_payload as _serialize_payload,
+)
+
+_PLAN_REVIEW_PROMPT = (
+    "You are a semantic QA reviewer for research plans. Return JSON only using the provided schema.\n\n"
+    "You will receive an authoritative research request and a candidate structured plan. "
+    "Your job is to return the corrected plan. If the candidate is aligned, return it unchanged.\n\n"
+    "Review rules:\n"
+    "- The domain_topic must be the actual subject being studied, not the deliverable type, writing task, or workflow step.\n"
+    "- If a ClarifiedIntent artifact is present, inferred_goal and inferred_fields are authoritative.\n"
+    "- Workflow node goals describe orchestration and must not override the user's research subject.\n"
+    "- Search queries must investigate the domain_topic and must not drift to generic review/report-writing methodology unless that is explicitly the user's subject.\n"
+    "- query_routes must be chosen by semantic need: academic for scholarly literature, web for current public information or primary web sources, both when both are needed.\n"
+    "- Preserve explicit format, scope, and content-focus requirements from the authoritative request."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +129,8 @@ _SYSTEM_PROMPT = (
     "- format_requirements: Capture any output format requests. If the user says '带图表引用', record it here, not in search_queries.\n"
     "- scope_constraints: Capture time ranges, domain restrictions, etc.\n"
     "- content_focus: Capture specific angles, comparisons, or emphasis requested.\n"
-    "- query_routes: Use academic search by default. Enable web only for tools, code, products, or implementations.\n"
+    "- query_routes: Decide semantically. Use academic search for scholarly literature, "
+    "web search for current public information or primary web sources, and both when both are needed.\n"
     "- recommended_sources: Select 3-6 sources that match the research domain. "
     "Do NOT include all sources — only those relevant to the topic.\n\n"
     "Examples:\n"
@@ -135,21 +154,28 @@ _SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 async def run(ctx: SkillContext) -> SkillOutput:
-    goal = ctx.user_request or ctx.goal
+    fallback_goal = _normalize_text(ctx.user_request or ctx.goal)
+    planning_request = _build_planning_request(ctx, fallback_goal)
     raw_plan = await ctx.tools.llm_chat(
         [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": goal},
+            {"role": "user", "content": planning_request},
         ],
         temperature=0.2,
         response_format=SEARCH_PLAN_SCHEMA,
     )
     parsed = _parse_structured_plan(raw_plan)
+    parsed = await _review_structured_plan(ctx, planning_request, parsed)
 
     # 提取各槽位，做基本校验
     topic = _normalize_text(str(parsed.get("domain_topic") or ""))
     if not topic:
-        topic = _normalize_text(goal)
+        if _find_artifact(ctx, "ClarifiedIntent") is not None:
+            return SkillOutput(
+                success=False,
+                error="plan_research could not extract a domain topic from ClarifiedIntent",
+            )
+        topic = fallback_goal
     research_questions = _clean_string_list(parsed.get("research_questions"))
     if not research_questions:
         research_questions = [f"What are the core problems, methods, and evidence for {topic}?"]
@@ -222,6 +248,57 @@ def _clean_string_list(raw: object) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [_normalize_text(str(item)) for item in raw if _normalize_text(str(item))]
+
+
+def _build_planning_request(ctx: SkillContext, fallback_goal: str) -> str:
+    clarified_intent = _find_artifact(ctx, "ClarifiedIntent")
+    if clarified_intent is None:
+        return fallback_goal
+
+    parts = [
+        "Authoritative ClarifiedIntent artifact:",
+        _serialize_payload(clarified_intent),
+    ]
+    if fallback_goal:
+        parts.extend(
+            [
+                "Workflow node goal, not the research subject:",
+                fallback_goal,
+            ]
+        )
+    parts.append(
+        "Extract the research subject from inferred_goal and inferred_fields. "
+        "Treat review/report/survey writing instructions as format requirements, not as the domain topic."
+    )
+    return "\n\n".join(parts)
+
+
+async def _review_structured_plan(
+    ctx: SkillContext,
+    planning_request: str,
+    candidate_plan: dict,
+) -> dict:
+    if _find_artifact(ctx, "ClarifiedIntent") is None:
+        return candidate_plan
+
+    raw_review = await ctx.tools.llm_chat(
+        [
+            {"role": "system", "content": _PLAN_REVIEW_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "Authoritative research request:\n"
+                    f"{planning_request}\n\n"
+                    "Candidate structured plan:\n"
+                    f"{json.dumps(candidate_plan, ensure_ascii=False, indent=2)}"
+                ),
+            },
+        ],
+        temperature=0.0,
+        response_format=SEARCH_PLAN_SCHEMA,
+    )
+    reviewed = _parse_structured_plan(raw_review)
+    return reviewed or candidate_plan
 
 
 def _normalize_text(text: str) -> str:

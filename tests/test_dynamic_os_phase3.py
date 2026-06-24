@@ -875,6 +875,82 @@ def test_executor_returns_observation_and_replans_on_failure() -> None:
     assert result.termination_reason == "planner_terminated"
 
 
+def test_executor_stops_on_input_missing_failure_without_replan() -> None:
+    role_registry = RoleRegistry.from_file()
+    artifact_store = InMemoryArtifactStore()
+    observation_store = InMemoryObservationStore()
+    events: list[object] = []
+
+    async def input_missing_runner(ctx):
+        return SkillOutput(
+            success=False,
+            error="clarify_intent remains ambiguous after 3 clarification rounds",
+            metadata={"error_type": ErrorType.input_missing.value},
+        )
+
+    skill_registry = FakeSkillRegistry(
+        [
+            _skill_spec(
+                "clarify_intent",
+                ["conductor"],
+                output_artifacts=["ClarifiedIntent", "ClarificationRequest"],
+            )
+        ],
+        runners={"clarify_intent": input_missing_runner},
+    )
+    policy = PolicyEngine(permission_policy=PermissionPolicy(approved_workspaces=[str(Path.cwd())]))
+    tools = ToolGateway(
+        registry=ToolRegistry.from_servers([]),
+        policy=policy,
+        mcp_invoker=lambda tool, payload: None,
+        event_sink=events.append,
+    )
+    node_runner = NodeRunner(
+        role_registry=role_registry,
+        skill_registry=skill_registry,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        tools=tools,
+        policy=policy,
+        event_sink=events.append,
+    )
+    planner = SequencePlanner(
+        [
+            RoutePlan(
+                run_id="run_input_missing",
+                planning_iteration=0,
+                horizon=1,
+                nodes=[
+                    PlanNode(
+                        node_id="node_clarify_1",
+                        role=RoleId.conductor,
+                        goal="clarify intent",
+                        allowed_skills=["clarify_intent"],
+                        expected_outputs=["ClarifiedIntent", "ClarificationRequest"],
+                        failure_policy="replan",
+                    )
+                ],
+            )
+        ]
+    )
+    executor = Executor(
+        planner=planner,
+        node_runner=node_runner,
+        artifact_store=artifact_store,
+        observation_store=observation_store,
+        policy=policy,
+        event_sink=events.append,
+    )
+
+    result = asyncio.run(executor.run(user_request="unclear request", run_id="run_input_missing"))
+
+    observations = observation_store.list_latest()
+    assert planner.calls == 1
+    assert result.termination_reason == "clarify_intent remains ambiguous after 3 clarification rounds"
+    assert any(obs.status == NodeStatus.failed and obs.error_type == ErrorType.input_missing for obs in observations)
+    assert not any(event.type == "replan" for event in events)
+
+
 def test_executor_terminates_on_budget_exhaustion() -> None:
     role_registry = RoleRegistry.from_file()
     artifact_store = InMemoryArtifactStore()
@@ -1255,6 +1331,75 @@ def test_plan_research_fallback_on_invalid_llm_output() -> None:
     # fallback 应使用 goal 作为 topic 并生成基础搜索词
     assert search_plan.payload["topic"] == "dynamic research agent systems"
     assert len(search_plan.payload["search_queries"]) >= 2
+
+
+def test_plan_research_review_falls_back_to_candidate_on_invalid_review() -> None:
+    registry = SkillRegistry.discover([BUILTINS_DIR])
+    loaded = registry.get("plan_research")
+
+    class FakeTools:
+        def __init__(self):
+            self.responses = [
+                json.dumps(
+                    {
+                        "domain_topic": "graph neural networks for drug discovery",
+                        "research_questions": ["How are graph neural networks used for drug discovery?"],
+                        "search_queries": ["graph neural networks drug discovery survey"],
+                        "query_routes": {
+                            "graph neural networks drug discovery survey": {
+                                "use_academic": True,
+                                "use_web": False,
+                            }
+                        },
+                        "format_requirements": [],
+                        "scope_constraints": [],
+                        "content_focus": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                "{}",
+            ]
+
+        def with_permissions(self, permissions):
+            del permissions
+            return self
+
+        def with_allowed_tools(self, allowed_tools):
+            del allowed_tools
+            return self
+
+        async def llm_chat(self, messages, **kwargs):
+            del messages, kwargs
+            return self.responses.pop(0)
+
+    ctx = SkillContext(
+        skill_id="plan_research",
+        role_id="conductor",
+        run_id="run_plan_review_fallback",
+        node_id="node_plan_review_fallback_1",
+        goal="Plan the topic",
+        input_artifacts=[
+            ArtifactRecord(
+                artifact_id="intent_1",
+                artifact_type="ClarifiedIntent",
+                producer_role=RoleId.conductor,
+                producer_skill="clarify_intent",
+                payload={
+                    "inferred_goal": "graph neural networks for drug discovery",
+                    "inferred_fields": {},
+                    "assumptions": [],
+                },
+            )
+        ],
+        tools=FakeTools(),
+    )
+
+    output = asyncio.run(loaded.runner(ctx))
+
+    assert output.success is True
+    search_plan = next(item for item in output.output_artifacts if item.artifact_type == "SearchPlan")
+    assert search_plan.payload["topic"] == "graph neural networks for drug discovery"
+    assert search_plan.payload["search_queries"] == ["graph neural networks drug discovery survey"]
 
 
 def test_build_evidence_map_derives_grounded_gaps() -> None:

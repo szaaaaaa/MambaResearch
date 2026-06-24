@@ -185,6 +185,22 @@ class Executor:
 
             observations.extend(execution.observations)
 
+            terminal_failure = next(
+                (
+                    observation
+                    for observation in reversed(execution.observations)
+                    if observation.status == NodeStatus.failed and observation.error_type == ErrorType.input_missing
+                ),
+                None,
+            )
+            if terminal_failure is not None and not execution.should_replan:
+                return self._terminate(
+                    run_id=run_id,
+                    reason=terminal_failure.what_happened or "node_failed",
+                    observations=observations,
+                    planning_iterations=planning_iteration + 1,
+                )
+
             if plan.terminate and not execution.should_replan:
                 return self._terminate(
                     run_id=run_id,

@@ -409,7 +409,6 @@ class NodeRunner:
             message = f"缺少预期产物类型：{', '.join(missing_outputs)}"
             suggested_options = ["replan", "choose_different_skill"]
         else:
-            status = NodeStatus.needs_replan if node.failure_policy == FailurePolicy.replan else NodeStatus.failed
             # 技能可以通过 metadata["error_type"] 显式标注失败种类。
             # 例如 run_experiment 跑 LLM 生成的 train.py 失败时标 "workload_error"，
             # 让规划器 RULE 15 不要错触发 reflect_on_failure（那是修 builtin skill 源码的）。
@@ -421,8 +420,13 @@ class NodeRunner:
                     error_type = ErrorType.skill_error
             else:
                 error_type = ErrorType.skill_error
+            if error_type == ErrorType.input_missing:
+                status = NodeStatus.failed
+                suggested_options = ["abort"]
+            else:
+                status = NodeStatus.needs_replan if node.failure_policy == FailurePolicy.replan else NodeStatus.failed
+                suggested_options = ["choose_different_skill", "replan"]
             message = output.error or "技能返回了失败结果"
-            suggested_options = ["choose_different_skill", "replan"]
         confidence = output.metadata.get("confidence", 1.0)
         try:
             confidence_value = float(confidence)
@@ -436,7 +440,11 @@ class NodeRunner:
             what_happened=message,
             what_was_tried=[f"skill:{skill_id}"],
             suggested_options=suggested_options,
-            recommended_action="replan" if status in {NodeStatus.partial, NodeStatus.needs_replan} else "",
+            recommended_action=(
+                "replan"
+                if status in {NodeStatus.partial, NodeStatus.needs_replan}
+                else "abort" if status == NodeStatus.failed else ""
+            ),
             produced_artifacts=[artifact_ref_for_record(artifact) for artifact in artifacts],
             confidence=max(0.0, min(1.0, confidence_value)),
             duration_ms=duration_ms,

@@ -6,7 +6,8 @@ applicable_roles:
 description: Decompose the user request into a topic brief and a search plan.
 input_contract:
   required: []
-  optional: []
+  optional:
+    - ClarifiedIntent
 output_artifacts:
   - TopicBrief
   - SearchPlan

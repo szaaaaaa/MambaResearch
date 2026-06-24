@@ -9,7 +9,7 @@
   ``test_clarification_pause_and_resume_creates_response_artifact``
   ``test_submit_clarification_response_resumes_executor``
 - AC3 3 轮上限：
-  ``test_round_cap_forces_partial_with_cap_assumption``
+  ``test_round_cap_fails_without_fabricating_intent``
 
 所有用例都在进程内构造 Executor / ConfiguredPlannerModel + 注入 fake 依赖，
 不触达真实 LLM / MCP / 磁盘。
@@ -342,7 +342,7 @@ class TestClarificationFlow:
 
 
 # ---------------------------------------------------------------------------
-# AC3 —— 3 轮上限强制降级为 partial，携 cap 标识
+# AC3 —— 3 轮上限后仍 ambiguous 时直接失败，不伪造 ClarifiedIntent
 # ---------------------------------------------------------------------------
 
 
@@ -397,8 +397,8 @@ def _make_ctx(
 
 
 class TestRoundCap:
-    def test_round_cap_forces_partial_with_cap_assumption(self) -> None:
-        """LLM 在第 4 轮仍判 ambiguous 时，skill 强制降级 partial 并附 cap 标识。"""
+    def test_round_cap_fails_without_fabricating_intent(self) -> None:
+        """LLM 在第 4 轮仍判 ambiguous 时，skill 失败且不产出 ClarifiedIntent。"""
         # LLM 一直想反问
         ambiguous_response = json.dumps(
             {
@@ -426,24 +426,16 @@ class TestRoundCap:
             _make_response_artifact(round_num=2, artifact_id="resp_2"),
             _make_response_artifact(round_num=3, artifact_id="resp_3"),
         ]
-        # round_num = len(prior) + 1 = 4 > CLARIFY_ROUND_CAP (3) → 触发 cap
+        # round_num = len(prior) + 1 = 4 > CLARIFY_ROUND_CAP (3) → 停止而不是伪造意图
         ctx = _make_ctx(user_request="帮我做个实验", tools=tools, input_artifacts=prior)
 
         output = asyncio.run(clarify_run.run(ctx))
 
-        assert output.success is True
-        assert len(output.output_artifacts) == 1
-        artifact = output.output_artifacts[0]
-        # cap 后应是 ClarifiedIntent（partial），不再是 ClarificationRequest
-        assert artifact.artifact_type == "ClarifiedIntent"
-        assumptions = artifact.payload["assumptions"]
-        cap_entries = [a for a in assumptions if a.get("field") == "__clarify_round_cap__"]
-        assert len(cap_entries) == 1
-        # 保留 LLM 给出的 inferred_fields
-        assert artifact.payload["inferred_fields"] == {"dataset": "MNIST"}
-        # inferred_goal 非空（LLM 空则用 fallback）
-        assert artifact.payload["inferred_goal"]
-        assert output.metadata["tier"] == "partial"
+        assert output.success is False
+        assert output.output_artifacts == []
+        assert "remains ambiguous" in str(output.error)
+        assert output.metadata["round_num"] == 4
+        assert output.metadata["error_type"] == ErrorType.input_missing.value
 
     def test_round_cap_does_not_trigger_before_round_4(self) -> None:
         """第 3 轮仍判 ambiguous 属正常行为，不触发 cap。"""

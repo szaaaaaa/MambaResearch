@@ -511,6 +511,7 @@ class Planner:
                 role_summary[skill_id] = {
                     "required": list(spec.input_contract.required),
                     "requires_any": list(spec.input_contract.requires_any),
+                    "optional": list(spec.input_contract.optional),
                     "outputs": list(spec.output_artifacts),
                 }
             summary[role.id.value] = role_summary

@@ -137,9 +137,10 @@ def summarize_skill_contracts(skill_contract_summary: dict[str, dict[str, dict[s
         for skill_id, contract in skills.items():
             required = ", ".join(contract.get("required", [])) or "(none)"
             requires_any = ", ".join(contract.get("requires_any", [])) or "(none)"
+            optional = ", ".join(contract.get("optional", [])) or "(none)"
             outputs = ", ".join(contract.get("outputs", [])) or "(none)"
             lines.append(
-                f"- {role_id}.{skill_id}: required=[{required}], requires_any=[{requires_any}], outputs=[{outputs}]"
+                f"- {role_id}.{skill_id}: required=[{required}], requires_any=[{requires_any}], optional=[{optional}], outputs=[{outputs}]"
             )
     return "\n".join(lines) if lines else "(none)"
 
@@ -325,5 +326,4 @@ def build_planner_repair_messages(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-
 
