@@ -26,6 +26,7 @@ jobs:
 
       - name: Dynamic OS Tests
         run: |
+          cp configs/agent.example.yaml configs/agent.yaml
           pytest -q \
             tests/test_dynamic_os_phase1.py \
             tests/test_dynamic_os_phase2.py \
