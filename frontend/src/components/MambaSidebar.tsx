@@ -93,8 +93,7 @@ interface MambaSidebarProps {
  * BackendStatusBar —— 侧栏底部"被动"连通指示器。
  *
  * 区别于 TopBar 的 AuthStatusChip（点击可管理 OAuth/CLI 登录）：本组件只读，
- * 用一对色点告诉用户哪个 backend 当前可用。绿点=Claude 已登录；
- * 紫点=Codex 已登录；未登录显示成 fg-4 灰点。设计令牌 ok-dot / role-writer-fg
+ * 用色点告诉用户 Codex 当前是否可用。未登录显示成 fg-4 灰点。设计令牌 role-writer-fg
  * 已经是暖色等价，不引入饱和的 SaaS 绿/紫。
  */
 const BackendStatusBar: React.FC = () => {
@@ -114,7 +113,6 @@ const BackendStatusBar: React.FC = () => {
     };
   }, []);
 
-  const claudeOn = auth?.claude === 'logged_in';
   const codexOn = auth?.codex === 'logged_in';
 
   return (
@@ -131,19 +129,6 @@ const BackendStatusBar: React.FC = () => {
         userSelect: 'none',
       }}
     >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <span
-          aria-hidden
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: 999,
-            background: claudeOn ? 'var(--ok-dot)' : 'var(--fg-4)',
-            boxShadow: claudeOn ? '0 0 0 2px rgba(79, 122, 74, 0.18)' : undefined,
-          }}
-        />
-        <span style={{ color: claudeOn ? 'var(--fg-2)' : 'var(--fg-3)' }}>Claude</span>
-      </span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <span
           aria-hidden
@@ -172,7 +157,7 @@ const BackendStatusBar: React.FC = () => {
  * 结构：
  *   - 顶部：品牌头
  *   - 中部：三组导航（基础视图 / 能力 / 运行）
- *   - 底部：Claude/Codex 连通状态条
+ *   - 底部：Codex 连通状态条
  */
 export const MambaSidebar: React.FC<MambaSidebarProps> = ({ active, onNav }) => {
   return (

@@ -28,7 +28,6 @@ export const TopBar: React.FC<Props> = ({ project, onBackToHome, onOpenSettings 
 
   const bothMissing =
     auth !== null &&
-    auth.claude !== 'logged_in' &&
     auth.codex !== 'logged_in';
 
   return (
@@ -54,22 +53,13 @@ export const TopBar: React.FC<Props> = ({ project, onBackToHome, onOpenSettings 
 
         <div className="flex items-center gap-1">
           {auth ? (
-            <>
-              <AuthStatusChip
-                label="Claude"
-                backend="claude"
-                status={auth.claude}
-                fullAuth={auth}
-                onAuthRefreshed={setAuth}
-              />
-              <AuthStatusChip
-                label="Codex"
-                backend="codex"
-                status={auth.codex}
-                fullAuth={auth}
-                onAuthRefreshed={setAuth}
-              />
-            </>
+            <AuthStatusChip
+              label="Codex"
+              backend="codex"
+              status={auth.codex}
+              fullAuth={auth}
+              onAuthRefreshed={setAuth}
+            />
           ) : (
             <span className="text-xs text-slate-400">检测中…</span>
           )}
@@ -87,7 +77,7 @@ export const TopBar: React.FC<Props> = ({ project, onBackToHome, onOpenSettings 
 
       {bothMissing ? (
         <div className="border-t border-amber-100 bg-amber-50 px-4 py-1 text-[11px] text-amber-800">
-          至少登录一个 backend（点击右上角 Claude / Codex chip）才能在工作台开始对话。
+          请先登录 Codex CLI，才能在工作台开始对话。
         </div>
       ) : null}
     </div>

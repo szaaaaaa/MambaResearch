@@ -2,107 +2,67 @@ import React from 'react';
 import { Plus, RefreshCw } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../../../store';
 import type { ClaudeCodeSessionRow } from '../../../../types';
+import { listConversations, type ConversationSummary } from '../../../../api/conversations';
 import { SessionListItem } from '../SessionListItem';
 import { NewSessionModal } from '../NewSessionModal';
 
 interface Props {
-  /**
-   * 切换会话：父组件负责拉历史 + ccHydrateHistory + 更新 localStorage。
-   * Panel 自身不持有 hydration 逻辑——避免和 WorkbenchTab 的挂载恢复路径重复。
-   */
+  projectId: string;
+  activeConversationId: string | null;
   onSwitchSession: (sessionId: string) => Promise<void> | void;
-  /**
-   * 创建新会话；provider 为 ``null`` 表示走后端 Anthropic 默认零变更路径，
-   * 非 null 时后端查 registry 注入 env。
-   */
-  onCreateSession: (provider: string | null) => Promise<void> | void;
-  /** 结束当前 session（供 active session 被删后清理 UI）。 */
+  onCreateSession: () => Promise<void> | void;
   onActiveSessionDeleted: () => void;
 }
 
-/**
- * 会话面板——列出 DB 里所有 session，支持新建 / 切换 / 重命名 / 删除。
- * 列表数据走 GET /api/claude-code/sessions（Task 8 已合并 DB + memory + running 标记）。
- */
 export const SessionsPanel: React.FC<Props> = ({
+  projectId,
+  activeConversationId,
   onSwitchSession,
   onCreateSession,
   onActiveSessionDeleted,
 }) => {
   const { state, ccSetSessionList } = useAppContext();
-  const { session, sessionList } = state.claudeCode;
-  const activeId = session?.id ?? null;
+  const { sessionList } = state.claudeCode;
+  const activeId = activeConversationId;
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = React.useState<ClaudeCodeSessionRow | null>(
-    null,
-  );
+  const [pendingDelete, setPendingDelete] = React.useState<ClaudeCodeSessionRow | null>(null);
   const [showNewModal, setShowNewModal] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      // Task 5c bug fix — Codex sessions 在独立的 codex_session_manager 里，
-      // /api/claude-code/sessions 看不见。并发拉两个端点合并展示——任一失败
-      // 都不该让另一边丢掉，所以用 allSettled。
-      const [claudeRes, codexRes] = await Promise.allSettled([
-        fetch(`${API_BASE}/api/claude-code/sessions`).then((r) => {
-          if (!r.ok) throw new Error(`claude HTTP ${r.status}`);
-          return r.json() as Promise<{ sessions: ClaudeCodeSessionRow[] }>;
-        }),
-        fetch(`${API_BASE}/api/codex/sessions`).then((r) => {
-          if (!r.ok) throw new Error(`codex HTTP ${r.status}`);
-          return r.json() as Promise<{ sessions: ClaudeCodeSessionRow[] }>;
-        }),
-      ]);
-      const merged: ClaudeCodeSessionRow[] = [];
-      const errs: string[] = [];
-      if (claudeRes.status === 'fulfilled') {
-        merged.push(...(claudeRes.value.sessions ?? []));
-      } else {
-        errs.push(`claude-code list: ${claudeRes.reason}`);
-      }
-      if (codexRes.status === 'fulfilled') {
-        merged.push(...(codexRes.value.sessions ?? []));
-      } else {
-        errs.push(`codex list: ${codexRes.reason}`);
-      }
-      // 按 last_message_at desc 排序（codex 列表暂无该字段时退到 created_at）
-      merged.sort(
-        (a, b) =>
-          (b.last_message_at ?? b.created_at ?? 0) -
-          (a.last_message_at ?? a.created_at ?? 0),
-      );
-      ccSetSessionList(merged);
-      setError(errs.length ? errs.join(' | ') : null);
+      const conversations = await listConversations(projectId);
+      const rows = conversations
+        .filter((conv) => conv.backend === 'codex')
+        .map(conversationToSessionRow);
+      ccSetSessionList(rows);
+      setError(null);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [ccSetSessionList]);
+  }, [projectId, ccSetSessionList]);
 
-  // 面板挂载时拉一次
   React.useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const handleRename = React.useCallback(
+  const renameLocal = React.useCallback(
     async (sessionId: string, title: string | null) => {
       try {
-        const response = await fetch(
-          `${API_BASE}/api/claude-code/sessions/${sessionId}`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title }),
-          },
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        // 本地乐观更新：把改好的 title 挂回去；下一次 refresh 会校准
+        const resp = await fetch(`${API_BASE}/api/conversations/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const updated = (await resp.json()) as ConversationSummary;
+        setError(null);
         ccSetSessionList(
           sessionList.map((row) =>
-            row.id === sessionId ? { ...row, title } : row,
+            row.id === sessionId ? conversationToSessionRow(updated) : row,
           ),
         );
       } catch (err) {
@@ -112,20 +72,22 @@ export const SessionsPanel: React.FC<Props> = ({
     [sessionList, ccSetSessionList],
   );
 
+  const rows = React.useMemo(
+    () =>
+      sessionList.map((row) =>
+        row.provider === 'codex' ? { ...row, running: row.id === activeId } : row,
+      ),
+    [sessionList, activeId],
+  );
+
   const confirmDelete = React.useCallback(async () => {
     if (!pendingDelete) return;
     const targetId = pendingDelete.id;
-    const target = sessionList.find((row) => row.id === targetId);
     setPendingDelete(null);
-    // Task 5c bug fix — DELETE 必须按 session.provider 分派端点；
-    // codex session 在独立 manager 里，/api/claude-code/* 删不到。
-    const prefix =
-      target?.provider === 'codex' ? '/api/codex' : '/api/claude-code';
     try {
-      const response = await fetch(
-        `${API_BASE}${prefix}/sessions/${targetId}`,
-        { method: 'DELETE' },
-      );
+      const response = await fetch(`${API_BASE}/api/conversations/${targetId}`, {
+        method: 'DELETE',
+      });
       if (!response.ok && response.status !== 404) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -134,16 +96,14 @@ export const SessionsPanel: React.FC<Props> = ({
       return;
     }
     ccSetSessionList(sessionList.filter((row) => row.id !== targetId));
-    if (targetId === activeId) {
-      onActiveSessionDeleted();
-    }
+    if (targetId === activeId) onActiveSessionDeleted();
   }, [pendingDelete, sessionList, activeId, ccSetSessionList, onActiveSessionDeleted]);
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
         <h3 className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">
-          会话
+          Codex 会话
         </h3>
         <div className="flex items-center gap-1">
           <button
@@ -159,8 +119,8 @@ export const SessionsPanel: React.FC<Props> = ({
           <button
             type="button"
             onClick={() => setShowNewModal(true)}
-            aria-label="新建会话"
-            title="新建会话"
+            aria-label="新建 Codex 会话"
+            title="新建 Codex 会话"
             className="flex h-6 w-6 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -175,23 +135,21 @@ export const SessionsPanel: React.FC<Props> = ({
       ) : null}
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        {sessionList.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="mt-6 text-center text-[12px] text-slate-400">
-            暂无会话，点击 + 新建
+            暂无 Codex 会话，点击 + 新建
           </div>
         ) : (
           <div className="flex flex-col gap-0.5">
-            {sessionList.map((row) => (
+            {rows.map((row) => (
               <SessionListItem
                 key={row.id}
                 row={row}
                 isActive={row.id === activeId}
-                onSwitch={(id) => {
-                  void onSwitchSession(id);
-                }}
-                onRename={handleRename}
+                onSwitch={(id) => void onSwitchSession(id)}
+                onRename={renameLocal}
                 onRequestDelete={(id) => {
-                  const target = sessionList.find((r) => r.id === id);
+                  const target = rows.find((r) => r.id === id);
                   if (target) setPendingDelete(target);
                 }}
               />
@@ -203,10 +161,9 @@ export const SessionsPanel: React.FC<Props> = ({
       {showNewModal ? (
         <NewSessionModal
           onCancel={() => setShowNewModal(false)}
-          onConfirm={async (provider) => {
+          onConfirm={async () => {
             setShowNewModal(false);
-            await onCreateSession(provider);
-            // 创建后刷新列表，让新 session 立刻出现
+            await onCreateSession();
             void refresh();
           }}
         />
@@ -217,8 +174,7 @@ export const SessionsPanel: React.FC<Props> = ({
           <div className="w-full max-w-xs rounded-xl bg-white p-4 shadow-xl">
             <h4 className="text-sm font-semibold text-slate-900">删除会话？</h4>
             <p className="mt-1 text-[12px] text-slate-600">
-              此操作将永久删除 <span className="font-mono">{pendingDelete.id.slice(0, 8)}</span>{' '}
-              的对话记录，无法恢复。
+              将删除 <span className="font-mono">{pendingDelete.id.slice(0, 8)}</span>。
             </p>
             <div className="mt-3 flex justify-end gap-2">
               <button
@@ -242,3 +198,16 @@ export const SessionsPanel: React.FC<Props> = ({
     </div>
   );
 };
+
+function conversationToSessionRow(conv: ConversationSummary): ClaudeCodeSessionRow {
+  return {
+    id: conv.id,
+    cwd: '',
+    model: null,
+    created_at: conv.created_at,
+    title: conv.title,
+    provider: 'codex',
+    last_message_at: conv.last_active_at,
+    running: false,
+  };
+}

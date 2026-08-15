@@ -2,7 +2,6 @@ import React from 'react';
 import { Copy, ExternalLink, RefreshCw, X } from 'lucide-react';
 import type { AuthStatus, BackendStatus } from '../../api/projects';
 import { getAuthStatus } from '../../api/projects';
-import { useAppContext } from '../../store';
 
 interface Props {
   /** 'claude' 或 'codex'：决定 popover 内显示哪一组操作 */
@@ -22,7 +21,6 @@ interface Props {
  * 只能给 OS 终端命令 + "我登好了，刷新检测"——Claude Code CLI 无 web OAuth 入口。
  */
 export const AuthPopover: React.FC<Props> = ({ backend, status, fullAuth, onClose, onAuthRefreshed }) => {
-  const { startCodexLogin, logoutCodex } = useAppContext();
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState<string>('');
 
@@ -122,51 +120,22 @@ export const AuthPopover: React.FC<Props> = ({ backend, status, fullAuth, onClos
       return (
         <>
           <p className="text-xs text-emerald-700">已登录 ✓</p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setMessage('');
-              try {
-                const msg = await logoutCodex();
-                setMessage(msg);
-                await refreshAll();
-              } catch (err) {
-                setMessage(`注销失败：${String(err)}`);
-              } finally {
-                setBusy(false);
-              }
-            }}
-            className="mt-3 rounded border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            注销 ChatGPT
-          </button>
+          <p className="mt-1 text-[11px] text-slate-500">
+            来源：Codex CLI（{fullAuth?.detail.codex_auth_path ? 'auth.json 已检测到' : 'auth 状态已检测'}）
+          </p>
+          <div className="mt-3">
+            <p className="text-[11px] text-slate-500 mb-1">如需重新登录：</p>
+            <CommandRow cmd="codex login" onCopy={copyCmd} />
+          </div>
         </>
       );
     }
     return (
       <>
-        <p className="text-xs text-slate-600">使用 ChatGPT 订阅登录 Codex CLI。</p>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setMessage('');
-            try {
-              const msg = await startCodexLogin();
-              setMessage(msg || '已打开浏览器，完成 OAuth 后回此点"刷新"');
-            } catch (err) {
-              setMessage(`登录失败：${String(err)}`);
-            } finally {
-              setBusy(false);
-            }
-          }}
-          className="mt-3 rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-        >
-          登录 ChatGPT
-        </button>
+        <p className="text-xs text-slate-600">在终端运行以下命令完成 Codex CLI 登录：</p>
+        <div className="mt-2">
+          <CommandRow cmd="codex login" onCopy={copyCmd} />
+        </div>
       </>
     );
   };

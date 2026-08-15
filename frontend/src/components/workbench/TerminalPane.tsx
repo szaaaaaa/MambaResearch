@@ -56,6 +56,8 @@ export interface TerminalPaneProps {
   onClose?: (reason: 'pty_exit' | 'ws_unrecoverable' | 'fatal') => void;
 }
 
+const TERM_BACKGROUND = '#fbf8f2';
+
 const DEFAULT_TERM_OPTIONS: ITerminalOptions = {
   cursorBlink: true,
   fontFamily: 'Cascadia Mono, Consolas, "Courier New", monospace',
@@ -63,9 +65,27 @@ const DEFAULT_TERM_OPTIONS: ITerminalOptions = {
   // 关键：CJK 字符宽度按 unicode 11 量，否则中文光标位置会错位
   allowProposedApi: true,
   theme: {
-    background: '#1e1e1e',
-    foreground: '#e2e8f0',
-    cursor: '#fbbf24',
+    background: TERM_BACKGROUND,
+    foreground: '#1f1b16',
+    cursor: '#8c6a3e',
+    cursorAccent: TERM_BACKGROUND,
+    selectionBackground: '#ece5d4',
+    black: '#5a5247',
+    red: '#a94335',
+    green: '#4f7a4a',
+    yellow: '#b6802c',
+    blue: '#2f5b6b',
+    magenta: '#7a3e5c',
+    cyan: '#4a8094',
+    white: '#5a5247',
+    brightBlack: '#a39a8c',
+    brightRed: '#c2633c',
+    brightGreen: '#5f8f57',
+    brightYellow: '#c3913f',
+    brightBlue: '#4a8094',
+    brightMagenta: '#8f5570',
+    brightCyan: '#5b94a8',
+    brightWhite: '#1f1b16',
   },
   // PTY 是子进程的"真终端"；浏览器侧不要回显，让 PTY 全权处理
   convertEol: false,
@@ -110,6 +130,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
     term.loadAddon(unicode11);
     term.unicode.activeVersion = '11';
     term.open(containerRef.current);
+    const viewport = containerRef.current.querySelector<HTMLElement>('.xterm-viewport');
+    if (viewport) viewport.style.backgroundColor = TERM_BACKGROUND;
     try {
       fit.fit();
     } catch {
@@ -249,7 +271,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
   return (
     <div
       ref={containerRef}
-      className={className ?? 'h-full w-full bg-[#1e1e1e] p-1'}
+      className={className ?? 'h-full w-full bg-[var(--bg-2)] p-2'}
     />
   );
 };

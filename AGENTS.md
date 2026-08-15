@@ -1,3 +1,13 @@
+## Mandatory implementation standards
+
+Before implementing, refactoring, or fixing code:
+
+1. Read `docs/live/代码规范/01-代码实现规范.md`.
+2. Read `docs/live/代码规范/03-测试规范.md` when tests are involved.
+3. Treat both documents as mandatory acceptance criteria.
+4. Each replacement batch must switch to one production path and delete the replaced code, tests, config, and live documentation in the same batch.
+5. Before completion, scan for legacy references and report verification evidence.
+
 ## Review guidelines
 
 - Only flag real bugs — logic errors, off-by-one, null/None mishandling, race conditions.

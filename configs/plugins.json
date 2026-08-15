@@ -1,0 +1,7 @@
+{
+  "profile": "default",
+  "plugins": [
+    {"id": "core.http"},
+    {"id": "backend.codex"}
+  ]
+}

@@ -79,8 +79,8 @@ export const SessionListItem: React.FC<Props> = ({
   const display = row.title || defaultTitle(row);
   // codex session.to_dict() 不返 total_cost_usd / last_message_at（CodexSessionManager
   // 没接 store），跑这条路径必须容忍缺字段，否则会把整个会话面板撕白。
-  const costValue = typeof row.total_cost_usd === 'number' ? row.total_cost_usd : 0;
-  const cost = `$${costValue.toFixed(4)}`;
+  const cost =
+    typeof row.total_cost_usd === 'number' ? `$${row.total_cost_usd.toFixed(4)}` : null;
   const lastTs =
     typeof row.last_message_at === 'number'
       ? row.last_message_at
@@ -166,7 +166,7 @@ export const SessionListItem: React.FC<Props> = ({
               {row.provider === 'codex' ? 'codex' : 'claude'}
             </span>
           </span>
-          <span className="font-mono">{cost}</span>
+          {cost ? <span className="font-mono">{cost}</span> : null}
         </div>
       </button>
       <div className="relative">

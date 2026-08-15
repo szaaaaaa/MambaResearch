@@ -1,9 +1,11 @@
 import React from 'react';
-import { LogOut, MessagesSquare, Terminal } from 'lucide-react';
+import { LogOut, MessagesSquare, RefreshCw, Terminal } from 'lucide-react';
 import { API_BASE, useAppContext } from '../../store';
 import { ClaudeCodePermissionRequest, ClaudeCodeSessionInfo } from '../../types';
 import {
   getConversationMessages,
+  listHistoryRuns,
+  type RunRecord,
   type ConversationMessage,
   type ConversationSummary,
 } from '../../api/conversations';
@@ -26,7 +28,13 @@ import { SessionsPanel } from '../workbench/shell/activities/SessionsPanel';
 import { ClassifyHintBar } from '../workbench/ClassifyHintBar';
 import { useContextualTabs } from '../../store/contextual';
 import { TerminalPane } from '../workbench/TerminalPane';
-import type { Project } from '../../api/projects';
+import {
+  getAuthStatus,
+  getWorkspaceStats,
+  type AuthStatus,
+  type ClassificationStats,
+  type Project,
+} from '../../api/projects';
 
 /**
  * Claude Code 工作台 —— CLI 扁平终端视觉。
@@ -41,6 +49,8 @@ const CC_LAST_SESSION_KEY = 'cc_last_session_id';
 // Hybrid Master Transcript T5 — 持久化 conversation_id 用于刷新后从 messages
 // 表回灌历史（session 级 hydrate 失败时的 fallback；session 已 evict 也能复原）
 const CC_LAST_CONV_KEY = 'cc_last_conversation_id';
+const CC_CODEX_CWD_CONV_PREFIX = 'cc_codex_cwd_conversation';
+const codexCwdConversationMemory = new Map<string, string>();
 
 /**
  * Task 5c — 按 session.provider 分派 REST 端点前缀。
@@ -82,6 +92,32 @@ const writeLastConvId = (id: string | null) => {
     else window.localStorage.removeItem(CC_LAST_CONV_KEY);
   } catch {
     /* 同上 */
+  }
+};
+
+const codexCwdConversationKey = (projectId: string, cwd: string): string =>
+  `${CC_CODEX_CWD_CONV_PREFIX}:${projectId}:${cwd.trim().toLowerCase()}`;
+
+const readCodexCwdConversation = (projectId: string, cwd: string): string | null => {
+  const key = codexCwdConversationKey(projectId, cwd);
+  try {
+    return window.localStorage?.getItem(key) ?? codexCwdConversationMemory.get(key) ?? null;
+  } catch {
+    return codexCwdConversationMemory.get(key) ?? null;
+  }
+};
+
+const writeCodexCwdConversation = (
+  projectId: string,
+  cwd: string,
+  conversationId: string,
+) => {
+  const key = codexCwdConversationKey(projectId, cwd);
+  codexCwdConversationMemory.set(key, conversationId);
+  try {
+    window.localStorage?.setItem(key, conversationId);
+  } catch {
+    /* localStorage unavailable */
   }
 };
 
@@ -143,18 +179,38 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
 
   const [prompt, setPrompt] = React.useState('');
   const [selectedBackend, setSelectedBackend] = React.useState<'claude' | 'codex'>(
-    () => conversation?.backend ?? (session?.provider === 'codex' ? 'codex' : 'claude'),
+    conversation?.backend ?? 'codex',
   );
   const [elapsedSec, setElapsedSec] = React.useState(0);
+  const [projectStats, setProjectStats] = React.useState<ClassificationStats | null>(null);
+  const [latestRun, setLatestRun] = React.useState<RunRecord | null>(null);
+  const [authStatus, setAuthStatus] = React.useState<AuthStatus | null>(null);
   const { pendingComposerPrompt, consumeComposerPrompt } = useContextualTabs();
 
   React.useEffect(() => {
-    if (conversation) setSelectedBackend(conversation.backend);
+    setSelectedBackend(conversation?.backend ?? 'codex');
   }, [conversation?.id, conversation?.backend]);
 
   React.useEffect(() => {
     if (!conversation && session?.provider === 'codex') setSelectedBackend('codex');
   }, [conversation, session?.provider]);
+
+  const refreshProjectStatus = React.useCallback(async () => {
+    const [statsResult, runsResult, authResult] = await Promise.allSettled([
+      getWorkspaceStats(),
+      listHistoryRuns(),
+      getAuthStatus(),
+    ]);
+    setProjectStats(statsResult.status === 'fulfilled' ? statsResult.value : null);
+    setLatestRun(
+      runsResult.status === 'fulfilled' ? runsResult.value[0] ?? null : null,
+    );
+    setAuthStatus(authResult.status === 'fulfilled' ? authResult.value : null);
+  }, [activeProject.id]);
+
+  React.useEffect(() => {
+    void refreshProjectStatus();
+  }, [refreshProjectStatus]);
 
   // Stage 4 Task 8 — 外部组件（FileActionBar / LiteratureTab actions）通过
   // contextual store 注入 prompt；切到 bench 后 consume 一次，append 到当前
@@ -170,6 +226,24 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
   // 会话列表 popover；被 header 按钮 + /resume 等 slash 命令共用
   const [sessionsOpen, setSessionsOpen] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const codexCliStatus = authStatus?.codex ?? 'unknown';
+  const codexCliLoggedIn = codexCliStatus === 'logged_in';
+  const codexCliLabel =
+    codexCliStatus === 'logged_in'
+      ? 'Codex CLI 已登录'
+      : codexCliStatus === 'not_logged_in'
+        ? 'Codex CLI 未登录'
+        : codexCliStatus === 'cli_not_found'
+          ? '未检测到 Codex CLI'
+          : 'Codex CLI 状态未知';
+  const codexCliHint =
+    codexCliStatus === 'logged_in'
+      ? 'auth.json 已检测到'
+      : codexCliStatus === 'not_logged_in'
+        ? '在下方终端运行 codex login'
+        : codexCliStatus === 'cli_not_found'
+          ? '先安装 codex CLI'
+          : '刷新后重试';
 
   // 只有当输入以 "/" 开头、用户没按 Esc 关过、且不在运行态时才弹出下拉
   const slashQueryActive =
@@ -799,14 +873,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
     }
   };
 
-  // 当前后端：v3.3 multi-conversation —— 一条 conversation 绑死一个 backend，永不切换。
-  // asset-centric pivot：``conversation`` prop 直接给定 backend（信号最强，跳过 session 推断）；
-  // 否则按 session.provider 推断；都没有时默认 claude（首次发送时会创建）。
-  const currentBackend: 'claude' | 'codex' = conversation
-    ? conversation.backend
-    : session?.provider === 'codex'
-      ? 'codex'
-      : selectedBackend;
+  const currentBackend: 'claude' | 'codex' = selectedBackend;
   const activeProjectPath =
     typeof activeProject.path === 'string' && activeProject.path.trim()
       ? activeProject.path
@@ -843,6 +910,116 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
   // PTY 断开原因——TerminalPane.onClose 触发；Claude tab 不显示 items 列表，
   // 这是给用户的唯一可见错误反馈通道。
   const [claudePtyError, setClaudePtyError] = React.useState<string | null>(null);
+
+  const switchCodexConversation = React.useCallback(
+    async (
+      conversationId: string,
+      opts: { cwd?: string; force?: boolean } = {},
+    ): Promise<boolean> => {
+      if (!opts.force && currentBackend === 'codex' && codexConversationId === conversationId) return true;
+      if (prompt.trim()) {
+        if (!window.confirm('当前输入框有未发送的内容，切换会话将丢弃。确定？')) return false;
+      }
+
+      ccGetAbortController()?.abort();
+      setPrompt('');
+      setAutocompleteDismissed(false);
+
+      let lastSessionId: string | null = null;
+      try {
+        const convResp = await fetch(`${API_BASE}/api/conversations/${conversationId}`);
+        if (!convResp.ok) throw new Error(`conversation ${conversationId.slice(0, 8)} not found`);
+      } catch (err) {
+        pushError(`切换会话失败：${String(err)}`);
+        return false;
+      }
+
+      try {
+        const segResp = await fetch(`${API_BASE}/api/conversations/${conversationId}/segments`);
+        if (segResp.ok) {
+          const data = (await segResp.json()) as {
+            segments: Array<{ cli_session_id: string; segment_index: number }>;
+          };
+          const segs = data.segments ?? [];
+          if (segs.length > 0) {
+            const last = segs.reduce((a, b) => (a.segment_index >= b.segment_index ? a : b));
+            lastSessionId = last.cli_session_id;
+          }
+        }
+      } catch {
+        /* resume best-effort */
+      }
+
+      try {
+        const messages = await getConversationMessages(conversationId);
+        ccClearItems();
+        if (messages.length > 0) ccHydrateFromMessages(messages);
+      } catch (err) {
+        pushError(`切换会话失败：${String(err)}`);
+        return false;
+      }
+
+      setSelectedBackend('codex');
+      conversationIdRef.current = conversationId;
+      writeLastConvId(conversationId);
+      setCodexConversationId(conversationId);
+      setCodexResumeId(lastSessionId);
+      if (opts.cwd) {
+        setCodexCwdOverride(opts.cwd);
+        writeCodexCwdConversation(activeProject.id, opts.cwd, conversationId);
+      }
+      setCodexRestartTick((tick) => tick + 1);
+      setCodexPtyError(null);
+      return true;
+    },
+    [
+      activeProject.id,
+      currentBackend,
+      codexConversationId,
+      prompt,
+      ccGetAbortController,
+      ccClearItems,
+      ccHydrateFromMessages,
+      pushError,
+    ],
+  );
+
+  const createCodexConversation = React.useCallback(async (
+    opts: { cwd?: string } = {},
+  ): Promise<boolean> => {
+    if (prompt.trim()) {
+      if (!window.confirm('当前输入框有未发送的内容，新建会话将丢弃。确定？')) return false;
+    }
+
+    ccGetAbortController()?.abort();
+    try {
+      const resp = await fetch(`${API_BASE}/api/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: activeProject.id, backend: 'codex' }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const conv = (await resp.json()) as { id: string };
+
+      setSelectedBackend('codex');
+      setPrompt('');
+      setAutocompleteDismissed(false);
+      ccClearItems();
+      conversationIdRef.current = conv.id;
+      writeLastConvId(conv.id);
+      setCodexConversationId(conv.id);
+      setCodexResumeId(null);
+      setCodexCwdOverride(opts.cwd ?? null);
+      const cwdForMap = opts.cwd ?? activeProjectPath;
+      if (cwdForMap) writeCodexCwdConversation(activeProject.id, cwdForMap, conv.id);
+      setCodexRestartTick((tick) => tick + 1);
+      setCodexPtyError(null);
+      return true;
+    } catch (err) {
+      pushError(`新建 Codex 会话失败：${String(err)}`);
+      return false;
+    }
+  }, [activeProject.id, activeProjectPath, prompt, ccGetAbortController, ccClearItems, pushError]);
 
   // 切 active project → 清掉所有 Claude PTY 状态。新 project 的 PTY 用新 cwd 起，
   // 不带任何 resume/cwdOverride。conversation 在下一个 effect 自动重新 ensure。
@@ -1072,19 +1249,31 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
         setClaudePtyError(null);
         setCwdModalOpen(false);
       } else {
-        // Codex PTY 路径：cwd 直接作为 prop 传给 TerminalPane，key 变化后重启。
-        setCodexCwdOverride(next);
-        setCodexResumeId(null);
-        setCodexRestartTick((t) => t + 1);
-        setCodexPtyError(null);
-        setCwdModalOpen(false);
+        const currentCodexCwd = codexCwdOverride ?? activeProjectPath;
+        if (currentCodexCwd && codexConversationId && codexConversationId !== NO_MIRROR_SENTINEL) {
+          writeCodexCwdConversation(activeProject.id, currentCodexCwd, codexConversationId);
+        }
+        const remembered = readCodexCwdConversation(activeProject.id, next);
+        const ok = remembered
+          ? await switchCodexConversation(remembered, { cwd: next, force: true })
+          : await createCodexConversation({ cwd: next });
+        if (ok) setCwdModalOpen(false);
       }
     } catch (err) {
       setCwdError(String(err));
     } finally {
       setCwdSubmitting(false);
     }
-  }, [cwdDraft, currentBackend]);
+  }, [
+    activeProject.id,
+    activeProjectPath,
+    codexConversationId,
+    codexCwdOverride,
+    createCodexConversation,
+    cwdDraft,
+    currentBackend,
+    switchCodexConversation,
+  ]);
 
   /**
    * 点击顶栏 backend 按钮 — v3.3 语义：**回到该 backend 最近的对话**，找不到就起新。
@@ -1100,32 +1289,6 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
    *
    * 想显式开一条新对话 → 点左侧"会话列表"里的 + 按钮。
    */
-  const handleBackendChoose = async (target: 'claude' | 'codex') => {
-    if (currentBackend === target) return;
-    setSelectedBackend(target);
-    ccGetAbortController()?.abort();
-    ccSetSession(null);
-    writeLastSessionId(null);
-    if (target === 'claude') {
-      // PTY 路径：切到 claude tab 不需要任何 SDK session——只要把 store 里的
-      // codex session 清掉，currentBackend 默认值就是 'claude'，TerminalPane
-      // 自动渲染。如果之前在 codex 上有 session，先 abort 它的 SSE 流。
-      ccGetAbortController()?.abort();
-      ccSetSession(null);
-      writeLastSessionId(null);
-      // 清 Claude 自己的状态——切回来要"刚进 tab"的体验
-      setClaudeResumeId(null);
-      setClaudeCwdOverride(null);
-      setClaudeRestartTick((t) => t + 1);
-      setClaudePtyError(null);
-      return;
-    }
-    setCodexCwdOverride(null);
-    setCodexRestartTick((t) => t + 1);
-    setCodexPtyError(null);
-    return;
-  };
-
   const terminalConversationId =
     currentBackend === 'claude' ? claudeConversationId : codexConversationId;
   const terminalResumeId = currentBackend === 'claude' ? claudeResumeId : codexResumeId;
@@ -1140,6 +1303,26 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
     currentBackend === 'claude' ? claudePtyError : codexPtyError;
   const setTerminalPtyError =
     currentBackend === 'claude' ? setClaudePtyError : setCodexPtyError;
+  const unknownCount = projectStats?.by_bucket.unknown ?? 0;
+  const classifiedCount = projectStats ? projectStats.total - unknownCount : null;
+  const workspaceStatus = projectStats
+    ? `${classifiedCount}/${projectStats.total} classified · ${unknownCount} unknown`
+    : 'workspace unavailable';
+  const latestRunStatus = latestRun
+    ? `${latestRun.kind.replace(/_/g, ' ')} · ${latestRun.status}`
+    : 'no runs';
+
+  React.useEffect(() => {
+    if (
+      currentBackend === 'codex' &&
+      terminalCwd &&
+      codexConversationId &&
+      codexConversationId !== NO_MIRROR_SENTINEL
+    ) {
+      writeCodexCwdConversation(activeProject.id, terminalCwd, codexConversationId);
+    }
+  }, [activeProject.id, codexConversationId, currentBackend, terminalCwd]);
+
   const restartTerminal = () => {
     setTerminalPtyError(null);
     if (currentBackend === 'claude') {
@@ -1169,9 +1352,8 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
           >
             <h4 className="text-sm font-semibold text-slate-900">修改工作目录</h4>
             <p className="mt-1 text-[12px] leading-5 text-slate-600">
-              Claude / Codex 都不支持运行中改 cwd——确认后会用新 cwd
-              <strong>起一条新对话</strong>，旧对话不动可从"会话列表"回去。
-              cwd 必须在当前 active project 路径内或其子目录。
+              Codex 不支持运行中改 cwd——确认后会切到这个 cwd 上次使用的会话；
+              没有记录时才新建。cwd 必须在当前 active project 路径内或其子目录。
             </p>
 
             <div className="mt-4 flex flex-col gap-1.5">
@@ -1214,7 +1396,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
                 disabled={cwdSubmitting || !cwdDraft.trim()}
                 className="rounded-md bg-slate-900 px-3 py-1 text-[12px] font-medium text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {cwdSubmitting ? '创建中…' : '用新 cwd 起新对话'}
+                {cwdSubmitting ? '切换中…' : '切换 cwd'}
               </button>
             </div>
           </div>
@@ -1226,8 +1408,8 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Terminal size={16} style={{ color: 'var(--fg-3)' }} />
             {terminalResumeId
-              ? `Workbench · ${currentBackend === 'claude' ? 'Claude' : 'Codex'} ${terminalResumeId.slice(0, 8)} (resumed)`
-              : `Workbench · ${currentBackend === 'claude' ? 'Claude' : 'Codex'} PTY`}
+              ? `Workbench · Codex ${terminalResumeId.slice(0, 8)} (resumed)`
+              : 'Workbench · Codex PTY'}
           </h2>
           <div className="rb-chat-meta">
             <button
@@ -1258,31 +1440,12 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
             <div className="rb-backend-tabs">
               <button
                 type="button"
-                className={`rb-backend-tab ${currentBackend === 'claude' ? 'on' : ''}`}
-                onClick={() => handleBackendChoose('claude')}
-                title={
-                  currentBackend === 'claude'
-                    ? '当前对话即 Claude Code CLI'
-                    : '新建一条 Claude Code CLI 对话'
-                }
-              >
-                <Terminal size={12} />
-                <span>claude code cli</span>
-                {currentBackend === 'claude' ? <em>●</em> : null}
-              </button>
-              <button
-                type="button"
-                className={`rb-backend-tab ${currentBackend === 'codex' ? 'on' : ''}`}
-                onClick={() => handleBackendChoose('codex')}
-                title={
-                  currentBackend === 'codex'
-                    ? '当前对话即 Codex CLI'
-                    : '新建一条 Codex CLI 对话'
-                }
+                className="rb-backend-tab on"
+                title="当前对话即 Codex CLI"
               >
                 <Terminal size={12} />
                 <span>codex cli</span>
-                {currentBackend === 'codex' ? <em>●</em> : null}
+                <em>●</em>
               </button>
             </div>
           </div>
@@ -1334,69 +1497,25 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
             }}
           >
             <SessionsPanel
+              projectId={activeProject.id}
+              activeConversationId={codexConversationId}
               onSwitchSession={async (id) => {
                 setSessionsOpen(false);
-                // 找出 row.provider 决定恢复哪个 backend；Claude / Codex 都走 PTY resume。
-                const row = state.claudeCode.sessionList.find((r) => r.id === id);
-                if (row?.provider === 'codex') {
-                  setSelectedBackend('codex');
-                  try {
-                    const resp = await fetch(
-                      `${API_BASE}/api/conversations/by-session/${id}`,
-                    );
-                    if (resp.ok) {
-                      const data = (await resp.json()) as { conversation_id?: string };
-                      if (data.conversation_id) {
-                        setCodexConversationId(data.conversation_id);
-                      }
-                    }
-                  } catch {
-                    /* mirror lookup failure should not block PTY resume */
-                  }
-                  setCodexResumeId(id);
-                  setCodexRestartTick((t) => t + 1);
-                  setCodexPtyError(null);
-                  return;
-                }
-                // Claude 路径：查 conversation_id 绑回 mirror，再切 resumeId
-                try {
-                  const resp = await fetch(
-                    `${API_BASE}/api/conversations/by-session/${id}`,
-                  );
-                  if (resp.ok) {
-                    const data = (await resp.json()) as { conversation_id?: string };
-                    if (data.conversation_id) {
-                      setClaudeConversationId(data.conversation_id);
-                    }
-                  }
-                  // 404 时走当前 conversation——历史消息追加进现有 conv，可接受
-                } catch {
-                  /* 忽略——mirror 失效不阻断 PTY */
-                }
-                setClaudeResumeId(id);
-                setClaudeRestartTick((t) => t + 1);
-                setClaudePtyError(null);
+                await switchCodexConversation(id);
               }}
-              onCreateSession={async (p) => {
+              onCreateSession={async () => {
                 setSessionsOpen(false);
-                if (p === 'codex') {
-                  setSelectedBackend('codex');
-                  setCodexResumeId(null);
-                  setCodexCwdOverride(null);
-                  setCodexConversationId(null);
-                  setCodexRestartTick((t) => t + 1);
-                  setCodexPtyError(null);
-                  return;
-                }
-                // Claude（含 anthropic / 默认）→ 起一条 fresh PTY，conversation 由
-                // ensureConversation effect 兜底；不走 SDK 创建路径。
-                setClaudeResumeId(null);
-                setClaudeCwdOverride(null);
-                setClaudeConversationId(null); // 触发 ensureConversation 起新 conv
-                setClaudeRestartTick((t) => t + 1);
-                setClaudePtyError(null);
+                await createCodexConversation();
               }}
-              onActiveSessionDeleted={handleActiveSessionDeleted}
+              onActiveSessionDeleted={() => {
+                handleActiveSessionDeleted();
+                conversationIdRef.current = null;
+                writeLastConvId(null);
+                setCodexConversationId(null);
+                setCodexResumeId(null);
+                setCodexPtyError(null);
+                setCodexRestartTick((tick) => tick + 1);
+              }}
             />
           </div>
         </>
@@ -1408,6 +1527,74 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
           setAutocompleteDismissed(true);
         }}
       />
+
+      {currentBackend === 'codex' ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '8px 24px',
+            borderBottom: '1px solid var(--line-1)',
+            background: 'var(--bg-2)',
+            color: 'var(--fg-2)',
+            fontSize: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ color: codexCliLoggedIn ? 'var(--ok-fg)' : 'var(--danger-fg)', fontWeight: 600 }}>
+            {codexCliLabel}
+          </span>
+          <span>来源：Codex CLI</span>
+          <span>会员：以 CLI / ChatGPT 为准</span>
+          <span style={{ color: 'var(--fg-3)' }}>{codexCliHint}</span>
+          <button
+            type="button"
+            className="rb-icon-btn"
+            title="刷新 Codex CLI 状态"
+            onClick={() => void refreshProjectStatus()}
+          >
+            <RefreshCw size={13} />
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        aria-label="Project status"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '8px 24px',
+          borderBottom: '1px solid var(--line-1)',
+          background: 'var(--bg-3)',
+          color: 'var(--fg-2)',
+          fontSize: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span>
+          Project <strong style={{ color: 'var(--fg-1)' }}>{activeProject.name}</strong>
+        </span>
+        <span>
+          Backend <strong style={{ color: 'var(--fg-1)' }}>{currentBackend}</strong>
+        </span>
+        <span>
+          Workspace <strong style={{ color: 'var(--fg-1)' }}>{workspaceStatus}</strong>
+        </span>
+        <span>
+          Latest run <strong style={{ color: 'var(--fg-1)' }}>{latestRunStatus}</strong>
+        </span>
+        <button
+          type="button"
+          className="rb-icon-btn"
+          title="Refresh project status"
+          onClick={() => void refreshProjectStatus()}
+          style={{ width: 24, height: 24, marginLeft: 'auto' }}
+        >
+          <RefreshCw size={12} />
+        </button>
+      </div>
 
       <div className="rb-chat-body">
         <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
@@ -1456,10 +1643,10 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
               cwd={terminalCwd}
               resumeId={terminalResumeId ?? undefined}
               conversationId={terminalConversationId}
-              className="h-full w-full bg-[#1e1e1e] p-1"
+              className="h-full w-full bg-[var(--bg-2)] p-2"
               onClose={(reason) => {
                 setTerminalPtyError(
-                  `${currentBackend === 'claude' ? 'Claude' : 'Codex'} PTY 已断开（${reason}）。点右上角"重启 PTY"或会话列表新建。`,
+                  `Codex PTY 已断开（${reason}）。点右上角"重启 PTY"或会话列表新建。`,
                 );
               }}
             />
@@ -1471,7 +1658,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: '#94a3b8',
-                background: '#1e1e1e',
+                background: 'var(--bg-2)',
                 fontSize: 13,
               }}
             >

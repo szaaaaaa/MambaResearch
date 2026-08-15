@@ -30,7 +30,7 @@ MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
 - 自定义研究流程通过 **8 个 sub-agent**（`.claude/agents/*.md`）+ **7 个 pipeline SKILL.md**（`.claude/skills/`）沉淀
 - 自定义工具通过 **MCP servers** 接入（`workspace` / `mamba_history` / `zotero` / `colab` / `experiment` / `paper_search`）
 
-> 上一代版本拥有自建 `dynamic_os` 多 agent runtime（21 builtin skill + 7 role + planner + executor + policy + tool gateway），v3.0 完全删除——细节见 [v3.0 release note](docs/releases/v3.0-mamba-as-claude-code-shell.md)。
+> 上一代版本拥有自建 `dynamic_os` 多 agent runtime（21 builtin skill + 7 role + planner + executor + policy + tool gateway），v3.0 完全删除——细节见 [v3.0 release note](docs/archive/releases/v3.0-mamba-as-claude-code-shell.md)。
 
 ## 🏗 三层架构
 
@@ -205,13 +205,13 @@ API key（含 `ZOTERO_USER_ID` / `ZOTERO_API_KEY` 等）通过设置面板的 **
 
 用户级 Claude Code skill `/pipeline` 把规划阶段决策集中、执行阶段无人介入地跑完一个多任务 plan。配合升级过的 `/plan` template（新增 Decision points / External preconditions / Failure policy / Subtask split policy 四段），一次规划定案后，`/dev → /review → /fix` 自动循环跑每个 task，失败立即 STOP 暴露根因（不兜底）。
 
-详见 [docs/pipeline-usage.md](docs/pipeline-usage.md)。
+详见 [docs/pipeline-usage.md](docs/archive/pipeline-usage.md)。
 
 ## 📚 版本演进
 
-- [v3.0 — MambaResearch as Claude Code / Codex shell](docs/releases/v3.0-mamba-as-claude-code-shell.md)
-- [v2.x — multi-subscription（双订阅工作流）](docs/releases/v2.x-multi-subscription.md)
-- [v2.x — multi-model（多 provider Workbench）](docs/releases/v2.x-multi-model.md)
+- [v3.0 — MambaResearch as Claude Code / Codex shell](docs/archive/releases/v3.0-mamba-as-claude-code-shell.md)
+- [v2.x — multi-subscription（双订阅工作流）](docs/archive/releases/v2.x-multi-subscription.md)
+- [v2.x — multi-model（多 provider Workbench）](docs/archive/releases/v2.x-multi-model.md)
 - 历史里程碑：v0.1 LangGraph → v0.5 3-agent → v0.9 6-agent → v1.0 dynamic-os（已删除）
 
 ## 技术栈

@@ -9,6 +9,7 @@ import { McpSection } from './sections/McpSection';
 import { ProjectSection } from './sections/ProjectSection';
 import { SkillsSection } from './sections/SkillsSection';
 import { SettingsCategoryId, UiPreferences } from './types';
+import type { Project } from '../../api/projects';
 
 const CATEGORIES: {
   id: SettingsCategoryId;
@@ -34,10 +35,11 @@ function renderSection(
   categoryId: SettingsCategoryId,
   uiPreferences: UiPreferences,
   onUiPreferencesChange: (nextValue: UiPreferences) => void,
+  onProjectActivated: (project: Project) => void,
 ) {
   switch (categoryId) {
     case 'project':
-      return <ProjectSection />;
+      return <ProjectSection onProjectActivated={onProjectActivated} />;
     case 'cli':
       return <CliSection />;
     case 'mcp':
@@ -60,8 +62,9 @@ function renderSection(
 export const SettingsModal: React.FC<{
   uiPreferences: UiPreferences;
   onUiPreferencesChange: (nextValue: UiPreferences) => void;
+  onProjectActivated: (project: Project) => void;
   onClose: () => void;
-}> = ({ uiPreferences, onUiPreferencesChange, onClose }) => {
+}> = ({ uiPreferences, onUiPreferencesChange, onProjectActivated, onClose }) => {
   const [activeCategory, setActiveCategory] = React.useState<SettingsCategoryId>('project');
 
   React.useEffect(() => {
@@ -145,7 +148,7 @@ export const SettingsModal: React.FC<{
                 </div>
               </div>
 
-              <div>{renderSection(activeCategory, uiPreferences, onUiPreferencesChange)}</div>
+              <div>{renderSection(activeCategory, uiPreferences, onUiPreferencesChange, onProjectActivated)}</div>
 
               <div className="mt-8 flex justify-end border-t border-slate-200 pt-4">
                 <Button variant="secondary" onClick={onClose}>

@@ -18,7 +18,9 @@ import {
  * 当前 schema 最小集：``{codex_profile, enabled_mcp_servers}``。
  * patch-merge 写入；如 config.json 不存在，PATCH 时才创建。
  */
-export const ProjectSection: React.FC = () => {
+export const ProjectSection: React.FC<{
+  onProjectActivated?: (project: Project) => void;
+}> = ({ onProjectActivated }) => {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [config, setConfig] = React.useState<ProjectConfig>({});
@@ -61,7 +63,8 @@ export const ProjectSection: React.FC = () => {
     setError(null);
     setInfo(null);
     try {
-      await activateProject(projectId);
+      const activated = await activateProject(projectId);
+      onProjectActivated?.(activated);
       await loadAll();
       setInfo(`已切换到项目 ${projectId.slice(0, 8)}`);
     } catch (err) {
