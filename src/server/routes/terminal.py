@@ -1,82 +1,33 @@
-"""聊天面板的 PTY WebSocket 路由。
-
-端点
-----
-``WS /api/terminal/{backend}``
-    建立一条 PTY 通道。``backend`` 当前支持 ``claude`` / ``codex``。query params:
-
-    * ``cwd`` —— 子进程工作目录；不传则用 active project 路径。必须存在。
-    * ``provider`` —— provider registry 键（如 ``anthropic`` / ``deepseek``）；
-      不传走 Anthropic 默认（继承父进程 env）。
-    * ``resume`` —— 已有 session id（CLI 自带的本地 jsonl archive id），传则
-      调 ``claude --resume <id>`` 接续历史。
-
-WS 协议（与 spike 一致）
------------------------
-Client → Server:
-    * binary frame：用户输入字节，整段 ``write_bytes`` 给 PTY stdin
-    * text frame JSON：控制帧
-        - ``{"type": "resize", "cols": N, "rows": M}``
-        - ``{"type": "signal", "name": "SIGINT"}``
-
-Server → Client:
-    * text frame：PTY ``str`` 输出原文（含 ANSI），xterm 直接 ``write``
-    * text frame JSON：fatal 错误 ``{"type": "fatal", "message": "..."}``
-"""
+"""聊天面板的 PTY WebSocket 路由。"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import shutil
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from src.server.claude_code.providers import (
-    ProviderRegistryError,
-    get_provider_registry,
+from src.server.kernel.contracts import (
+    BackendLaunchError,
+    LaunchRequest,
+    UnknownCapabilityError,
 )
 from src.server.projects import messages_store
+from src.server.projects.conversations import add_segment, get_conversation
 from src.server.projects.registry import get_registry
-from src.server.terminal.claude_mount import ensure_claude_mount
 from src.server.terminal.output_parser import TurnTeer
-from src.server.terminal.pty_bridge import PtyBridge, build_subprocess_env
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+from src.server.terminal.pty_bridge import PtyBridge
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-SUPPORTED_BACKENDS = {"claude", "codex"}
 NO_MIRROR_SENTINEL = "no-mirror"
-
-
-def _resolve_codex_bin() -> str:
-    for candidate in ("codex.cmd", "codex.exe", "codex"):
-        resolved = shutil.which(candidate)
-        if resolved:
-            return resolved
-    raise ValueError("codex binary not found on PATH. Run `codex doctor` or install Codex CLI.")
-
-
-def _resolve_argv(backend: str, *, resume: str | None) -> list[str]:
-    """把 ``backend`` + 可选 ``resume`` 映射成 spawn argv。"""
-    if backend == "claude":
-        argv = ["claude"]
-        if resume:
-            argv.extend(["--resume", resume])
-        return argv
-    if backend == "codex":
-        codex_bin = _resolve_codex_bin()
-        if resume:
-            return [codex_bin, "resume", "--no-alt-screen", resume]
-        return [codex_bin, "--no-alt-screen"]
-    raise ValueError(f"unsupported backend: {backend!r}")
 
 
 def _resolve_cwd(cwd_param: str | None) -> Path:
@@ -97,32 +48,40 @@ def _should_mirror(conversation_id: str | None) -> bool:
     return bool(conversation_id and conversation_id != NO_MIRROR_SENTINEL)
 
 
-async def _send_fatal(ws: WebSocket, message: str) -> None:
+async def _send_fatal(websocket: WebSocket, message: str) -> None:
     payload = json.dumps({"type": "fatal", "message": message}, ensure_ascii=False)
     try:
-        await ws.send_text(payload)
+        await websocket.send_text(payload)
     except Exception:
-        # WS 已断就吞掉
         pass
 
 
-@router.websocket("/api/terminal/{backend}")
-async def terminal_ws(websocket: WebSocket, backend: str) -> None:
-    backend = backend.strip().lower()
+@router.websocket("/api/terminal/{backend_id}")
+async def terminal_ws(websocket: WebSocket, backend_id: str) -> None:
+    backend_id = backend_id.strip().lower()
     await websocket.accept()
 
-    if backend not in SUPPORTED_BACKENDS:
-        await _send_fatal(
-            websocket,
-            f"backend {backend!r} not supported in this plan; only {sorted(SUPPORTED_BACKENDS)}",
-        )
+    try:
+        backend = websocket.app.state.kernel.context.capabilities.backends.require(backend_id)
+    except UnknownCapabilityError as exc:
+        await _send_fatal(websocket, str(exc))
         await websocket.close(code=1003)
         return
 
     cwd_param = websocket.query_params.get("cwd")
-    provider_name = websocket.query_params.get("provider")
+    provider_id = websocket.query_params.get("provider")
     resume_id = websocket.query_params.get("resume")
     conversation_id = websocket.query_params.get("conversation_id")
+
+    if _should_mirror(conversation_id):
+        conversation = get_conversation(conversation_id)
+        if conversation is None or conversation.backend != backend_id:
+            await _send_fatal(
+                websocket,
+                f"conversation {conversation_id!r} does not belong to backend {backend_id!r}",
+            )
+            await websocket.close(code=1003)
+            return
 
     try:
         cwd = _resolve_cwd(cwd_param)
@@ -131,83 +90,58 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
         await websocket.close(code=1011)
         return
 
-    provider = None
-    if provider_name:
-        registry = get_provider_registry()
-        provider = registry.get(provider_name)
-        if provider is None:
-            await _send_fatal(
-                websocket,
-                f"provider {provider_name!r} not in registry "
-                f"({sorted(registry.keys())})",
+    try:
+        spec = backend.resolve_launch(
+            LaunchRequest(
+                cwd=cwd,
+                resume_id=resume_id,
+                provider_id=provider_id,
             )
-            await websocket.close(code=1011)
-            return
-
-    try:
-        env = build_subprocess_env(provider=provider)
-    except ProviderRegistryError as exc:
-        await _send_fatal(websocket, f"env build failed: {exc}")
-        await websocket.close(code=1011)
-        return
-
-    try:
-        argv = _resolve_argv(backend, resume=resume_id)
-    except ValueError as exc:
+        )
+    except BackendLaunchError as exc:
         await _send_fatal(websocket, str(exc))
         await websocket.close(code=1011)
         return
 
-    # PTY 模式下 claude CLI 通过 --mcp-config 加载 builtin MCP server
-    # （SDK 模式删除后，这是 builtin MCP 唯一的子进程发现路径）。配置文件由
-    # `_apply_active_project_env` → `write_builtin_mcp_config` 在 active
-    # project 切换时整盘重写到 <project>/.mambaresearch/mcp_config.json；
-    # 文件不存在（如未切 active / 写盘失败）则跳过 flag，PTY 仍可用但
-    # 看不到 builtin MCP。
-    #
-    # 同时通过 --add-dir 把 mamba 的 8 个 pipeline skill 投递给 spawn 的
-    # claude——cwd 通常是 active project（不在 mamba repo 内），不加这个
-    # flag 子进程根本看不见 /classify-workspace 等 skill。投递目录
-    # `<repo>/.claude-mount` 只含 skill junction，避免暴露 mamba 源码。
-    if backend == "claude":
-        from src.server.mcp.builtin_writer import builtin_mcp_config_path
-
-        mount_root = ensure_claude_mount(_REPO_ROOT)
-        if mount_root is not None:
-            argv = [argv[0], "--add-dir", str(mount_root), *argv[1:]]
-
-        mcp_config = builtin_mcp_config_path(cwd)
-        if mcp_config.exists():
-            argv = [argv[0], "--mcp-config", str(mcp_config), *argv[1:]]
-
     logger.info(
         "spawning PTY backend=%s cwd=%s argv=%s provider=%s resume=%s conv=%s",
-        backend,
-        cwd,
-        argv,
-        provider_name or "<default>",
+        backend_id,
+        spec.cwd,
+        spec.argv,
+        provider_id or "<default>",
         resume_id or "<new>",
         conversation_id or "<no-mirror>",
     )
 
-    # conversation_id 给定才挂 tee——没给说明前端不要这条 WS 写 messages 表
-    # （比如纯设置面板里测试 PTY 时）。tee 抛异常不影响 PTY 主流（acceptance #4）。
     teer: TurnTeer | None = (
         TurnTeer(
             conversation_id,
             messages_store.append_message,
-            assistant_served_by=backend,
+            assistant_served_by=backend_id,
         )
         if _should_mirror(conversation_id)
         else None
     )
     on_input = teer.on_user_input if teer else None
     on_output = teer.on_pty_output if teer else None
+    session_task: asyncio.Task[None] | None = None
 
     try:
         async with PtyBridge(
-            argv, cwd=cwd, env=env, on_input=on_input, on_output=on_output
+            spec.argv,
+            cwd=spec.cwd,
+            env=spec.env,
+            on_input=on_input,
+            on_output=on_output,
         ) as pty:
+            if teer is not None and spec.session_id_resolver is not None:
+                session_task = asyncio.create_task(
+                    _register_session(
+                        conversation_id=conversation_id,
+                        backend_id=backend_id,
+                        resolver=spec.session_id_resolver,
+                    )
+                )
             await _pump(websocket, pty)
     except Exception as exc:
         logger.exception("PTY session crashed")
@@ -217,8 +151,30 @@ async def terminal_ws(websocket: WebSocket, backend: str) -> None:
         except Exception:
             pass
     finally:
+        if session_task is not None:
+            await session_task
         if teer is not None:
             teer.aclose()
+
+
+async def _register_session(
+    *,
+    conversation_id: str,
+    backend_id: str,
+    resolver: Callable[[], str | None],
+) -> None:
+    session_id = await asyncio.to_thread(resolver)
+    if session_id is None:
+        logger.warning("backend=%s session ID was not discovered", backend_id)
+        return
+    conversation = get_conversation(conversation_id)
+    if conversation is None or conversation.backend != backend_id:
+        return
+    add_segment(
+        conversation_id=conversation_id,
+        backend=backend_id,
+        cli_session_id=session_id,
+    )
 
 
 async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
@@ -229,7 +185,6 @@ async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
             try:
                 await websocket.send_text(chunk)
             except Exception:
-                # WS 已断——结束 reader，主循环也会收到 disconnect
                 return
 
     reader = asyncio.create_task(reader_task())
@@ -250,25 +205,24 @@ async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
                     pass
                 break
 
-            msg = receive.result()
-            msg_type = msg.get("type")
-            if msg_type == "websocket.disconnect":
+            message = receive.result()
+            message_type = message.get("type")
+            if message_type == "websocket.disconnect":
                 break
-            if msg_type != "websocket.receive":
+            if message_type != "websocket.receive":
                 continue
-            if msg.get("bytes") is not None:
-                pty.write_bytes(msg["bytes"])
+            if message.get("bytes") is not None:
+                pty.write_bytes(message["bytes"])
                 continue
-            text = msg.get("text")
+            text = message.get("text")
             if text is None:
                 continue
             try:
-                ctrl = json.loads(text)
+                control = json.loads(text)
             except json.JSONDecodeError:
-                # 文本帧但不是 JSON——按用户输入透传（极少见，但比静默丢更诚实）
                 pty.write_str(text)
                 continue
-            await _handle_control(pty, ctrl, websocket)
+            await _handle_control(pty, control, websocket)
     except WebSocketDisconnect:
         pass
     finally:
@@ -278,28 +232,28 @@ async def _pump(websocket: WebSocket, pty: PtyBridge) -> None:
 
 
 async def _handle_control(
-    pty: PtyBridge, ctrl: dict[str, Any], websocket: WebSocket
+    pty: PtyBridge, control: dict[str, Any], websocket: WebSocket
 ) -> None:
-    ctrl_type = ctrl.get("type")
-    if ctrl_type == "resize":
+    control_type = control.get("type")
+    if control_type == "resize":
         try:
-            cols = int(ctrl.get("cols") or 0)
-            rows = int(ctrl.get("rows") or 0)
+            cols = int(control.get("cols") or 0)
+            rows = int(control.get("rows") or 0)
         except (TypeError, ValueError):
-            logger.warning("invalid resize frame: %s", ctrl)
+            logger.warning("invalid resize frame: %s", control)
             return
         if cols <= 0 or rows <= 0:
-            logger.warning("resize frame ignored (cols/rows must be positive): %s", ctrl)
+            logger.warning("resize frame ignored (cols/rows must be positive): %s", control)
             return
         try:
             pty.resize(cols, rows)
         except Exception:
             logger.exception("pty.resize failed cols=%s rows=%s", cols, rows)
         return
-    if ctrl_type == "signal" and ctrl.get("name") == "SIGINT":
+    if control_type == "signal" and control.get("name") == "SIGINT":
         try:
             pty.signal_int()
         except Exception:
             logger.exception("pty.signal_int failed")
         return
-    logger.warning("unknown control frame: %s", ctrl)
+    logger.warning("unknown control frame: %s", control)

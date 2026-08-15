@@ -12,7 +12,6 @@ Schema（最小集）：
 ::
 
     {
-      "codex_profile": str,
       "enabled_mcp_servers": list[str]
     }
 

@@ -15,7 +15,7 @@ import {
  * 项目视图——列出已注册的项目，切换 active project，编辑 active 项目的 lazy config
  * （``<project>/.mambaresearch/config.json``）。
  *
- * 当前 schema 最小集：``{codex_profile, enabled_mcp_servers}``。
+ * 当前 schema 最小集：``{enabled_mcp_servers}``。
  * patch-merge 写入；如 config.json 不存在，PATCH 时才创建。
  */
 export const ProjectSection: React.FC<{
@@ -24,7 +24,6 @@ export const ProjectSection: React.FC<{
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [config, setConfig] = React.useState<ProjectConfig>({});
-  const [draftCodexProfile, setDraftCodexProfile] = React.useState<string>('');
   const [draftEnabledServers, setDraftEnabledServers] = React.useState<string>('');
   const [loading, setLoading] = React.useState<boolean>(true);
   const [saving, setSaving] = React.useState<boolean>(false);
@@ -42,7 +41,6 @@ export const ProjectSection: React.FC<{
       setProjects(rows);
       setActiveProjectId(active_project_id);
       setConfig(projectConfig);
-      setDraftCodexProfile(String(projectConfig.codex_profile ?? ''));
       const enabled = Array.isArray(projectConfig.enabled_mcp_servers)
         ? projectConfig.enabled_mcp_servers.join(',')
         : '';
@@ -82,13 +80,9 @@ export const ProjectSection: React.FC<{
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0);
       const updates: Partial<ProjectConfig> = {};
-      if (draftCodexProfile.trim() || config.codex_profile) {
-        updates.codex_profile = draftCodexProfile.trim();
-      }
       updates.enabled_mcp_servers = enabledList;
       const merged = await patchProjectConfig(updates);
       setConfig(merged);
-      setDraftCodexProfile(String(merged.codex_profile ?? ''));
       setDraftEnabledServers(
         Array.isArray(merged.enabled_mcp_servers) ? merged.enabled_mcp_servers.join(',') : '',
       );
@@ -160,14 +154,6 @@ export const ProjectSection: React.FC<{
         title="项目级配置"
         description="存于当前 active project 的 .mambaresearch/config.json；首次保存才会创建文件。"
       >
-        <Input
-          label="Codex profile"
-          description="active 项目使用的 codex profile id；留空表示走全局默认。"
-          value={draftCodexProfile}
-          onChange={(event) => setDraftCodexProfile(event.target.value)}
-          placeholder="例如 default"
-          disabled={!activeProject || saving}
-        />
         <Input
           label="启用的 MCP servers"
           description="逗号分隔的 server name 列表。空列表表示沿用全局所有 server。"

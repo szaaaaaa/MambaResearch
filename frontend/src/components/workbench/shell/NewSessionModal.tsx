@@ -1,11 +1,13 @@
 import React from 'react';
+import type { BackendDescriptor } from '../../../api/terminal';
 
 interface Props {
-  onConfirm: (provider: string | null) => Promise<void> | void;
+  backend: BackendDescriptor;
+  onConfirm: () => Promise<void> | void;
   onCancel: () => void;
 }
 
-export const NewSessionModal: React.FC<Props> = ({ onConfirm, onCancel }) => {
+export const NewSessionModal: React.FC<Props> = ({ backend, onConfirm, onCancel }) => {
   const [submitting, setSubmitting] = React.useState(false);
 
   React.useEffect(() => {
@@ -20,7 +22,7 @@ export const NewSessionModal: React.FC<Props> = ({ onConfirm, onCancel }) => {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await onConfirm('codex');
+      await onConfirm();
     } finally {
       setSubmitting(false);
     }
@@ -29,15 +31,10 @@ export const NewSessionModal: React.FC<Props> = ({ onConfirm, onCancel }) => {
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
-        <h4 className="text-sm font-semibold text-slate-900">新建 Codex 会话</h4>
-        <p className="mt-1 text-[12px] text-slate-600">
-          当前只创建 Codex 会话。
-        </p>
-
+        <h4 className="text-sm font-semibold text-slate-900">新建 {backend.label} 会话</h4>
         <div className="mt-4 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[12px] text-slate-700">
-          backend: <span className="font-mono">codex</span>
+          backend: <span className="font-mono">{backend.id}</span>
         </div>
-
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"

@@ -11,19 +11,12 @@ import { API_BASE } from '../store';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
-export type MessageServedBy =
-  | 'claude'
-  | 'codex'
-  | 'user'
-  | 'system'
-  | 'mambaresearch_compact';
-
 export interface ConversationMessage {
   id: string;
   conversation_id: string;
   role: MessageRole;
   text: string;
-  served_by: MessageServedBy;
+  served_by: string;
   tool_use_summary: string | null;
   raw_payload: string | null;
   compacted: boolean;
@@ -59,7 +52,7 @@ export interface ConversationSummary {
   id: string;
   project_id: string;
   title: string | null;
-  backend: 'claude' | 'codex';
+  backend: string;
   created_at: number;
   last_active_at: number;
   asset_kind: AssetKind | null;

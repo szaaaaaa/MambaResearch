@@ -1,9 +1,8 @@
 import React from 'react';
-import { Folder, Info, KeyRound, Palette, Plug, Terminal, Wand2, X } from 'lucide-react';
+import { Folder, Info, KeyRound, Palette, Plug, Wand2, X } from 'lucide-react';
 import { Button } from '../ui';
 import { AboutSection } from './sections/AboutSection';
 import { AppearanceSection } from './sections/AppearanceSection';
-import { CliSection } from './sections/CliSection';
 import { CredentialsSection } from './sections/CredentialsSection';
 import { McpSection } from './sections/McpSection';
 import { ProjectSection } from './sections/ProjectSection';
@@ -18,7 +17,6 @@ const CATEGORIES: {
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
   { id: 'project', label: '项目', description: '管理项目列表与项目级 lazy 配置。', icon: Folder },
-  { id: 'cli', label: 'CLI', description: 'Claude Code provider 与 Codex OAuth 状态。', icon: Terminal },
   { id: 'mcp', label: 'MCP', description: 'MCP server 注册表与 user 层 env override。', icon: Plug },
   {
     id: 'credentials',
@@ -40,8 +38,6 @@ function renderSection(
   switch (categoryId) {
     case 'project':
       return <ProjectSection onProjectActivated={onProjectActivated} />;
-    case 'cli':
-      return <CliSection />;
     case 'mcp':
       return <McpSection />;
     case 'credentials':

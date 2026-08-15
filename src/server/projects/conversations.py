@@ -32,7 +32,7 @@ class Conversation:
     id: str
     project_id: str
     title: str | None
-    backend: str  # 'claude' | 'codex'，v3.3 起绑死，永不切换
+    backend: str
     created_at: int
     last_active_at: int
     asset_kind: str | None = None  # None 即"草稿"
@@ -83,12 +83,12 @@ def create_conversation(
     *,
     project_id: str,
     title: str | None = None,
-    backend: str = "claude",
+    backend: str,
     asset_kind: str | None = None,
     asset_label: str | None = None,
 ) -> Conversation:
-    if backend not in ("claude", "codex"):
-        raise ValueError(f"backend must be 'claude' or 'codex', got {backend!r}")
+    if not isinstance(backend, str) or not backend.strip():
+        raise ValueError("backend must be a non-empty string")
     if asset_kind is not None and asset_kind not in VALID_ASSET_KINDS:
         raise ValueError(
             f"asset_kind must be one of {VALID_ASSET_KINDS} or None, got {asset_kind!r}"
@@ -98,7 +98,7 @@ def create_conversation(
         id=uuid.uuid4().hex,
         project_id=project_id,
         title=title,
-        backend=backend,
+        backend=backend.strip(),
         created_at=now,
         last_active_at=now,
         asset_kind=asset_kind,
@@ -281,8 +281,8 @@ def add_segment(
     handoff_prompt_path: str | None = None,
 ) -> ConversationSegment:
     """在指定会话末尾追加新 segment（segment_index 自动递增）。"""
-    if backend not in ("claude", "codex"):
-        raise ValueError(f"backend must be 'claude' or 'codex', got {backend!r}")
+    if not isinstance(backend, str) or not backend.strip():
+        raise ValueError("backend must be a non-empty string")
     now = int(time.time())
     seg_id = uuid.uuid4().hex
     with _db().cursor() as cur:
@@ -301,7 +301,7 @@ def add_segment(
                 seg_id,
                 conversation_id,
                 next_idx,
-                backend,
+                backend.strip(),
                 cli_session_id,
                 now,
                 handoff_prompt_path,
@@ -315,7 +315,7 @@ def add_segment(
         id=seg_id,
         conversation_id=conversation_id,
         segment_index=next_idx,
-        backend=backend,
+        backend=backend.strip(),
         cli_session_id=cli_session_id,
         started_at=now,
         ended_at=None,

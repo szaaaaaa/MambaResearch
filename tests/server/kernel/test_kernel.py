@@ -143,7 +143,14 @@ def test_registries_preserve_order_and_reject_duplicate_or_unknown_ids() -> None
         http.register(contribution_id="http.a", plugin_id="plugin.a", router=router_a)
 
     backends = BackendRegistry()
-    backend = FakeBackend(descriptor=BackendDescriptor(id="codex"))
+    backend = FakeBackend(
+        descriptor=BackendDescriptor(
+            id="codex",
+            label="Codex",
+            supports_resume=True,
+            supports_provider_selection=False,
+        )
+    )
     backends.register(plugin_id="backend.codex", backend=backend)
 
     assert backends.require("codex") is backend

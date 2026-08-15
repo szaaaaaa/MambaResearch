@@ -1,6 +1,6 @@
 # Codex-first Backend Registry 技术设计
 
-状态：待实施
+状态：已实施（2026-08-16）
 前置条件：[Mamba Kernel 技术设计](01-Mamba-Kernel-技术设计.md) Batch 1 已通过
 上层设计：[Mamba Kernel 插件化架构](../架构设计/mamba-kernel-plugin-architecture.md)
 
@@ -14,6 +14,8 @@ Mamba Kernel
   -> backend.codex
   -> Terminal / Auth / Conversation consumers
 ~~~
+
+> Implementation status (2026-08-16): completed and verified with the Codex-first test suite.
 
 Claude adapter、Claude provider、skill mount 和 MCP config 拼装不进入本批。Backend seam
 切换后，Claude 不再通过旧分支启动；历史 Claude conversation/segment/message 元数据仍可读取，
@@ -101,6 +103,7 @@ class BackendDescriptor:
 ### 5.2 LaunchRequest
 
 ~~~python
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,9 +142,11 @@ class LaunchSpec:
     argv: tuple[str, ...]
     cwd: Path
     env: dict[str, str]
+    session_id_resolver: Callable[[], str | None] | None = None
 ~~~
 
 <code>LaunchSpec</code> 可直接交给 <code>PtyBridge</code>。route 不再二次修改 argv/env。
+新会话无法在启动前取得 CLI session ID 时，backend 可提供一次性 resolver；host 只负责把结果登记到 conversation segment。
 
 ### 5.4 认证合同
 
@@ -210,7 +215,8 @@ BackendDescriptor(
 5. 有 resume 时 argv 为
    <code>[codex_bin, "resume", "--no-alt-screen", resume_id]</code>。
 6. 沿用当前 <code>build_subprocess_env(provider=None)</code> 生成完整子进程环境。
-7. 返回 immutable <code>LaunchSpec</code>。
+7. 新会话启动前记录现有 Codex session 文件，提供只识别本次新增且 cwd 匹配的 session ID resolver；resume 不提供 resolver。
+8. 返回 immutable <code>LaunchSpec</code>。
 
 实现直接移动当前 <code>_resolve_codex_bin()</code> 和 <code>_resolve_argv()</code> 的 Codex
 分支，不另写第二套命令构造器。

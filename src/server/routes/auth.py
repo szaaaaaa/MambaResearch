@@ -1,20 +1,19 @@
-"""Auth 状态探测路由。
-
-端点：
-- ``GET /api/auth/status`` → ``AuthProbeResult.to_dict()``
-"""
+"""当前启用 backend 的认证状态路由。"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from src.server.auth.probe import probe_all
+from src.server.auth.probe import probe_backends, probe_openai_api_key
 
 
 router = APIRouter()
 
 
 @router.get("/api/auth/status")
-async def get_auth_status() -> dict:
-    result = await probe_all()
-    return result.to_dict()
+async def get_auth_status(request: Request) -> dict:
+    backends = request.app.state.kernel.context.capabilities.backends.list()
+    return {
+        "backends": await probe_backends(backends),
+        "api_keys": {"openai": probe_openai_api_key()},
+    }

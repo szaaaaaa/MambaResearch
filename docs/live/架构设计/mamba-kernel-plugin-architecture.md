@@ -506,7 +506,7 @@ configs/
 | 现有区域 | 目标插件/服务 | 首要改动 |
 | --- | --- | --- |
 | `src/server/routes/terminal.py` | `backend.*` + Kernel PTY host | 删除 backend 分支，按 Registry 解析 LaunchSpec |
-| `src/server/claude_code/providers.py` | `backend.claude` 的 provider 子能力 | 保留 provider 配置，不和 backend registry 混为一谈 |
+| 未来 `backend_claude.py` | `backend.claude` 的 provider 子能力 | 由插件自身实现，不保留当前配置或运行时路径 |
 | `src/server/codex/` | `backend.codex` | 将 session manager 生命周期交给插件 |
 | `src/server/mcp/registry.py` | Kernel MCP Registry | 保留外部 config reader，统一内建 provider 来源 |
 | `src/server/mcp/builtin_writer.py` | Kernel MCP consumer | 只消费 Registry 快照 |

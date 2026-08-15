@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from src.server.kernel.contracts import UnknownCapabilityError
 from src.server.projects.conversations import (
     DRAFTS_FILTER,
     VALID_ASSET_KINDS,
@@ -108,14 +109,14 @@ async def post_conversation(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="project_id is required")
     title_raw = payload.get("title")
     title = title_raw.strip() if isinstance(title_raw, str) and title_raw.strip() else None
-    # v3.3 multi-conversation：每条 conversation 绑定一个 backend，永不切换。
-    # 入参可省（默认 'claude'），方便老客户端不报错；新前端会显式传。
     backend_raw = payload.get("backend")
-    backend = backend_raw.strip() if isinstance(backend_raw, str) and backend_raw.strip() else "claude"
-    if backend not in ("claude", "codex"):
-        raise HTTPException(
-            status_code=400, detail=f"backend must be 'claude' or 'codex', got {backend!r}"
-        )
+    if not isinstance(backend_raw, str) or not backend_raw.strip():
+        raise HTTPException(status_code=400, detail="backend is required")
+    backend = backend_raw.strip().lower()
+    try:
+        request.app.state.kernel.context.capabilities.backends.require(backend)
+    except UnknownCapabilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     # 2026-04-29 asset-centric：可选 asset_kind + asset_label 一并落库
     asset_kind = _validate_asset_kind_value(payload.get("asset_kind"), allow_none=True)
     asset_label_raw = payload.get("asset_label")

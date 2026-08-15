@@ -15,6 +15,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { AuthStatus } from '../api/projects';
 import { getAuthStatus } from '../api/projects';
+import { getCapabilityInventory, type BackendDescriptor } from '../api/terminal';
 
 /**
  * NavId — 主导航视图标识。'set' 不是视图而是打开 SettingsModal 的开关，
@@ -98,22 +99,22 @@ interface MambaSidebarProps {
  */
 const BackendStatusBar: React.FC = () => {
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);
+  const [backends, setBackends] = React.useState<BackendDescriptor[]>([]);
 
   React.useEffect(() => {
     let cancelled = false;
-    getAuthStatus()
-      .then((s) => {
-        if (!cancelled) setAuth(s);
-      })
-      .catch(() => {
-        if (!cancelled) setAuth(null);
-      });
+    void Promise.allSettled([getAuthStatus(), getCapabilityInventory()]).then(([authResult, capabilityResult]) => {
+      if (cancelled) return;
+      setAuth(authResult.status === 'fulfilled' ? authResult.value : null);
+      setBackends(capabilityResult.status === 'fulfilled' ? capabilityResult.value.backends : []);
+    });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const codexOn = auth?.codex === 'logged_in';
+  const backend = backends[0] ?? null;
+  const loggedIn = backend !== null && auth?.backends[backend.id]?.status === 'logged_in';
 
   return (
     <div
@@ -136,11 +137,11 @@ const BackendStatusBar: React.FC = () => {
             width: 7,
             height: 7,
             borderRadius: 999,
-            background: codexOn ? 'var(--role-writer-fg)' : 'var(--fg-4)',
-            boxShadow: codexOn ? '0 0 0 2px rgba(122, 62, 92, 0.18)' : undefined,
+            background: loggedIn ? 'var(--role-writer-fg)' : 'var(--fg-4)',
+            boxShadow: loggedIn ? '0 0 0 2px rgba(122, 62, 92, 0.18)' : undefined,
           }}
         />
-        <span style={{ color: codexOn ? 'var(--fg-2)' : 'var(--fg-3)' }}>Codex</span>
+        <span style={{ color: loggedIn ? 'var(--fg-2)' : 'var(--fg-3)' }}>{backend?.label ?? '未启用 backend'}</span>
       </span>
     </div>
   );

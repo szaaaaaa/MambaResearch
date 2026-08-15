@@ -29,9 +29,8 @@ from typing import Literal
 from src.server.projects.db import MambaDb, get_db
 
 
-# 允许的 role / served_by 取值——schema CHECK 已强制，这里给类型层一份用作静态约束
+# role 由存储层约束；served_by 是调用边界校验后的可扩展 backend ID。
 Role = Literal["user", "assistant", "system"]
-ServedBy = Literal["claude", "codex", "user", "system", "mambaresearch_compact"]
 
 
 @dataclass
@@ -71,7 +70,7 @@ def append_message(
     conversation_id: str,
     role: Role,
     text: str,
-    served_by: ServedBy,
+    served_by: str,
     tool_use_summary: str | None = None,
     raw_payload: str | None = None,
 ) -> Message:
@@ -98,13 +97,15 @@ def append_message(
     Message
         刚 append 的完整记录（id 由本函数生成）。
     """
+    if not served_by.strip():
+        raise ValueError("served_by must be a non-empty string")
     now = int(time.time())
     msg = Message(
         id=uuid.uuid4().hex,
         conversation_id=conversation_id,
         role=role,
         text=text,
-        served_by=served_by,
+        served_by=served_by.strip(),
         tool_use_summary=tool_use_summary,
         raw_payload=raw_payload,
         compacted=False,
@@ -186,7 +187,7 @@ def mark_compacted(message_ids: list[str]) -> int:
 def lookup_conversation_by_session(cli_session_id: str) -> str | None:
     """从 ``cli_session_id`` 反查所属 ``conversation_id``。
 
-    用于 SSE 路由层 (claude_code / codex routes 的 ``_run_turn``)：拿到 session_id
+    为会话元数据查询提供 CLI session 到 conversation 的映射。
     后需要找到对应 conversation 才能往 messages 表写入。
 
     Returns

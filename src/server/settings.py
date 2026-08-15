@@ -2,8 +2,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CLAUDE_CODE_PROVIDERS_PATH = ROOT / "configs" / "claude_code" / "providers.json"
-CODEX_AUTH_PATH = ROOT / "configs" / "codex" / "auth.json"
 ENV_PATH = ROOT / ".env"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 TMP_DIR = ROOT / ".tmp"
@@ -13,11 +11,6 @@ APP_RUNTIME_MODE = "dynamic-os"
 RUN_STATE_PREFIX = "[[RUN_STATE]]"
 RUN_EVENT_PREFIX = "[[RUN_EVENT]]"
 RUN_LOG_PREFIX = "[[RUN_LOG]]"
-
-OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
-GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-SILICONFLOW_MODELS_URL = "https://api.siliconflow.com/v1/models?type=text"
 
 CREDENTIAL_KEYS = (
     "OPENAI_API_KEY",

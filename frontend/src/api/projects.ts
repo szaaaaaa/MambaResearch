@@ -27,12 +27,14 @@ export interface WorkspaceConfig {
 
 export type BackendStatus = 'logged_in' | 'not_logged_in' | 'cli_not_found' | 'unknown';
 
-export interface AuthStatus {
-  claude: BackendStatus;
-  codex: BackendStatus;
-  anthropic_api_key: boolean;
-  openai_api_key: boolean;
+export interface BackendAuthStatus {
+  status: BackendStatus;
   detail: Record<string, string>;
+}
+
+export interface AuthStatus {
+  backends: Record<string, BackendAuthStatus>;
+  api_keys: Record<string, boolean>;
 }
 
 class ApiError extends Error {
@@ -130,7 +132,6 @@ export async function removeSourceDir(path: string): Promise<WorkspaceConfig> {
 // ==========================================================================
 
 export interface ProjectConfig {
-  codex_profile?: string;
   enabled_mcp_servers?: string[];
   // 允许 backend 后续扩展未知字段；前端 patch 时透传未知字段保持向前兼容
   [key: string]: unknown;

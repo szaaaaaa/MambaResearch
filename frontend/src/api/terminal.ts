@@ -16,10 +16,21 @@
 
 import { API_BASE } from '../store';
 
-export type TerminalBackend = 'claude' | 'codex';
+export interface BackendDescriptor {
+  id: string;
+  label: string;
+  supports_resume: boolean;
+  supports_provider_selection: boolean;
+}
+
+export interface CapabilityInventory {
+  api_version: 1;
+  enabled_plugins: string[];
+  backends: BackendDescriptor[];
+}
 
 export interface TerminalWsParams {
-  backend: TerminalBackend;
+  backend: string;
   /** PTY 子进程的 cwd；不传时由后端用 active project 路径兜底。 */
   cwd?: string;
   /** provider registry 键名；不传走 Anthropic 默认（继承父进程 env）。 */
@@ -46,6 +57,18 @@ export function buildTerminalWsUrl(params: TerminalWsParams): string {
   if (params.conversationId) search.set('conversation_id', params.conversationId);
   const qs = search.toString();
   return `${wsBase}/api/terminal/${encodeURIComponent(params.backend)}${qs ? `?${qs}` : ''}`;
+}
+
+export async function getCapabilityInventory(): Promise<CapabilityInventory> {
+  const response = await fetch(`${API_BASE}/api/capabilities`);
+  const body = (await response.json().catch(() => null)) as CapabilityInventory | null;
+  if (!response.ok) {
+    throw new Error(`GET /api/capabilities failed: ${response.status}`);
+  }
+  if (body?.api_version !== 1 || !Array.isArray(body.backends)) {
+    throw new Error('Unsupported capability inventory schema');
+  }
+  return body;
 }
 
 function httpToWs(httpBase: string): string {

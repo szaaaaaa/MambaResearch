@@ -157,6 +157,109 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_conversations_asset
         ON conversations(asset_kind, last_active_at DESC);
     """,
+    # v7: backend/source ID 不再由 SQLite 枚举。运行时 Registry 负责能力校验，
+    # 数据库只约束非空字符串并保留历史 backend/source 值。
+    """
+    BEGIN IMMEDIATE;
+
+    CREATE TABLE conversations_v7 (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title TEXT,
+        created_at INTEGER NOT NULL,
+        last_active_at INTEGER NOT NULL,
+        backend TEXT NOT NULL DEFAULT 'codex'
+            CHECK (length(trim(backend)) > 0),
+        asset_kind TEXT
+            CHECK (asset_kind IS NULL OR asset_kind IN (
+                'experiment', 'literature', 'dataset', 'idea'
+            )),
+        asset_label TEXT
+    );
+    INSERT INTO conversations_v7
+    SELECT id, project_id, title, created_at, last_active_at,
+           backend, asset_kind, asset_label
+    FROM conversations;
+    DROP TABLE conversations;
+    ALTER TABLE conversations_v7 RENAME TO conversations;
+    CREATE INDEX idx_conversations_project
+        ON conversations(project_id, last_active_at DESC);
+    CREATE INDEX idx_conversations_asset
+        ON conversations(asset_kind, last_active_at DESC);
+
+    CREATE TABLE conversation_segments_v7 (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        segment_index INTEGER NOT NULL,
+        backend TEXT NOT NULL CHECK (length(trim(backend)) > 0),
+        cli_session_id TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        handoff_prompt_path TEXT,
+        UNIQUE(conversation_id, segment_index)
+    );
+    INSERT INTO conversation_segments_v7
+    SELECT id, conversation_id, segment_index, backend, cli_session_id,
+           started_at, ended_at, handoff_prompt_path
+    FROM conversation_segments;
+    DROP TABLE conversation_segments;
+    ALTER TABLE conversation_segments_v7 RENAME TO conversation_segments;
+    CREATE INDEX idx_segments_conv
+        ON conversation_segments(conversation_id, segment_index);
+
+    CREATE TABLE mcp_calls_v7 (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT,
+        segment_id TEXT,
+        cli_session_id TEXT,
+        backend TEXT NOT NULL CHECK (length(trim(backend)) > 0),
+        server_name TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        tool_use_id TEXT,
+        input_json TEXT NOT NULL,
+        output_json TEXT,
+        is_error INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER
+    );
+    INSERT INTO mcp_calls_v7
+    SELECT id, conversation_id, segment_id, cli_session_id, backend,
+           server_name, tool_name, tool_use_id, input_json, output_json,
+           is_error, error, started_at, duration_ms
+    FROM mcp_calls;
+    DROP TABLE mcp_calls;
+    ALTER TABLE mcp_calls_v7 RENAME TO mcp_calls;
+    CREATE INDEX idx_mcp_calls_conv
+        ON mcp_calls(conversation_id, started_at DESC);
+    CREATE INDEX idx_mcp_calls_tool
+        ON mcp_calls(server_name, tool_name, started_at DESC);
+    CREATE INDEX idx_mcp_calls_session
+        ON mcp_calls(cli_session_id, started_at DESC);
+
+    CREATE TABLE messages_v7 (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL
+            CHECK (role IN ('user', 'assistant', 'system')),
+        text TEXT NOT NULL,
+        served_by TEXT NOT NULL CHECK (length(trim(served_by)) > 0),
+        tool_use_summary TEXT,
+        raw_payload TEXT,
+        compacted INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+    );
+    INSERT INTO messages_v7
+    SELECT id, conversation_id, role, text, served_by,
+           tool_use_summary, raw_payload, compacted, created_at
+    FROM messages;
+    DROP TABLE messages;
+    ALTER TABLE messages_v7 RENAME TO messages;
+    CREATE INDEX idx_messages_conversation
+        ON messages(conversation_id, created_at);
+
+    COMMIT;
+    """,
 ]
 
 

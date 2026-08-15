@@ -31,11 +31,10 @@ import {
   buildTerminalWsUrl,
   encodeControl,
   tryParseServerFatal,
-  type TerminalBackend,
 } from '../../api/terminal';
 
 export interface TerminalPaneProps {
-  backend: TerminalBackend;
+  backend: string;
   /** 不传则由后端用 active project 路径兜底。 */
   cwd?: string;
   /** provider registry 键；不传走默认。 */
@@ -44,6 +43,9 @@ export interface TerminalPaneProps {
   resumeId?: string;
   /** 写 messages 表 mirror 用；不传则不写。 */
   conversationId?: string;
+  /** 外部动作注入终端的单次命令。 */
+  input?: { sequence: number; text: string };
+  onInputSent?: (sequence: number) => void;
   /**
    * 父容器的 className——xterm 会铺满父；外面套自己的卡片样式时改这个。
    * 默认黑底全屏。
@@ -99,6 +101,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
   provider,
   resumeId,
   conversationId,
+  input,
+  onInputSent,
   className,
   onClose,
 }) => {
@@ -110,6 +114,30 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
   const onCloseRef = React.useRef(onClose);
   const closedByEffectRef = React.useRef<boolean>(false);
   const encoderRef = React.useRef<TextEncoder>(new TextEncoder());
+  const pendingInputRef = React.useRef<{ sequence: number; text: string } | null>(null);
+  const sentInputSequenceRef = React.useRef(0);
+  const onInputSentRef = React.useRef(onInputSent);
+
+  React.useEffect(() => {
+    onInputSentRef.current = onInputSent;
+  }, [onInputSent]);
+
+  const sendInput = React.useCallback((next: { sequence: number; text: string }) => {
+    if (!next.text.trim() || next.sequence <= sentInputSequenceRef.current) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      pendingInputRef.current = next;
+      return;
+    }
+    ws.send(encoderRef.current.encode(`${next.text}\r`));
+    sentInputSequenceRef.current = next.sequence;
+    pendingInputRef.current = null;
+    onInputSentRef.current?.(next.sequence);
+  }, []);
+
+  React.useEffect(() => {
+    if (input) sendInput(input);
+  }, [input, sendInput]);
 
   // onClose 通过 ref 持有避免 effect 因 prop 函数变化频繁重连
   React.useEffect(() => {
@@ -187,6 +215,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
         // 重连成功后 counter 复位——下次再断不会立刻 onClose
         reconnectAttemptsRef.current = 0;
         sendResize();
+        if (pendingInputRef.current) sendInput(pendingInputRef.current);
       };
 
       ws.onmessage = (event) => {
@@ -266,7 +295,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
       fitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, cwd, provider, resumeId, conversationId]);
+  }, [backend, cwd, provider, resumeId, conversationId, sendInput]);
 
   return (
     <div
