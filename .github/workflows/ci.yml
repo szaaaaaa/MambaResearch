@@ -24,14 +24,9 @@ jobs:
           pip install -e . --no-deps
           pip install pytest pyyaml requests pydantic fastapi websocket-client httpx uvicorn claude-agent-sdk
 
-      - name: Dynamic OS Tests
+      - name: Backend Tests
         run: |
-          pytest -q \
-            tests/test_dynamic_os_phase1.py \
-            tests/test_dynamic_os_phase2.py \
-            tests/test_dynamic_os_phase3.py \
-            tests/test_dynamic_os_hitl.py \
-            tests/test_server_runs_history.py \
+          pytest -q tests \
             -p no:cacheprovider
 
   frontend:
