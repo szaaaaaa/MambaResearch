@@ -35,6 +35,7 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Collection
 from pathlib import Path
 
 from src.server.projects.models import Project, ProjectsState
@@ -263,8 +264,23 @@ def sync_active_project_env() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _project_config_path(project_path: str) -> Path:
+def _project_config_path(project_path: str | Path) -> Path:
     return Path(project_path) / PROJECT_META_DIR / PROJECT_CONFIG_FILE
+
+
+def project_config(project_path: str | Path) -> dict:
+    """读指定项目的 ``.mambaresearch/config.json``。"""
+    config_path = _project_config_path(project_path)
+    if not config_path.exists():
+        return {}
+    try:
+        with config_path.open("r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProjectError(f"invalid project config {config_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ProjectError(f"project config {config_path} must be a JSON object")
+    return {k: v for k, v in payload.items() if k in ALLOWED_PROJECT_CONFIG_KEYS}
 
 
 def active_project_config() -> dict:
@@ -276,21 +292,36 @@ def active_project_config() -> dict:
     project = get_registry().get_active()
     if project is None:
         return {}
-    config_path = _project_config_path(project.path)
-    if not config_path.exists():
-        return {}
     try:
-        with config_path.open("r", encoding="utf-8") as fp:
-            payload = json.load(fp)
-    except (OSError, json.JSONDecodeError):
+        return project_config(project.path)
+    except ProjectError:
         return {}
-    if not isinstance(payload, dict):
-        return {}
-    # 过滤掉未在 allowlist 中的字段（防止旧字段或 typo 渗入）
-    return {k: v for k, v in payload.items() if k in ALLOWED_PROJECT_CONFIG_KEYS}
 
 
-def write_active_project_config(updates: dict) -> dict:
+def validate_enabled_mcp_servers(
+    value: object,
+    available_server_ids: Collection[str],
+) -> None:
+    """校验项目配置只能选择当前 profile 启用的 MCP server。"""
+    if not isinstance(value, list):
+        raise ValueError("enabled_mcp_servers must be a list")
+    seen: set[str] = set()
+    available = set(available_server_ids)
+    for server_id in value:
+        if not isinstance(server_id, str) or not server_id.strip():
+            raise ValueError("enabled_mcp_servers entries must be non-empty strings")
+        if server_id in seen:
+            raise ValueError(f"enabled_mcp_servers contains duplicate ID: {server_id}")
+        if server_id not in available:
+            raise ValueError(f"enabled_mcp_servers references unavailable ID: {server_id}")
+        seen.add(server_id)
+
+
+def write_active_project_config(
+    updates: dict,
+    *,
+    available_mcp_server_ids: Collection[str],
+) -> dict:
     """patch-merge 写 active project config，返回写入后的完整字典。
 
     Parameters
@@ -325,8 +356,13 @@ def write_active_project_config(updates: dict) -> dict:
     if project is None:
         raise ProjectError("no active project — cannot write per-project config")
 
-    existing = active_project_config()
+    existing = project_config(project.path)
     merged = {**existing, **updates}
+    if "enabled_mcp_servers" in merged:
+        validate_enabled_mcp_servers(
+            merged["enabled_mcp_servers"],
+            available_mcp_server_ids,
+        )
     config_path = _project_config_path(project.path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = config_path.with_suffix(config_path.suffix + ".tmp")

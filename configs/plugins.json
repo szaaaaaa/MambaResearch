@@ -2,6 +2,12 @@
   "profile": "default",
   "plugins": [
     {"id": "core.http"},
-    {"id": "backend.codex"}
+    {"id": "backend.codex"},
+    {"id": "research.workspace"},
+    {"id": "research.zotero"},
+    {"id": "research.experiment"},
+    {"id": "research.paper_search"},
+    {"id": "research.colab"},
+    {"id": "research.mamba_history"}
   ]
 }

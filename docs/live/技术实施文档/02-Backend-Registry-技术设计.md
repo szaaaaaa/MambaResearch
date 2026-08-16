@@ -1,6 +1,6 @@
 # Codex-first Backend Registry 技术设计
 
-状态：已实施（2026-08-16）
+状态：已实施（2026-08-16）；真实 Codex new/resume smoke 待复核
 前置条件：[Mamba Kernel 技术设计](01-Mamba-Kernel-技术设计.md) Batch 1 已通过
 上层设计：[Mamba Kernel 插件化架构](../架构设计/mamba-kernel-plugin-architecture.md)
 
@@ -15,7 +15,9 @@ Mamba Kernel
   -> Terminal / Auth / Conversation consumers
 ~~~
 
-> Implementation status (2026-08-16): completed and verified with the Codex-first test suite.
+> 落地记录：提交 <code>8d3d529</code> 完成 Codex-only 切换。2026-08-16 复核时，可访问测试
+> 32 passed，前端 lint/build 与 <code>git diff --check</code> 通过；当前机器 Codex 0.147.0
+> 未登录，因此真实 new/resume 会话 smoke 未复核。
 
 Claude adapter、Claude provider、skill mount 和 MCP config 拼装不进入本批。Backend seam
 切换后，Claude 不再通过旧分支启动；历史 Claude conversation/segment/message 元数据仍可读取，
@@ -146,7 +148,8 @@ class LaunchSpec:
 ~~~
 
 <code>LaunchSpec</code> 可直接交给 <code>PtyBridge</code>。route 不再二次修改 argv/env。
-新会话无法在启动前取得 CLI session ID 时，backend 可提供一次性 resolver；host 只负责把结果登记到 conversation segment。
+新会话无法在启动前取得 CLI session ID 时，backend 可提供一次性 resolver；host 在 PTY 启动后
+异步执行 resolver，并把结果登记到 conversation segment。
 
 ### 5.4 认证合同
 
@@ -218,6 +221,9 @@ BackendDescriptor(
 7. 新会话启动前记录现有 Codex session 文件，提供只识别本次新增且 cwd 匹配的 session ID resolver；resume 不提供 resolver。
 8. 返回 immutable <code>LaunchSpec</code>。
 
+resolver 只读取本次启动后新增 rollout 的首条 <code>session_meta</code>，从
+<code>payload.session_id</code>（兼容 <code>payload.id</code>）取得 ID，并要求其中 cwd 与启动 cwd 一致。
+
 实现直接移动当前 <code>_resolve_codex_bin()</code> 和 <code>_resolve_argv()</code> 的 Codex
 分支，不另写第二套命令构造器。
 
@@ -248,8 +254,8 @@ class CodexBackendPlugin:
         ...
 ~~~
 
-如果现有 Codex session manager 是进程级资源，<code>start()</code> 启动它并返回 disposer；
-否则 start 返回 <code>None</code>。每个 WebSocket 的 PTY 不放入插件全局生命周期。
+Codex 插件没有进程级资源，<code>start()</code> 返回 <code>None</code>。每个 WebSocket 自己持有
+PTY 和 session ID resolver task，不放入插件全局生命周期。
 
 Plugin ID 与 backend ID 是不同命名空间：
 
@@ -289,12 +295,14 @@ class BackendRegistry:
 2. normalize backend_id
 3. BackendRegistry.require(backend_id)
 4. parse cwd/provider/resume/conversation_id
-5. resolve common cwd
-6. backend.resolve_launch(LaunchRequest)
-7. create TurnTeer with assistant_served_by=backend_id when mirror enabled
-8. async with PtyBridge(spec.argv, cwd=spec.cwd, env=spec.env)
-9. run existing _pump()
-10. close TurnTeer in finally
+5. validate mirrored conversation exists and conversation.backend == backend_id
+6. resolve common cwd
+7. backend.resolve_launch(LaunchRequest)
+8. create TurnTeer with assistant_served_by=backend_id when mirror enabled
+9. async with PtyBridge(spec.argv, cwd=spec.cwd, env=spec.env)
+10. for a new session, resolve session ID and append conversation segment asynchronously
+11. run existing _pump()
+12. close TurnTeer in finally
 ~~~
 
 ### 8.2 从 route 删除
@@ -434,8 +442,9 @@ export interface CapabilityInventory {
 
 - 新建 conversation 时 backend ID 必须存在于 Backend Registry；第一批只有 Codex。
 - resume/启动 terminal 时再次要求 backend 当前启用。
+- terminal 镜像写入前要求 conversation 存在且其 backend 与 URL backend 一致。
 - 历史 Claude conversation 读取不要求插件启用。
-- <code>conversation_segments.backend</code> 与 conversation backend 的现有一致性规则保持。
+- Codex 新会话发现 session ID 后写入 <code>conversation_segments</code>；resume 复用已有 segment。
 - <code>TurnTeer.assistant_served_by</code> 使用已由 registry 校验的 Codex ID。
 
 ### 12.2 Python 类型
@@ -632,6 +641,7 @@ Codex/Claude 集合。
 | 传 provider | 明确失败 |
 | binary 不存在 | 明确安装提示 |
 | auth 文件有效/缺失/损坏 | 保持当前 logged_in/not_logged_in/unknown 语义 |
+| 新会话 session 发现 | 只接受本次新增、cwd 匹配的 <code>session_meta</code> rollout |
 
 ### 15.3 Route 与前端
 
@@ -639,6 +649,7 @@ Codex/Claude 集合。
 | --- | --- |
 | Codex WS | 正常启动并收发 PTY |
 | Claude WS | fatal + 1003，消息列出 codex |
+| conversation/backend 不一致 | fatal + 1003，不启动 PTY |
 | 无 cwd 且无 active project | 保持当前 fatal + 1011 |
 | PTY EOF/崩溃 | 保持当前 close/fatal 语义 |
 | inventory 为空 | 前端禁用新建会话 |

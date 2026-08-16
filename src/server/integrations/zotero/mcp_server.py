@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -483,23 +482,14 @@ def main() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Claude Agent SDK 默认挂载配置（供 session_manager 合并使用）
+# Server-local MCP 配置
 # ---------------------------------------------------------------------------
 
 DEFAULT_SERVER_KEY = "mamba_zotero"
 
 
 def default_mcp_config(root: Path) -> dict[str, dict[str, Any]]:
-    """返回供 Claude Agent SDK ``mcp_servers`` 用的默认配置。
-
-    与 ``src/server/workspace/mcp_server.py:default_mcp_config`` 同形。
-    凭据走子进程继承 ``ZOTERO_*`` env，不在此处显式注入；用户改 .env 后
-    重启后端即可，无需重启 MCP 子进程（client 会每次重新读 env）。
-
-    通过 ``MAMBA_ZOTERO_MCP_DISABLED=1`` 关闭。
-    """
-    if os.environ.get("MAMBA_ZOTERO_MCP_DISABLED", "").strip() == "1":
-        return {}
+    """返回 Zotero Research plugin 使用的 stdio server 配置。"""
     resolved_root = str(root.resolve())
     return {
         DEFAULT_SERVER_KEY: {

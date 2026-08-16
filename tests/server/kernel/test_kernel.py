@@ -13,6 +13,7 @@ from fastapi import APIRouter, FastAPI
 from src.server.kernel.contracts import (
     BackendDescriptor,
     DuplicateCapabilityError,
+    McpStdioConfig,
     DuplicatePluginError,
     MissingPluginDependencyError,
     PluginDependencyCycleError,
@@ -21,7 +22,7 @@ from src.server.kernel.contracts import (
 )
 from src.server.kernel.lifecycle import build_lifespan
 from src.server.kernel.loader import load_kernel
-from src.server.kernel.registry import BackendRegistry, HttpRegistry
+from src.server.kernel.registry import BackendRegistry, HttpRegistry, McpRegistry
 
 
 class FakePlugin:
@@ -62,6 +63,15 @@ class FakePlugin:
 @dataclass(frozen=True)
 class FakeBackend:
     descriptor: BackendDescriptor
+
+
+@dataclass(frozen=True)
+class FakeMcpProvider:
+    id: str
+    label: str
+
+    def resolve_config(self) -> McpStdioConfig:
+        return McpStdioConfig(command="python", args=("-V",), env={})
 
 
 def _profile(tmp_path: Path, plugin_ids: list[str]) -> Path:
@@ -158,6 +168,19 @@ def test_registries_preserve_order_and_reject_duplicate_or_unknown_ids() -> None
         backends.register(plugin_id="backend.codex-copy", backend=backend)
     with pytest.raises(UnknownCapabilityError, match="codex"):
         backends.require("missing")
+
+    mcp = McpRegistry()
+    first = FakeMcpProvider(id="mcp.first", label="First")
+    second = FakeMcpProvider(id="mcp.second", label="Second")
+    mcp.register(plugin_id="plugin.first", provider=first)
+    mcp.register(plugin_id="plugin.second", provider=second)
+
+    assert mcp.list() == (first, second)
+    assert mcp.require("mcp.first") is first
+    with pytest.raises(DuplicateCapabilityError):
+        mcp.register(plugin_id="plugin.copy", provider=first)
+    with pytest.raises(UnknownCapabilityError, match="mcp.first"):
+        mcp.require("missing")
 
 
 def test_lifecycle_starts_and_disposes_in_reverse_order(tmp_path: Path) -> None:

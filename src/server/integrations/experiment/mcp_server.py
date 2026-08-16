@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -371,15 +370,14 @@ def main() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Claude Agent SDK 默认挂载配置
+# Server-local MCP 配置
 # ---------------------------------------------------------------------------
 
 DEFAULT_SERVER_KEY = "mamba_experiment"
 
 
 def default_mcp_config(root: Path) -> dict[str, dict[str, Any]]:
-    if os.environ.get("MAMBA_EXPERIMENT_MCP_DISABLED", "").strip() == "1":
-        return {}
+    """返回 Experiment Research plugin 使用的 stdio server 配置。"""
     resolved_root = str(root.resolve())
     return {
         DEFAULT_SERVER_KEY: {

@@ -1,18 +1,15 @@
-"""MCP server registry——多 source 整合（Stage 3 Task 1）。
+"""MCP server registry——多 source 整合。
 
 Source 优先级与去重
 ~~~~~~~~~~~~~~~~~~~
 按 server ``name`` 去重；多个 source 撞同一 name 时：
 
 * ``transport`` / ``command`` / ``args`` / ``env`` / ``url``：以最先注册的 source 为准
-  （顺序：builtin → codex_project → codex_global → mcp_json）。这与"builtin helper
-  是程序权威源"的实际语义对齐——`.codex/config.toml` 是手维护的镜像，理论上一致；
-  哪天不一致以 helper 为准，避免运行时无意识漂移
+  （顺序：mamba_managed → codex_project → codex_global → mcp_json）
 * ``sources`` / ``config_paths``：累加列表，UI 展示"这个 server 在哪些来源里都被引用了"
 
-按设计 plan：``.mcp.json`` 在本仓库不存在（仅给 Claude Code 项目级，但本项目通过
-SDK 程序化配置而不写文件）。本模块仍保留 ``.mcp.json`` 解析逻辑——若用户后续手动
-新建则自动并入；不存在直接返回空，不浪费 IO。
+``.mcp.json`` 只服务 MCP 控制台的自定义 server；Codex 自身仍按原生配置规则读取
+user 和 active-project 配置。
 """
 
 from __future__ import annotations
@@ -21,6 +18,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.server.kernel.contracts import McpServerProvider
 from src.server.mcp.models import McpServerInfo, SourceLabel, Transport
 
 
@@ -105,50 +103,23 @@ def _merge_into(
 # ---------------------------------------------------------------------------
 
 
-def _read_builtin_helpers() -> list[McpServerInfo]:
-    """读 MambaResearch 自家的 builtin MCP server helpers。
-
-    这是 programmatic config——没有"配置文件路径"概念，``config_paths`` 标
-    ``<programmatic>``。延迟 import 避免本模块被启动期 IO 拖慢。
-    """
-    from src.server.integrations.colab.mcp_server import (
-        default_mcp_config as colab_default_mcp_config,
-    )
-    from src.server.integrations.experiment.mcp_server import (
-        default_mcp_config as experiment_default_mcp_config,
-    )
-    from src.server.integrations.mamba_history.mcp_server import (
-        default_mcp_config as mamba_history_default_mcp_config,
-    )
-    from src.server.integrations.paper_search.mcp_server import (
-        default_mcp_config as paper_search_default_mcp_config,
-    )
-    from src.server.integrations.zotero.mcp_server import (
-        default_mcp_config as zotero_default_mcp_config,
-    )
-    from src.server.workspace.mcp_server import (
-        default_mcp_config as workspace_default_mcp_config,
-    )
-
+def _read_mamba_managed(
+    providers: tuple[McpServerProvider, ...],
+) -> list[McpServerInfo]:
     items: list[McpServerInfo] = []
-    for func in (
-        workspace_default_mcp_config,
-        zotero_default_mcp_config,
-        colab_default_mcp_config,
-        experiment_default_mcp_config,
-        mamba_history_default_mcp_config,
-        paper_search_default_mcp_config,
-    ):
-        config = func(_REPO_ROOT)
-        for name, raw in config.items():
-            items.append(
-                _build_server(
-                    name,
-                    raw,
-                    source="builtin_helper",
-                    config_path="<programmatic>",
-                )
+    for provider in providers:
+        config = provider.resolve_config()
+        items.append(
+            McpServerInfo(
+                name=provider.id,
+                transport="stdio",
+                sources=["mamba_managed"],
+                config_paths=["<kernel>"],
+                command=config.command,
+                args=list(config.args),
+                env=dict(config.env),
             )
+        )
     return items
 
 
@@ -181,13 +152,12 @@ def _read_toml_mcp_servers(
 
 
 def _read_mcp_json(path: Path) -> list[McpServerInfo]:
-    """解析 .mcp.json（Claude Code 项目级约定）。
+    """解析 MCP 控制台使用的 .mcp.json。
 
     Schema：
     ``{"mcpServers": {"<name>": {"type":..., "command":..., "args":[...], "env":{...}}}}``
 
-    本仓库当前**不存在**此文件——所有 builtin server 走 programmatic 注入。保留
-    parser 让用户手动新建时自动并入。
+    Mamba-managed server 由 Kernel 注入，用户自定义 server 继续由此文件提供。
     """
     if not path.exists():
         return []
@@ -214,8 +184,10 @@ def _read_mcp_json(path: Path) -> list[McpServerInfo]:
 
 
 def list_servers(
+    managed_providers: tuple[McpServerProvider, ...],
     *,
     repo_root: Path | None = None,
+    project_root: Path | None = None,
     codex_home: Path | None = None,
 ) -> list[McpServerInfo]:
     """聚合所有 source，返回去重后的 server 列表。
@@ -223,7 +195,9 @@ def list_servers(
     Parameters
     ----------
     repo_root : Path or None
-        仓库根，默认 ``_REPO_ROOT``。测试通过此参数注入临时目录。
+        MCP 控制台 ``.mcp.json`` 所在的仓库根。测试可注入临时目录。
+    project_root : Path or None
+        active research project 根，用于读取该项目的 Codex 原生配置。
     codex_home : Path or None
         Codex 全局 config 所在目录（``~/.codex``）。测试时可指向 tmp。
     """
@@ -233,12 +207,13 @@ def list_servers(
     aggregated: dict[str, McpServerInfo] = {}
 
     # 顺序敏感——先注册的 source 决定 command/args/env 的"权威值"
-    for srv in _read_builtin_helpers():
+    for srv in _read_mamba_managed(managed_providers):
         _merge_into(aggregated, srv)
-    for srv in _read_toml_mcp_servers(
-        root / ".codex" / "config.toml", source="codex_project"
-    ):
-        _merge_into(aggregated, srv)
+    if project_root is not None:
+        for srv in _read_toml_mcp_servers(
+            project_root / ".codex" / "config.toml", source="codex_project"
+        ):
+            _merge_into(aggregated, srv)
     for srv in _read_toml_mcp_servers(
         codex_dir / "config.toml", source="codex_global"
     ):
@@ -246,16 +221,23 @@ def list_servers(
     for srv in _read_mcp_json(root / ".mcp.json"):
         _merge_into(aggregated, srv)
 
-    return sorted(aggregated.values(), key=lambda s: s.name)
+    return list(aggregated.values())
 
 
 def get_server(
     name: str,
+    managed_providers: tuple[McpServerProvider, ...],
     *,
     repo_root: Path | None = None,
+    project_root: Path | None = None,
     codex_home: Path | None = None,
 ) -> McpServerInfo | None:
-    for srv in list_servers(repo_root=repo_root, codex_home=codex_home):
+    for srv in list_servers(
+        managed_providers,
+        repo_root=repo_root,
+        project_root=project_root,
+        codex_home=codex_home,
+    ):
         if srv.name == name:
             return srv
     return None

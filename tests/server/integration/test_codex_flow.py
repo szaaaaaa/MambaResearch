@@ -33,7 +33,16 @@ def test_profile_publishes_codex_and_rejects_disabled_backends(
 
         assert capabilities.json() == {
             "api_version": 1,
-            "enabled_plugins": ["core.http", "backend.codex"],
+            "enabled_plugins": [
+                "core.http",
+                "backend.codex",
+                "research.workspace",
+                "research.zotero",
+                "research.experiment",
+                "research.paper_search",
+                "research.colab",
+                "research.mamba_history",
+            ],
             "backends": [{"id": "codex", "label": "Codex", "supports_resume": True, "supports_provider_selection": False}],
         }
         assert auth.json()["backends"] == {"codex": {"status": "logged_in", "detail": {"binary": "C:/bin/codex.cmd", "credentials_path": "C:/auth.json"}}}

@@ -10,11 +10,11 @@ import {
 } from '../../../api/mcp';
 
 /**
- * MCP 视图——展示 registry 内所有 server（builtin / .codex.toml / .mcp.json 三源
- * 合并），允许编辑 user-level env override。
+ * MCP 视图——展示 registry 内所有 server（Mamba-managed / Codex 原生配置 /
+ * .mcp.json），允许编辑 user-level env override。
  *
  * 编辑只动 ``configs/mcp/env_overrides.json``；server 命令行（command/args/url）由
- * builtin helper 硬编码或 .mcp.json 用户自配，不通过本视图改动。
+ * Research provider、Codex 原生配置或 .mcp.json 提供，不通过本视图改动。
  */
 export const McpSection: React.FC = () => {
   const [servers, setServers] = React.useState<McpServer[]>([]);
@@ -109,7 +109,7 @@ export const McpSection: React.FC = () => {
     <div className="space-y-5">
       <Card
         title="MCP Servers"
-        description="builtin helper / .codex/config.toml / .mcp.json 三源合并的 registry。command 与 args 来自源文件，UI 只编辑 user 层 env override。"
+        description="Mamba-managed、Codex user/active-project 配置与 .mcp.json 合并后的 registry。command 与 args 来自各自 owner，UI 只编辑 user 层 env override。"
       >
         <div className="flex items-center justify-between">
           <p className="text-sm text-slate-500">

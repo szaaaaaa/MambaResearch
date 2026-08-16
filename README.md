@@ -4,14 +4,14 @@
 
 # 🧬 MambaResearch
 
-### 一个建在 Claude Code / Codex CLI 上的研究向 IDE 壳
+### 一个当前运行在 Codex CLI 之上的研究向 IDE 壳
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![React 19](https://img.shields.io/badge/React-19-61dafb?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
-**所有 LLM 出口都走订阅版的 Claude Code / Codex CLI；MambaResearch 自身零 LLM 路由、零 agent runtime、零自建 skill 注册表。**
+**当前生产 LLM 出口只走订阅版 Codex CLI；MambaResearch 自身零 LLM 路由、零 agent runtime、零自建 skill 注册表。**
 
 [快速开始](#-快速开始) · [架构](#-三层架构) · [Sub-agent + Pipeline](#-sub-agent--pipeline-skill) · [配置](#-配置)
 
@@ -21,12 +21,13 @@
 
 ## 这是什么
 
-MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
+MambaResearch v3 当前是 Codex CLI 之上的一层 IDE 壳；Backend Registry 为未来 backend 保留
+同一接入契约，但当前不实现 Claude：
 
 - 侧栏 4 bucket（实验/文献/数据集/灵感）+ 草稿箱 + 能力视图（技能、MCP 工具、工作台、Zotero 库）+ 运行历史/设置；右侧按需开情境性 tab
-- **多对话并行**：每条 conversation 绑死一个 backend（Claude 或 Codex），永不切换；不同 backend 的对话在 sidebar 上并列共存
+- **多对话并行**：每条 conversation 绑定一个 backend；当前唯一可新建和 resume 的 backend 是 Codex
 - 跨对话引用通过 `mamba_history` MCP tool 按需取（backend 主动调，懒拉不预 push）
-- LLM 智能完全交给已订阅的 Claude Code / Codex CLI
+- LLM 智能完全交给已订阅的 Codex CLI
 - 自定义研究流程通过 **8 个 sub-agent**（`.claude/agents/*.md`）+ **7 个 pipeline SKILL.md**（`.claude/skills/`）沉淀
 - 自定义工具通过 **MCP servers** 接入（`workspace` / `mamba_history` / `zotero` / `colab` / `experiment` / `paper_search`）
 
@@ -44,7 +45,7 @@ MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
                        │ 调
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Claude Code CLI / Codex CLI（订阅引擎，唯一 LLM 出口）       │
+│ Codex CLI（当前唯一生产订阅引擎和 LLM 出口）                │
 │   - Session 存储（CLI JSONL）                                │
 │   - Sub-agent 自动发现（.claude/agents/ ↔ .codex/agents/）   │
 │   - Pipeline SKILL.md 自动发现（.claude/skills/）            │
@@ -94,8 +95,8 @@ MambaResearch v3 是 Claude Code / Codex 之上的一层 IDE 壳：
 ### 前置条件
 
 - Python 3.10+ / Node.js 20+
-- 装好至少一个：`claude` CLI（Claude Pro/Max 订阅）或 `codex` CLI（ChatGPT Plus/Pro 订阅）
-- 各自完成 OAuth 登录
+- 安装 `codex` CLI（ChatGPT Plus/Pro 订阅）
+- 完成 Codex OAuth 登录
 
 ### 本地开发
 
@@ -134,7 +135,7 @@ python scripts/sync_subagents.py
 | 草稿箱 | 未素材化（未挂到 bucket）的 conversation 收纳处 |
 | 技能 | 列出 `.claude/skills/` 下所有 pipeline SKILL.md |
 | MCP 工具 | 5 子视图：servers / tools / 调用历史 / sandbox 试调 / 配置编辑 |
-| 工作台（Workbench） | Claude / Codex 会话主界面，含 slash 命令、HITL、CLI 切换 |
+| 工作台（Workbench） | Codex 会话主界面，含 slash 命令和 HITL |
 | Zotero 库 | 内嵌 Zotero 浏览器 + 选中 PDF 一键拉到 workspace |
 | 运行历史 | 跨 conversation 的运行时间轴 |
 | 设置 | provider / MCP env / credentials / 项目级 lazy 配置 |
@@ -142,7 +143,10 @@ python scripts/sync_subagents.py
 
 ## 🔌 内置 MCP Servers
 
-由 `src/server/integrations/*/mcp_server.py` 注册；Workbench 的 Claude / Codex 聊天主路径都走 CLI PTY。Claude PTY 通过 `--mcp-config` 注入运行时合并配置；Codex PTY 继承 Codex CLI 自身的 auth/config。
+六个内建 server 的 command/args 由各自的 `src/server/integrations/*/mcp_server.py` 或
+`src/server/workspace/mcp_server.py` 构造，并由 `src/server/plugins/research.py` 中的
+Research plugin 独占注册到 Kernel `McpRegistry`。Codex 会话在每次启动时从该 Registry
+取得快照，按项目 `enabled_mcp_servers` 生成运行时 `-c mcp_servers.<id>=...` 配置。
 
 - **workspace.\*** — 文件分类索引读写
 - **mamba_history.\*** — 跨 conversation 历史检索（`search_conversations` / `get_conversation_messages`），backend 按需懒拉
@@ -166,18 +170,16 @@ MambaResearch/
 │   └── skills/                     # NTFS junction → .skills-shared/（gitignore）
 ├── .codex/
 │   ├── agents/                     # 8 个 .toml（sync_subagents.py 生成，gitignore）
-│   ├── skills/                     # NTFS junction → .skills-shared/（gitignore）
-│   └── config.toml                 # Codex CLI 项目级配置
+│   └── skills/                     # NTFS junction → .skills-shared/（gitignore）
 ├── src/
 │   ├── server/
 │   │   ├── projects/               # 项目注册表 + active project env
 │   │   ├── workspace/              # 分类索引 + workspace MCP
-│   │   ├── terminal/               # Claude/Codex PTY 桥（pywinpty）+ ANSI strip + turn tee
-│   │   ├── claude_code/            # provider 注册表 + 历史 session 存储（GET-only）
-│   │   ├── codex/                  # Legacy Codex app-server 兼容层（非聊天主路径）
+│   │   ├── kernel/                 # Profile、typed registries、lifecycle
+│   │   ├── plugins/                # backend.codex + Research plugin wiring
+│   │   ├── terminal/               # Codex PTY 桥（pywinpty）+ ANSI strip + turn tee
 │   │   ├── integrations/           # zotero / colab / experiment MCP servers
 │   │   ├── mcp/                    # MCP server registry
-│   │   ├── bridge/                 # cross-CLI continues 桥（v3.2 hybrid MT 已撤回）
 │   │   └── routes/                 # FastAPI 路由
 │   └── common/                     # 共享 utils
 ├── frontend/src/                   # React 19 + Tailwind + Zustand
@@ -195,9 +197,10 @@ MambaResearch/
 | `configs/claude_code/providers.json` | Claude Code provider（`name → {base_url, api_key_env, default_model}`） | 前端 CLI 视图 / `PATCH /api/cli-providers` |
 | `configs/mcp/env_overrides.json` | MCP 子进程 user 层 env override | 前端 MCP 视图 / `PATCH /api/mcp/servers/{name}/env` |
 | `configs/codex/auth.json` | Codex OAuth profile 绑定 | 自动维护，需要时手编 |
-| `<project>/.mambaresearch/config.json` | 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
+| `<project>/.mambaresearch/config.json` | 项目级 lazy 配置（当前仅 `{enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
 
-MCP server 命令行（`command` / `args`）由 `src/server/integrations/<name>/mcp_server.py` 的 `default_mcp_config()` 硬编码 + `src/server/mcp/registry.py:_read_builtin_helpers()` 注册；UI 只能改 env override，不可改命令行。
+MCP server 命令行（`command` / `args`）由所属 server 的 `default_mcp_config()` 构造，并由对应
+Research plugin 注册到 Kernel `McpRegistry`；UI 只能改 env override，不可改命令行。
 
 API key（含 `ZOTERO_USER_ID` / `ZOTERO_API_KEY` 等）通过设置面板的 **credentials editor** 段落写入 `.env`，保存后清空输入框；后端读取时按需热加载。
 
@@ -220,8 +223,7 @@ API key（含 `ZOTERO_USER_ID` / `ZOTERO_API_KEY` 等）通过设置面板的 **
 |----|------|
 | 后端 | Python 3.10+ / FastAPI / uvicorn / SSE |
 | 前端 | React 19 / TypeScript / Vite / Tailwind CSS |
-| LLM 出口 | Claude Code CLI（Pro/Max 订阅）或 Codex CLI（ChatGPT 订阅） |
-| 跨 CLI 桥 | continues v4.0.12 |
+| LLM 出口 | Codex CLI（ChatGPT 订阅） |
 | MCP servers | workspace / mamba_history / zotero / colab / experiment / paper_search |
 | 持久化 | `~/.mambaresearch/mamba.db` + `<project>/.mambaresearch/*.db` |
 | 项目记忆 | `<project>/.mambaresearch/memory/*.md` + `@import` 双侧暴露给 CLAUDE.md / AGENTS.md |
@@ -233,5 +235,5 @@ MIT License
 ---
 
 <div align="center">
-<sub>Built as a thin shell on top of Claude Code / Codex CLI</sub>
+<sub>Built as a thin shell on top of Codex CLI</sub>
 </div>

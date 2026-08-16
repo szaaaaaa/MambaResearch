@@ -1,8 +1,12 @@
 # Mamba Kernel 技术设计
 
-状态：待实施
+状态：已实施（2026-08-15，提交 <code>96aff0c</code>）
 依赖文档：[实施文档索引](00-实施文档索引.md)
 上层设计：[Mamba Kernel 插件化架构](../架构设计/mamba-kernel-plugin-architecture.md)
+
+核验更新（2026-08-16）：当前 `app.py`、loader、typed registries 和 lifecycle 仍保持本设计的
+唯一装配路径；Kernel/Research 扩展后的规范命令 `pytest tests` 32 项全部通过，未发现 Batch 1
+实现缺口。
 
 ## 1. 目标
 
@@ -351,7 +355,7 @@ Batch 1 只改变 owner，不改资源实现：
 | --- | --- | --- |
 | 固定业务 router 导入与挂载 | <code>core.http</code> | register 时贡献现有 router |
 | MambaDb connect/close | <code>core.http</code> 或其最小 core resource adapter | lifespan start/disposer |
-| Codex session manager | <code>backend.codex</code> | Batch 2 移入 start/disposer |
+| Codex session ID resolver task | 每个 Terminal WebSocket | route 在退出前等待；插件不持有进程级 session manager |
 | Codex PTY 子进程 | 每个 WS 的 <code>PtyBridge</code> | 不变，不成为全局资源 |
 | 外部 CLI transcript | 外部 CLI | 不变 |
 

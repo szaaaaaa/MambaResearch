@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import time
 from collections.abc import Callable
@@ -19,12 +20,22 @@ from src.server.kernel.contracts import (
     KernelContext,
     LaunchRequest,
     LaunchSpec,
+    McpServerProvider,
+    McpStdioConfig,
     PluginManifest,
+)
+from src.server.kernel.registry import McpRegistry
+from src.server.projects.registry import (
+    ACTIVE_PROJECT_ENV_VAR,
+    ProjectError,
+    project_config,
+    validate_enabled_mcp_servers,
 )
 from src.server.terminal.pty_bridge import build_subprocess_env
 
 
 _CODEX_SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class CodexTerminalBackend:
@@ -35,17 +46,30 @@ class CodexTerminalBackend:
         supports_provider_selection=False,
     )
 
+    def __init__(self, mcp_registry: McpRegistry) -> None:
+        self._mcp_registry = mcp_registry
+
     def resolve_launch(self, request: LaunchRequest) -> LaunchSpec:
         if request.provider_id:
             raise BackendLaunchError("Codex does not support provider selection")
+        providers = self._mcp_registry.list()
+        selected_providers = _select_mcp_providers(providers, request.cwd)
+        overrides, provider_env = _resolve_mcp_launch(selected_providers)
         codex_bin = _resolve_codex_bin()
-        argv = (
-            (codex_bin, "resume", "--no-alt-screen", request.resume_id)
-            if request.resume_id
-            else (codex_bin, "--no-alt-screen")
-        )
+        argv = [codex_bin]
+        for override in overrides:
+            argv.extend(("-c", override))
+        if request.resume_id:
+            argv.extend(("resume", "--no-alt-screen", request.resume_id))
+        else:
+            argv.append("--no-alt-screen")
         try:
-            env = build_subprocess_env()
+            env = build_subprocess_env(
+                extra={
+                    **provider_env,
+                    ACTIVE_PROJECT_ENV_VAR: str(request.cwd),
+                }
+            )
         except ValueError as exc:
             raise BackendLaunchError(f"env build failed: {exc}") from exc
         session_id_resolver = (
@@ -54,7 +78,7 @@ class CodexTerminalBackend:
             else _new_session_id_resolver(request.cwd, _CODEX_SESSIONS_ROOT)
         )
         return LaunchSpec(
-            argv=argv,
+            argv=tuple(argv),
             cwd=request.cwd,
             env=env,
             session_id_resolver=session_id_resolver,
@@ -84,6 +108,111 @@ def _resolve_codex_bin() -> str:
             "codex binary not found on PATH. Run `codex doctor` or install Codex CLI."
         )
     return codex_bin
+
+
+def _select_mcp_providers(
+    providers: tuple[McpServerProvider, ...],
+    cwd: Path,
+) -> tuple[McpServerProvider, ...]:
+    try:
+        config = project_config(cwd)
+    except ProjectError as exc:
+        raise BackendLaunchError("project MCP selection could not be read") from exc
+    if "enabled_mcp_servers" not in config:
+        return providers
+    requested = config["enabled_mcp_servers"]
+    if requested == []:
+        return providers
+    try:
+        validate_enabled_mcp_servers(
+            requested,
+            tuple(provider.id for provider in providers),
+        )
+    except ValueError as exc:
+        raise BackendLaunchError(f"invalid enabled_mcp_servers: {exc}") from exc
+    return tuple(
+        next(provider for provider in providers if provider.id == server_id)
+        for server_id in requested
+    )
+
+
+def _resolve_mcp_launch(
+    providers: tuple[McpServerProvider, ...],
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    configs: list[tuple[str, McpStdioConfig]] = []
+    merged_env: dict[str, str] = {}
+    env_owners: dict[str, str] = {}
+    for provider in providers:
+        try:
+            config = provider.resolve_config()
+        except Exception as exc:
+            raise BackendLaunchError(
+                f"MCP provider {provider.id} configuration failed"
+            ) from exc
+        _validate_mcp_config(provider.id, config)
+        configs.append((provider.id, config))
+        for key, value in config.env.items():
+            current = merged_env.get(key)
+            if current is None:
+                merged_env[key] = value
+                env_owners[key] = provider.id
+            elif current != value:
+                raise BackendLaunchError(
+                    f"MCP env conflict for {key}: {env_owners[key]}, {provider.id}"
+                )
+
+    return (
+        tuple(_mcp_override(server_id, config) for server_id, config in configs),
+        merged_env,
+    )
+
+
+def _validate_mcp_config(server_id: str, config: object) -> None:
+    if not isinstance(config, McpStdioConfig):
+        raise BackendLaunchError(f"MCP provider {server_id} returned an invalid config")
+    if not isinstance(config.command, str) or not config.command.strip():
+        raise BackendLaunchError(f"MCP provider {server_id} returned an invalid command")
+    if not isinstance(config.args, tuple) or any(
+        not isinstance(arg, str) for arg in config.args
+    ):
+        raise BackendLaunchError(f"MCP provider {server_id} returned invalid args")
+    if not isinstance(config.env, dict) or any(
+        not isinstance(key, str)
+        or not _ENV_KEY_RE.fullmatch(key)
+        or not isinstance(value, str)
+        for key, value in config.env.items()
+    ):
+        raise BackendLaunchError(f"MCP provider {server_id} returned invalid env")
+
+
+def _mcp_override(server_id: str, config: McpStdioConfig) -> str:
+    env_vars = tuple(dict.fromkeys((ACTIVE_PROJECT_ENV_VAR, *config.env)))
+    return (
+        f"mcp_servers.{_toml_literal(server_id)}={{"
+        f"command={_toml_literal(config.command)},"
+        f"args={_toml_array(config.args)},"
+        f"env_vars={_toml_array(env_vars)},"
+        "enabled=true}"
+    )
+
+
+def _toml_array(values: tuple[str, ...]) -> str:
+    return "[" + ",".join(_toml_literal(value) for value in values) + "]"
+
+
+def _toml_literal(value: str) -> str:
+    if not isinstance(value, str) or any(
+        ord(char) < 32 and char not in {"\n", "\r", "\t"} for char in value
+    ):
+        raise BackendLaunchError("cannot format MCP config as a TOML literal")
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
 
 
 def _find_codex_bin() -> str | None:
@@ -177,7 +306,7 @@ class CodexBackendPlugin:
         context.plugin_config(self.manifest.id)
         context.capabilities.backends.register(
             plugin_id=self.manifest.id,
-            backend=CodexTerminalBackend(),
+            backend=CodexTerminalBackend(context.capabilities.mcp),
         )
 
     async def start(self, context: KernelContext) -> AsyncDisposer | None:

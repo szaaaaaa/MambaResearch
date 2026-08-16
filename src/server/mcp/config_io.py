@@ -6,17 +6,14 @@
 
 不支持写的 source
 ~~~~~~~~~~~~~~~~~
-- ``builtin_helper``：programmatic config，由 Python 代码维护，不可由 UI 修改
-- ``.codex/config.toml`` / ``~/.codex/config.toml``：含有非 mcp_servers 段（profile /
-  其它配置），TOML 写入需要保留注释 + 其它段，复杂度大于价值。用户当前接入新
-  server 的标准路径是写 ``.mcp.json``——Claude 与 Codex 都能识别（Codex 通过附加
-  CLI 标志或镜像配置），后续若必须支持 codex_global 写入再扩展
+- Mamba-managed provider：由 Kernel 管理，不可由 UI 修改
+- Codex 原生配置：由 Codex 自己读取，MCP 控制台不镜像或写入
 
 设计要点
 ~~~~~~~~
 - 原子写：``write_text(tmp) + os.replace`` 防破坏
 - 同 server name 已存在：POST 走 409；DELETE 不存在走 404
-- builtin server name 受保护：POST 创建同名抛 409，DELETE 抛 403
+- 已启用 Mamba-managed server name 受保护：POST 创建同名抛 409，DELETE 抛 403
 """
 
 from __future__ import annotations
@@ -40,10 +37,6 @@ class McpConfigConflict(McpConfigError):
 
 class McpConfigForbidden(McpConfigError):
     """目标 server 是 builtin、不可改。"""
-
-
-# 不可被 .mcp.json 覆盖的 builtin server name
-_BUILTIN_NAMES: frozenset[str] = frozenset({"mamba_workspace"})
 
 
 def _mcp_json_path(repo_root: Path | None = None) -> Path:
@@ -129,6 +122,7 @@ def list_custom_servers(repo_root: Path | None = None) -> dict[str, dict[str, An
 def add_custom_server(
     payload: dict[str, Any],
     *,
+    protected_server_ids: frozenset[str],
     repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """新增 server 到 .mcp.json。
@@ -140,13 +134,13 @@ def add_custom_server(
     McpConfigConflict
         ``name`` 已存在于 .mcp.json。
     McpConfigForbidden
-        ``name`` 与 builtin server 重名。
+        ``name`` 与 Mamba-managed server 重名。
     """
     norm = _validate_server_payload(payload)
     name = norm["name"]
-    if name in _BUILTIN_NAMES:
+    if name in protected_server_ids:
         raise McpConfigForbidden(
-            f"{name!r} 是 MambaResearch builtin server，不能用 .mcp.json 覆盖。"
+            f"{name!r} is Mamba-managed and cannot be overridden by .mcp.json"
         )
     path = _mcp_json_path(repo_root)
     data = _load_mcp_json(path)
@@ -158,12 +152,15 @@ def add_custom_server(
 
 
 def delete_custom_server(
-    name: str, *, repo_root: Path | None = None
+    name: str,
+    *,
+    protected_server_ids: frozenset[str],
+    repo_root: Path | None = None,
 ) -> None:
     name = name.strip()
-    if name in _BUILTIN_NAMES:
+    if name in protected_server_ids:
         raise McpConfigForbidden(
-            f"{name!r} 是 builtin server，不能从 .mcp.json 删除。"
+            f"{name!r} is Mamba-managed and cannot be deleted from .mcp.json"
         )
     path = _mcp_json_path(repo_root)
     data = _load_mcp_json(path)

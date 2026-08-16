@@ -1,4 +1,4 @@
-"""MCP servers HTTP routes (Stage 3 Task 1 + Task 3)。
+"""MCP servers HTTP routes。
 
 端点
 ----
@@ -7,20 +7,20 @@
 - ``GET  /api/mcp/servers/{name}/tools``       拉 server 的 tools/list（实时 probe）
 - ``GET  /api/mcp/servers/status``             所有 server 的 probe 状态（并发）
 - ``GET  /api/mcp/servers/{name}/status``      单 server probe 状态
-- ``POST /api/mcp/sandbox/call``               (Task 3) sandbox 直调一个 tool
+- ``POST /api/mcp/sandbox/call``               sandbox 直调一个 tool
 
 设计取舍
 ~~~~~~~~
 - registry 与 status 分离：``GET servers`` 返回静态配置（廉价）；``GET status`` 触发
   一组 short-lived stdio probe（每个 5s 超时），相对昂贵——前端按需点
 - 不暴露 restart / logs：本仓库目前无外部 server，所有 server 都是仓库内代码、由
-  Claude SDK / Codex CLI 自己拉起来；无独立的"重启"语义。后续接入用户自配 server
-  时再补
+  sandbox probe 或 Codex CLI 按需拉起；无独立的"重启"语义。
 """
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -37,20 +37,45 @@ from src.server.mcp.config_io import (
 from src.server.mcp.env_overrides import load_env_overrides, write_env_overrides
 from src.server.mcp.probe import probe_server
 from src.server.mcp.sandbox import call_tool, is_dangerous
+from src.server.projects.registry import get_registry
 
 
 router = APIRouter()
 
 
+def _managed_providers(request: Request):
+    return request.app.state.kernel.context.capabilities.mcp.list()
+
+
+def _active_project_root() -> Path | None:
+    active = get_registry().get_active()
+    return Path(active.path) if active is not None else None
+
+
+def _servers(request: Request):
+    return registry.list_servers(
+        _managed_providers(request),
+        project_root=_active_project_root(),
+    )
+
+
+def _server(request: Request, name: str):
+    return registry.get_server(
+        name,
+        _managed_providers(request),
+        project_root=_active_project_root(),
+    )
+
+
 @router.get("/api/mcp/servers")
-def list_servers() -> dict:
-    return {"servers": [s.to_dict() for s in registry.list_servers()]}
+def list_servers(request: Request) -> dict:
+    return {"servers": [s.to_dict() for s in _servers(request)]}
 
 
 @router.get("/api/mcp/servers/status")
-async def list_status() -> dict:
+async def list_status(request: Request) -> dict:
     """并发 probe 所有 server——前端"刷新状态"按钮的入口。"""
-    servers = registry.list_servers()
+    servers = _servers(request)
     if not servers:
         return {"statuses": []}
     statuses = await asyncio.gather(
@@ -61,17 +86,17 @@ async def list_status() -> dict:
 
 
 @router.get("/api/mcp/servers/{name}")
-def get_server(name: str) -> dict:
-    server = registry.get_server(name)
+def get_server(name: str, request: Request) -> dict:
+    server = _server(request, name)
     if server is None:
         raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
     return server.to_dict()
 
 
 @router.get("/api/mcp/servers/{name}/tools")
-async def get_server_tools(name: str) -> dict:
+async def get_server_tools(name: str, request: Request) -> dict:
     """拉 server 的 tools 列表——通过 probe 实时取（不缓存）。"""
-    server = registry.get_server(name)
+    server = _server(request, name)
     if server is None:
         raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
     status = await probe_server(server)
@@ -84,8 +109,8 @@ async def get_server_tools(name: str) -> dict:
 
 
 @router.get("/api/mcp/servers/{name}/status")
-async def get_server_status(name: str) -> dict:
-    server = registry.get_server(name)
+async def get_server_status(name: str, request: Request) -> dict:
+    server = _server(request, name)
     if server is None:
         raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
     status = await probe_server(server)
@@ -93,9 +118,9 @@ async def get_server_status(name: str) -> dict:
 
 
 @router.get("/api/mcp/servers/{name}/env")
-def get_server_env_override(name: str) -> dict:
+def get_server_env_override(name: str, request: Request) -> dict:
     """读指定 server 的 user env override（仅 user 层；不返回 hardcoded defaults）。"""
-    server = registry.get_server(name)
+    server = _server(request, name)
     if server is None:
         raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
     return {"server_name": name, "env": load_env_overrides(name)}
@@ -111,13 +136,12 @@ async def patch_server_env_override(name: str, request: Request) -> dict:
 
     * env 必须是 dict[str, str]，空 dict 表示"清空该 server 的 override"
     * 出现 ``command`` / ``args`` / ``url`` 等其他字段直接 400 拒绝——server 命令行
-      定义在 builtin helper 代码里硬编码，禁止 user 通过 PATCH 改动（安全边界）
+      定义在 Mamba-managed provider 中，禁止 user 通过 PATCH 改动（安全边界）
 
-    端点设计来自 D+E 重构 task 2：settings UI 编辑 paper_search API keys 时点的就是
-    本接口。registry 下次 ``list_servers`` 取 builtin helper 的 ``default_mcp_config``
-    即合并最新 override；MCP 子进程下次启动也会拿到新值。
+    ``list_servers`` 与下次 MCP 子进程启动都会解析 provider 的配置构造器并合并最新
+    override。
     """
-    server = registry.get_server(name)
+    server = _server(request, name)
     if server is None:
         raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
     payload = await _parse_json(request)
@@ -127,7 +151,7 @@ async def patch_server_env_override(name: str, request: Request) -> dict:
             status_code=400,
             detail=(
                 f"fields not allowed via this endpoint: {sorted(forbidden)}. "
-                "Server command/args/url are hardcoded in the builtin helper; "
+                "Server command/args/url are hardcoded in the Mamba-managed provider; "
                 "only `env` is editable here."
             ),
         )
@@ -147,7 +171,7 @@ async def patch_server_env_override(name: str, request: Request) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Sandbox 直调（Stage 3 Task 3）
+# Sandbox 直调
 # ---------------------------------------------------------------------------
 
 
@@ -182,7 +206,7 @@ async def sandbox_call(request: Request) -> dict:
     if not isinstance(arguments, dict):
         raise HTTPException(status_code=400, detail="input 必须是 JSON 对象")
 
-    server = registry.get_server(server_name)
+    server = _server(request, server_name)
     if server is None:
         raise HTTPException(
             status_code=404, detail=f"MCP server not found: {server_name}"
@@ -232,11 +256,10 @@ async def _parse_json(request: Request) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 用户自定义 server CRUD（Stage 3 Task 4）
+# 用户自定义 server CRUD
 # ---------------------------------------------------------------------------
 #
-# 仅支持写 ``.mcp.json``——builtin helpers 与 .codex/config.toml 视为只读
-# （详见 mcp/config_io.py 模块注释）。
+# 仅支持写 ``.mcp.json``；当前 Kernel McpRegistry 中的 Mamba-managed ID 受保护。
 
 
 @router.get("/api/mcp/custom-servers")
@@ -256,7 +279,12 @@ async def create_custom(request: Request) -> dict:
     """
     payload = await _parse_json(request)
     try:
-        item = add_custom_server(payload)
+        item = add_custom_server(
+            payload,
+            protected_server_ids=frozenset(
+                provider.id for provider in _managed_providers(request)
+            ),
+        )
     except McpConfigForbidden as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except McpConfigConflict as exc:
@@ -267,9 +295,14 @@ async def create_custom(request: Request) -> dict:
 
 
 @router.delete("/api/mcp/custom-servers/{name}")
-def delete_custom(name: str) -> dict:
+def delete_custom(name: str, request: Request) -> dict:
     try:
-        delete_custom_server(name)
+        delete_custom_server(
+            name,
+            protected_server_ids=frozenset(
+                provider.id for provider in _managed_providers(request)
+            ),
+        )
     except McpConfigForbidden as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except McpConfigConflict as exc:

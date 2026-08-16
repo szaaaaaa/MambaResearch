@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 Transport = Literal["stdio", "http", "sse"]
 SourceLabel = Literal[
-    "builtin_helper",       # MambaResearch 自己的 default_mcp_config 函数注入的（programmatic）
-    "codex_project",        # <repo>/.codex/config.toml
+    "mamba_managed",        # Mamba Kernel McpRegistry 注册的 provider
+    "codex_project",        # <active project>/.codex/config.toml
     "codex_global",         # ~/.codex/config.toml
     "mcp_json",             # .mcp.json（项目级，Claude Code 约定）
 ]
@@ -19,9 +19,8 @@ SourceLabel = Literal[
 class McpServerInfo:
     """单个 MCP server 的静态配置信息——不含运行时状态。
 
-    同一个 server name 可能出现在多个 source 里（例如 ``mamba_workspace`` 同时
-    被 builtin helper 注册到 Claude SDK + 写在 .codex/config.toml 里）；registry
-    按 name 去重，sources 字段累加。
+    同一个 server name 可能出现在多个 source 里；registry 按 name 去重，sources
+    字段累加。
     """
 
     name: str
@@ -41,7 +40,7 @@ class McpServerInfo:
             "config_paths": list(self.config_paths),
             "command": self.command,
             "args": list(self.args),
-            "env": dict(self.env),
+            "env": {key: "***" for key in self.env},
             "url": self.url,
         }
 

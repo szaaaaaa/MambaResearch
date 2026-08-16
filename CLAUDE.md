@@ -52,9 +52,8 @@ If you find yourself about to write code without having invoked the applicable o
 - `src/server/projects/registry.py` — active project 单例 + 进程级 env 管理；改动会影响所有 session 创建路径与 MCP 子进程启动
 - `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
 - `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
-- `src/server/terminal/pty_bridge.py` — Claude/Codex PTY 子进程桥（pywinpty + provider env 注入）；改完跑 `pytest tests/test_terminal_pty_bridge.py`
+- `src/server/terminal/pty_bridge.py` — Codex PTY 子进程桥（pywinpty + env 注入）；改完跑受影响的 server 集成测试
 - `src/server/terminal/output_parser.py` — PTY → messages 表 mirror 的 ANSI strip + turn 切分；改完跑 `pytest tests/test_terminal_output_parser.py`
-- `src/server/codex/session_manager.py` — legacy Codex app-server 兼容层；Workbench 聊天主路径走 `src/server/terminal/`，不要用它恢复旧 SSE/composer 方向
 
 规则：改完运行 `pytest tests/`；失败必须修复。
 
@@ -65,7 +64,7 @@ If you find yourself about to write code without having invoked the applicable o
 - `configs/claude_code/providers.json` — Claude Code provider 注册表（`name → {base_url, api_key_env, default_model}`）；优先走 `PATCH /api/cli-providers` 或前端 CLI 视图
 - `configs/mcp/env_overrides.json` — MCP 子进程 user 层 env override（`server_name → {KEY: value}`）；优先走 `PATCH /api/mcp/servers/{name}/env` 或前端 MCP 视图
 - `configs/codex/auth.json` — Codex OAuth profile 绑定（``default_profile`` / ``allowed_profiles``）
-- `<project>/.mambaresearch/config.json` — 项目级 lazy 配置（`{codex_profile, enabled_mcp_servers}`）；优先走 `PATCH /api/project-config`
+- `<project>/.mambaresearch/config.json` — 项目级 lazy 配置（当前仅 `{enabled_mcp_servers}`）；优先走 `PATCH /api/project-config`
 
 ## 🟢 安全区 — 可直接修改
 
@@ -79,10 +78,10 @@ If you find yourself about to write code without having invoked the applicable o
 |------|------|----------|
 | 新 pipeline | `.skills-shared/<pipeline-name>/SKILL.md`（双向 mirror 到 `.claude/skills/` 与 `.codex/skills/`） | 跑 `pwsh scripts/skills_mirror.ps1 -Scope project` 建/补 junction |
 | 新 sub-agent | `.claude/agents/<role>.md`（frontmatter + 系统提示） | `scripts/sync_subagents.py` 同步 .codex/agents/*.toml |
-| 新 API | `src/server/routes/` 新文件 | `app.py` 里 `include_router()` |
+| 新 API | `src/server/routes/` 新文件 | 由能力 owner 的 plugin 注册到 Kernel `HttpRegistry` |
 | 新前端组件 | `frontend/src/components/*.tsx` | 父组件引用 |
-| 新 MCP server | `src/server/integrations/<name>/mcp_server.py` 写 `default_mcp_config()` | `src/server/mcp/registry.py:_read_builtin_helpers` 注册 |
-| 聊天 PTY 入口 | Claude 走 `src/server/routes/terminal.py` (`WS /api/terminal/claude`) + `src/server/terminal/pty_bridge.py` 直 spawn `claude` CLI | 前端 `frontend/src/components/workbench/TerminalPane.tsx` 是 xterm.js + WS 客户端；WorkbenchTab 在 Claude tab 下渲染该组件 |
+| 新 MCP server | `src/server/integrations/<name>/mcp_server.py` 写 `default_mcp_config()` | 对应 Research plugin 注册到 Kernel `McpRegistry` |
+| 聊天 PTY 入口 | `backend.codex` 生成 `LaunchSpec`，`WS /api/terminal/{backend_id}` 只消费 Backend Registry | 前端 `WorkbenchTab` 从 `/api/capabilities` 选择启用 backend，`TerminalPane` 承担 xterm.js + WS |
 
 # 测试原则
 

@@ -55,7 +55,13 @@ async def patch_project_config(request: Request) -> dict[str, Any]:
         )
 
     try:
-        merged = write_active_project_config(body)
+        merged = write_active_project_config(
+            body,
+            available_mcp_server_ids=tuple(
+                provider.id
+                for provider in request.app.state.kernel.context.capabilities.mcp.list()
+            ),
+        )
     except ProjectError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:

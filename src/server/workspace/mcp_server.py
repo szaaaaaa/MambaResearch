@@ -566,37 +566,14 @@ def main() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Claude Agent SDK 默认挂载配置
+# Server-local MCP 配置
 # ---------------------------------------------------------------------------
 
 DEFAULT_SERVER_KEY = "mamba_workspace"
 
 
 def default_mcp_config(root: Path) -> dict[str, dict[str, Any]]:
-    """返回供 Claude Agent SDK ``mcp_servers`` 用的默认配置——挂本 server。
-
-    返回 Claude Agent SDK ``mcp_servers`` 字段的标准形式（``type / command /
-    args / env``）。session_manager 把多个 builtin helper 的 default config
-    合并后传给 ``ClaudeAgentOptions``。
-
-    设计要点
-    --------
-    * ``command = sys.executable``：保证 SDK spawn 子进程的 Python 与父后端一致
-    * ``PYTHONPATH = repo root``：保证 ``-m src.server.workspace.mcp_server`` 能 import
-    * **不在此处注入 ``MAMBA_ACTIVE_PROJECT_PATH``**：父后端进程的 env 已有该值
-      （Stage 1 ``_apply_active_project_env``）；SDK 不带 ``env=`` 时子进程继承
-      父 env，自然拿到最新值；session_manager 在 provider env 替换路径下显式
-      propagate（已修复）。这样 active project 切换是"零中转"——不需要重启
-      MCP server。
-    * 允许通过 ``MAMBA_WORKSPACE_MCP_DISABLED=1`` 关闭（测试 / 故障兜底）
-
-    Parameters
-    ----------
-    root : Path
-        仓库根，用于 PYTHONPATH 与 ``-m`` 模块解析。
-    """
-    if os.environ.get("MAMBA_WORKSPACE_MCP_DISABLED", "").strip() == "1":
-        return {}
+    """返回 Workspace Research plugin 使用的 stdio server 配置。"""
     resolved_root = str(root.resolve())
     return {
         DEFAULT_SERVER_KEY: {

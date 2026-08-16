@@ -3,8 +3,8 @@
 设计动机
 ~~~~~~~~
 
-D+E 重构后 builtin helpers（``src/server/integrations/*/mcp_server.py:
-default_mcp_config``）是 server 定义的程序级源——它们 hardcode 启动命令和
+D+E 重构后 Research plugin 独占调用的 ``default_mcp_config`` 是 server 定义的
+程序级源——它们 hardcode 启动命令和
 env keys 列表。但 paper_search 这种第三方 MCP 需要 API keys 这种**用户敏感
 配置**，不能写在 git 管的代码里，也不该让 user 通过 PATCH 改 command/args
 （安全边界）。
@@ -12,7 +12,7 @@ env keys 列表。但 paper_search 这种第三方 MCP 需要 API keys 这种**�
 所以引入这个轻量加载器：
 
 * settings UI 只能 PATCH 写 ``configs/mcp/env_overrides.json``
-* builtin helper 在生成 ``default_mcp_config`` 时合并这个文件
+* Research plugin 在解析 ``default_mcp_config`` 时合并这个文件
 * server 定义（command/args）继续硬编码在 helper 代码里——user PATCH 改不动
 
 文件格式
@@ -77,7 +77,7 @@ def load_env_overrides(server_id: str) -> dict[str, str]:
     Parameters
     ----------
     server_id : str
-        MCP server 的注册 id（与 builtin helper ``default_mcp_config`` 返回字典
+        MCP server 的注册 id（与所属 Research plugin 调用的 ``default_mcp_config`` 返回字典
         的 key 一致），例如 ``paper_search``。
 
     Returns
@@ -93,7 +93,7 @@ def write_env_overrides(server_id: str, env: dict[str, str]) -> dict[str, str]:
     """覆盖写指定 server 的 env override 字典，返回写入后的值。
 
     settings UI PATCH 端点的目的端——只能改 env 字段，**不能**改 command/args
-    （那些在 builtin helper 代码里硬编码）。本函数：
+    （那些在 Research plugin 的 server-local 构造器里硬编码）。本函数：
 
     1. 读现有 env_overrides.json（不存在视为空）
     2. 把 ``server_id`` 段整段替换成 ``env``

@@ -28,6 +28,7 @@ data/
 outputs/
 logs/
 evolved_skills/
+/docs/archive/
 *.log
 .pytest_cache/
 .tmp/
@@ -52,11 +53,8 @@ frontend/dist/
 !.claude/agents/
 !.claude/agents/**
 
-# Codex — exclude .codex/ children (local state, history, cache) but keep
-# .codex/config.toml (project-level MCP for codex app-server; Task 5).
-# .codex/skills/ is excluded for the same junction reason as .claude/skills/.
+# Codex — exclude .codex/ local state, history, cache and skill junctions.
 .codex/*
-!.codex/config.toml
 
 # Skills mirror — physical source of truth for both Claude / Codex skill loaders.
 # .claude/skills/<name> and .codex/skills/<name> are NTFS junctions pointing here.

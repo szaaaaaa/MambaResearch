@@ -54,16 +54,12 @@ KNOWN_ENV_KEYS: tuple[str, ...] = (
 
 
 def default_mcp_config(root: Path) -> dict[str, dict[str, Any]]:
-    """返回供 Claude Agent SDK ``mcp_servers`` 用的默认配置。
-
-    与 ``workspace.mcp_server.default_mcp_config`` 同形式：返回
-    ``{server_name: {type, command, args, env}}``。session_manager 把所有
-    builtin helper 的 dict 合并后传给 ``ClaudeAgentOptions``。
+    """返回 Paper Search Research plugin 使用的 stdio server 配置。
 
     env 字段 = 已知 keys 模板（全空字符串）∪ user override（``configs/mcp/
     env_overrides.json`` 中 ``paper_search`` 段）。后者覆盖前者。
 
-    ``root`` 参数当前未使用，但保持与其他 helper 同构签名，便于 registry 统一调用。
+    ``root`` 参数用于与其他 server-local 构造器保持统一签名。
     """
     base_env: dict[str, str] = {key: "" for key in KNOWN_ENV_KEYS}
     user_env = load_env_overrides(SERVER_ID)

@@ -1,7 +1,7 @@
 # MambaResearch Kernel 插件化架构设计
 
-> 状态：提案（Draft）
-> 日期：2026-08-15
+> 状态：架构基线已批准；Phase 1-2 已实施，Phase 3 部分实施，Phase 4 待实施，Phase 5 按需
+> 日期：2026-08-16
 > 适用范围：MambaResearch 后端、前端和内建研究集成
 > 参考实现：DeepSeek Harness `0.1.0-rc.5`（官方仓库的 `architecture`、`capability-seams`、`cordis-primer` 文档）
 
@@ -26,8 +26,8 @@ MambaResearch 内重建 Agent Loop、Planner、DAG Executor 或模型上下文�
 
 ## 2. 背景与根因
 
-当前产品边界已经确定：MambaResearch 是 Claude Code / Codex CLI 之上的研究
-工作台，CLI 自己拥有模型路由、工具选择、计划、HITL、skill 和子 agent。
+当前产品边界已经确定：MambaResearch 是 Codex CLI 之上的研究工作台，并为后续 Claude Code
+插件保留同一 backend seam。CLI 自己拥有模型路由、工具选择、计划、HITL、skill 和子 agent。
 MambaResearch 负责项目、工作区、资产视图、MCP 配置和 PTY 宿主。
 
 问题不在于缺少更多功能，而在于变化点散落在核心流程：
@@ -204,27 +204,23 @@ discover
   -> dispose registrations and owned resources
 ```
 
-插件的最小生命周期接口：
+当前已落地的最小生命周期接口：
 
 ```python
 class Plugin(Protocol):
     manifest: PluginManifest
 
-    def register(self, context: KernelContext) -> Disposer:
+    def register(self, context: KernelContext) -> None:
         """注册能力；不启动长生命周期外部资源。"""
 
-    async def start(self, context: KernelContext) -> None:
-        """在依赖就绪后启动资源。"""
-
-    async def stop(self, context: KernelContext) -> None:
-        """释放资源；必须幂等。"""
+    async def start(self, context: KernelContext) -> AsyncDisposer | None:
+        """在依赖就绪后启动资源，并返回所拥有资源的释放函数。"""
 ```
 
 `register()` 失败、依赖缺失、能力冲突或 `start()` 失败时，应用不进入服务
-状态；已注册项按逆序 disposer，避免半启动状态。
+状态；已经成功 `start()` 并返回 disposer 的资源按逆序释放，避免半启动状态。
 
-第一阶段不支持运行时热卸载。`stop()` 的存在是为了进程关闭、测试隔离和
-未来热重载，而不是现在引入动态复杂度。
+第一阶段不支持运行时热卸载，也不为未来热重载预建 `stop()` 或注册撤销句柄。
 
 ## 7. Capability Registry
 
@@ -240,11 +236,11 @@ class CapabilityRegistry:
     ui: UiMetadataRegistry
 ```
 
-每个 namespace 提供三个基本操作：
+每个 namespace 提供当前消费者需要的窄操作：
 
 ```text
-register(id, provider) -> disposer
-get(id) -> provider | None
+register(id, provider) -> None
+require(id) -> provider
 list() -> immutable snapshots
 ```
 
@@ -253,11 +249,10 @@ list() -> immutable snapshots
 - 同一 namespace 的重复 ID 直接失败；
 - 注册值必须满足该 namespace 的 contract；
 - `list()` 返回脱离内部可变状态的快照；
-- disposer 只撤销自己注册的条目，不得删除其他插件的条目；
 - registry 不负责业务重试、权限判断或网络调用。
 
-`replace()`、热重载和运行时卸载不属于第一阶段；需要真实配置重载场景时再扩展
-注册句柄，而不是提前把动态语义写进公共契约。
+`get()`、`replace()`、热重载和运行时卸载不属于第一阶段；需要真实配置重载场景时再扩展，
+不提前把动态语义写进公共契约。
 
 ### 7.2 Backend Capability
 
@@ -294,11 +289,14 @@ class McpServerProvider(Protocol):
     id: str
     label: str
 
-    def config_for(self, project_root: Path) -> McpServerConfig: ...
+    def resolve_config(self) -> McpServerConfig: ...
 ```
 
-所有内建 MCP server 通过该契约注册。`builtin_writer` 只消费
-`registry.mcp.list()` 并序列化，不再 import 六个具体模块。
+所有内建 MCP server 通过该契约注册。未来的 MCP 配置 consumer 只消费
+`registry.mcp.list()`，不直接 import 具体研究模块。
+
+provider 自己解析代码根和 server-local env；backend adapter 以当前 `LaunchRequest.cwd`
+单独注入 active project path，避免把研究项目目录误作 Python module root。
 
 MCP server 自己负责 tool schema、凭据和业务错误；Kernel 只负责发现、配置
 组合、进程边界和调用观测。
@@ -352,14 +350,8 @@ export interface ViewContribution {
 {
   "profile": "default",
   "plugins": [
-    "backend.claude",
-    "backend.codex",
-    "research.workspace",
-    "research.zotero",
-    "research.experiment",
-    "research.paper-search",
-    "research.colab",
-    "ui.core"
+    {"id": "core.http"},
+    {"id": "backend.codex"}
   ]
 }
 ```
@@ -367,9 +359,8 @@ export interface ViewContribution {
 配置加载流程：
 
 1. 读取默认 Profile。
-2. 合并显式环境/命令行 overlay。
-3. 校验 plugin ID、依赖、重复 capability 和配置 schema。
-4. 生成不可变 `KernelConfig`。
+2. 校验 plugin ID、依赖、重复 capability 和配置 schema。
+3. 生成不可变 `KernelConfig`。
 
 插件只读取注入的配置，不在任意业务函数里直接读取环境变量。
 
@@ -437,10 +428,8 @@ Browser Workbench
 ```text
 Research Plugin
   -> registry.mcp.register(provider)
-  -> active project change
-  -> builtin writer consumes registry.mcp.list()
-  -> .mambaresearch/mcp_config.json
-  -> Claude CLI --mcp-config
+  -> MCP config consumer reads registry.mcp.list()
+  -> backend adapter converts the snapshot when its CLI supports MCP config
 ```
 
 同一个 provider 只在 Registry 注册一次；MCP UI、配置写入和 probe 都消费同一
@@ -507,9 +496,9 @@ configs/
 | --- | --- | --- |
 | `src/server/routes/terminal.py` | `backend.*` + Kernel PTY host | 删除 backend 分支，按 Registry 解析 LaunchSpec |
 | 未来 `backend_claude.py` | `backend.claude` 的 provider 子能力 | 由插件自身实现，不保留当前配置或运行时路径 |
-| `src/server/codex/` | `backend.codex` | 将 session manager 生命周期交给插件 |
+| `src/server/plugins/backend_codex.py` | `backend.codex` | 提供 argv、env、auth 与新 session ID 发现 |
 | `src/server/mcp/registry.py` | Kernel MCP Registry | 保留外部 config reader，统一内建 provider 来源 |
-| `src/server/mcp/builtin_writer.py` | Kernel MCP consumer | 只消费 Registry 快照 |
+| 未来 MCP 配置 consumer | Kernel MCP consumer | 只消费 Registry 快照 |
 | `src/server/integrations/zotero/` | `research.zotero` | MCP、library route、credentials 一起封装 |
 | `src/server/integrations/experiment/` | `research.experiment` | runner 与 MCP provider 由插件启动 |
 | `app.py` 的 `include_router` | HTTP Registry consumer | app 只挂 Kernel 和 Registry，不逐个导入业务路由 |
@@ -550,14 +539,14 @@ configs/
 
 ## 14. 分阶段迁移计划
 
-### Phase 0：冻结契约（当前）
+### Phase 0：冻结契约（已完成）
 
 - 本文作为目标架构基线。
 - 明确 Kernel 不拥有 Agent Runtime。
 - 为 backend、MCP、HTTP、UI 四类能力写最小 contract。
-- 保留当前未提交的 UI 收敛工作，不在同一批次重写 Sidebar。
+- Research/UI seam 不进入 Kernel 宿主批次。
 
-### Phase 1：建立 Kernel 宿主
+### Phase 1：建立 Kernel 宿主（已完成）
 
 - 新增 `src/server/kernel/` 的 context、contract、registry、loader、lifecycle。
 - 新增 `configs/plugins.json`，默认启用现有插件。
@@ -567,25 +556,33 @@ configs/
 完成标准：禁用一个插件可以在启动时明确失败或不挂载，且不需要修改业务
 路由；启停测试能证明 disposer 被调用。
 
-### Phase 2：Backend seam
+### Phase 2：Backend seam（已完成）
 
-- 将 Claude 和 Codex 分别实现为 `TerminalBackend`。
+- 先将 Codex 实现为唯一启用的 `TerminalBackend`；Claude 后续按同一合同单独接入。
 - `terminal.py` 删除 `SUPPORTED_BACKENDS` 和 backend 分支。
 - 统一 `/api/capabilities`，前端从服务端取得 backend 清单。
 - 执行数据库追加 migration，解除 backend 字符串枚举约束。
 - 保留 PTY、resume、provider env 和现有错误语义。
 
-完成标准：新增一个假的测试 backend 只需注册 provider，不修改 terminal route；
-Claude/Codex 的现有会话和 resume 流程通过回归检查。
+完成标准：新增一个假的测试 backend 只需注册 provider，不修改 terminal route；Codex 新建、
+resume、session segment 登记通过回归检查，历史 Claude 元数据可读但不能启动。
 
-### Phase 3：Research seam
+### Phase 3：Research seam（部分实施）
 
-- 先迁移 Workspace 和 Zotero，做一次完整纵向验证。
-- 统一 builtin MCP provider 来源，删除 registry/writer 的重复 import 列表。
-- 再迁移 Experiment、Paper Search、Colab、Mamba History。
-- 每个插件自带 config、MCP provider、router 和生命周期。
+- 在一个替换 Batch 内迁移 Workspace、Zotero、Experiment、Paper Search、Colab、Mamba
+  History，避免 builtin MCP provider 出现两个来源。
+- 每个插件拥有自己的 config、MCP provider、可选 router 和生命周期。
+- Codex new/resume 只消费 MCP Registry 快照，并由项目级选择进一步缩小 provider 集合。
+- 删除静态 Codex MCP 镜像、中央 helper 枚举和环境 feature flag。
+- 以 Workspace/Zotero 验证 MCP 与 HTTP 的完整纵向所有权。
 
-完成标准：禁用 Zotero 同时移除其 MCP 配置、API route 和前端入口。
+完成标准：禁用 Zotero 同时移除其 MCP 配置和 API route；Codex 启动参数中也不存在该
+provider。前端入口由 Phase 4 的 UI registry 移除，Phase 3 不增加硬编码隐藏分支。
+
+截至 2026-08-16，六个 Research plugin、MCP/HTTP owner、项目选择、Codex new/resume 参数
+注入、secret 脱敏和静态 MCP 镜像删除已经落地，32 项可访问测试及前端 lint/build 通过。
+Phase 3 的生产路径和自动化验证已完成；真实已登录 Codex new/resume、`/mcp`、Workspace cwd
+和子进程清理 smoke 尚未执行，因此仍保持“部分实施”。
 
 ### Phase 4：UI seam
 
@@ -613,7 +610,7 @@ Claude/Codex 的现有会话和 resume 流程通过回归检查。
 ### 功能
 
 - 新增 backend 不修改 Kernel terminal 控制流。
-- 新增 research plugin 不修改 MCP writer、API gateway 或 App switch。
+- 新增 research plugin 不修改 MCP 配置 consumer、API gateway 或 App switch。
 - 插件可同时贡献 MCP、HTTP、UI 能力。
 - Profile 可启用/禁用插件，前后端能力状态一致。
 
@@ -621,14 +618,14 @@ Claude/Codex 的现有会话和 resume 流程通过回归检查。
 
 - 重复 plugin ID、重复 capability ID、缺失依赖和未知配置字段在启动时失败。
 - 任一插件启动失败时，已注册资源按逆序释放。
-- Codex session manager、MCP 子进程和 PTY 不产生孤儿资源。
+- Codex session resolver task、MCP 子进程和 PTY 不产生孤儿资源。
 
 ### 兼容性
 
-- 当前 Claude/Codex PTY 主路径不变。
+- 当前 Codex PTY、resume 与 session segment 登记主路径保持；历史 Claude 元数据仍可读。
 - 现有项目、conversation、segment、MCP call 数据可迁移并读取。
 - 没有 active project 时，现有明确错误仍然成立。
-- 用户维护的 `.mcp.json` 与 Mamba 托管的 `mcp_config.json` 继续分离。
+- 用户维护的 `.mcp.json` 与未来由 Registry 生成的 backend MCP 配置保持分离。
 
 ### 可维护性
 

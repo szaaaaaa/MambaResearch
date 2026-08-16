@@ -50,6 +50,25 @@ class BackendLaunchError(RuntimeError):
     """Backend 无法解析当前启动请求。"""
 
 
+@dataclass(frozen=True)
+class McpStdioConfig:
+    """当前 Mamba 托管 stdio MCP server 的启动配置。"""
+
+    command: str
+    args: tuple[str, ...]
+    env: dict[str, str]
+
+
+class McpServerProvider(Protocol):
+    """由 Research plugin 注册、由 backend 在启动时解析的 MCP provider。"""
+
+    id: str
+    label: str
+
+    def resolve_config(self) -> McpStdioConfig:
+        ...
+
+
 _PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 
 
