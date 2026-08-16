@@ -1,7 +1,4 @@
-Exit code: 0
-Wall time: 1.4 seconds
-Output:
-"""Research MCP plugin 鐨勭湡瀹?Kernel/app 闆嗘垚娴嬭瘯銆?""
+"""Research MCP plugin 的真实 Kernel/app 集成测试。"""
 
 from __future__ import annotations
 
@@ -114,4 +111,3 @@ def test_disabled_zotero_removes_mcp_and_route_and_rejects_project_reenable(
     finally:
         set_db_for_tests(None)
         set_registry_for_tests(None)
-
