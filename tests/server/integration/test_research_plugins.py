@@ -1,4 +1,7 @@
-"""Research MCP plugin 的真实 Kernel/app 集成测试。"""
+Exit code: 0
+Wall time: 1.4 seconds
+Output:
+"""Research MCP plugin 鐨勭湡瀹?Kernel/app 闆嗘垚娴嬭瘯銆?""
 
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ def test_default_profile_wires_research_mcp_routes_and_redacts_env(
             launch = backend.resolve_launch(
                 LaunchRequest(cwd=tmp_path, resume_id=None, provider_id=None)
             )
-            route_paths = {route.path for route in client.app.routes}
+            route_paths = {route.path for route in client.app.routes if hasattr(route, "path")}
 
         assert [server["name"] for server in servers[:6]] == [
             "mamba_workspace",
@@ -103,7 +106,7 @@ def test_disabled_zotero_removes_mcp_and_route_and_rejects_project_reenable(
                 backend.resolve_launch(
                     LaunchRequest(cwd=project_root, resume_id=None, provider_id=None)
                 )
-            route_paths = {route.path for route in client.app.routes}
+            route_paths = {route.path for route in client.app.routes if hasattr(route, "path")}
 
         assert "mamba_zotero" not in {server["name"] for server in servers}
         assert rejected.status_code == 400
@@ -111,3 +114,4 @@ def test_disabled_zotero_removes_mcp_and_route_and_rejects_project_reenable(
     finally:
         set_db_for_tests(None)
         set_registry_for_tests(None)
+
