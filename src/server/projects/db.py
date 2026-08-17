@@ -260,6 +260,55 @@ MIGRATIONS: list[str] = [
 
     COMMIT;
     """,
+    # v8: recover Codex session links lost before delayed session discovery was fixed.
+    """
+    WITH resumable AS (
+        SELECT
+            c.id AS conversation_id,
+            c.backend,
+            c.created_at,
+            c.last_active_at,
+            (
+                SELECT substr(
+                    m.text,
+                    instr(m.text, 'To continue this session, run codex resume ')
+                        + length('To continue this session, run codex resume '),
+                    36
+                )
+                FROM messages AS m
+                WHERE m.conversation_id = c.id
+                  AND m.role = 'assistant'
+                  AND m.served_by = 'codex'
+                  AND instr(
+                      m.text,
+                      'To continue this session, run codex resume '
+                  ) > 0
+                ORDER BY m.created_at DESC, m.id DESC
+                LIMIT 1
+            ) AS cli_session_id
+        FROM conversations AS c
+        WHERE c.backend = 'codex'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM conversation_segments AS s
+              WHERE s.conversation_id = c.id
+          )
+    )
+    INSERT INTO conversation_segments (
+        id, conversation_id, segment_index, backend, cli_session_id,
+        started_at, ended_at, handoff_prompt_path
+    )
+    SELECT
+        lower(hex(randomblob(16))), conversation_id, 1, backend, cli_session_id,
+        created_at, last_active_at, NULL
+    FROM resumable
+    WHERE length(cli_session_id) = 36
+      AND substr(cli_session_id, 9, 1) = '-'
+      AND substr(cli_session_id, 14, 1) = '-'
+      AND substr(cli_session_id, 19, 1) = '-'
+      AND substr(cli_session_id, 24, 1) = '-'
+      AND lower(replace(cli_session_id, '-', '')) NOT GLOB '*[^0-9a-f]*';
+    """,
 ]
 
 

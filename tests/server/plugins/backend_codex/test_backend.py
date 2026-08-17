@@ -76,7 +76,7 @@ def test_resolve_launch_builds_new_and_resume_argv(monkeypatch: pytest.MonkeyPat
 
     assert candidates == ["codex.cmd", "codex.cmd"]
     override = (
-        'mcp_servers."mamba_workspace"={command="C:\\\\Program Files\\\\mcp.exe",'
+        'mcp_servers.mamba_workspace={command="C:\\\\Program Files\\\\mcp.exe",'
         'args=["--project","C:\\\\Research Project\\\\input"],'
         'env_vars=["MAMBA_ACTIVE_PROJECT_PATH","MCP_SECRET"],enabled=true}'
     )
@@ -100,9 +100,9 @@ def test_resolve_launch_builds_new_and_resume_argv(monkeypatch: pytest.MonkeyPat
 @pytest.mark.parametrize(
     ("selection", "expected_ids"),
     [
-        (None, ["mcp.first", "mcp.second"]),
-        ([], ["mcp.first", "mcp.second"]),
-        (["mcp.second"], ["mcp.second"]),
+        (None, ["mcp_first", "mcp_second"]),
+        ([], ["mcp_first", "mcp_second"]),
+        (["mcp_second"], ["mcp_second"]),
     ],
 )
 def test_resolve_launch_selects_project_mcp_servers(
@@ -126,12 +126,12 @@ def test_resolve_launch_selects_project_mcp_servers(
     )
     backend = _backend(
         FakeMcpProvider(
-            id="mcp.first",
+            id="mcp_first",
             label="First",
             config=McpStdioConfig(command="python", args=("-V",), env={}),
         ),
         FakeMcpProvider(
-            id="mcp.second",
+            id="mcp_second",
             label="Second",
             config=McpStdioConfig(command="python", args=("-V",), env={}),
         ),
@@ -140,13 +140,13 @@ def test_resolve_launch_selects_project_mcp_servers(
     launch = backend.resolve_launch(LaunchRequest(cwd=tmp_path, resume_id=None, provider_id=None))
 
     assert [entry.split("=", 1)[0] for entry in launch.argv[2::2]] == [
-        f'mcp_servers."{server_id}"' for server_id in expected_ids
+        f"mcp_servers.{server_id}" for server_id in expected_ids
     ]
 
 
 @pytest.mark.parametrize(
     "selection",
-    ["mcp.first", ["mcp.first", "mcp.first"], ["missing"]],
+    ["mcp_first", ["mcp_first", "mcp_first"], ["missing"]],
 )
 def test_resolve_launch_rejects_invalid_project_mcp_selection(
     monkeypatch: pytest.MonkeyPatch,
@@ -161,7 +161,7 @@ def test_resolve_launch_rejects_invalid_project_mcp_selection(
     )
     backend = _backend(
         FakeMcpProvider(
-            id="mcp.first",
+            id="mcp_first",
             label="First",
             config=McpStdioConfig(command="python", args=(), env={}),
         )

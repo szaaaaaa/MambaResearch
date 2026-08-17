@@ -125,6 +125,7 @@ async def terminal_ws(websocket: WebSocket, backend_id: str) -> None:
     on_input = teer.on_user_input if teer else None
     on_output = teer.on_pty_output if teer else None
     session_task: asyncio.Task[None] | None = None
+    session_stop = asyncio.Event()
 
     try:
         async with PtyBridge(
@@ -140,6 +141,7 @@ async def terminal_ws(websocket: WebSocket, backend_id: str) -> None:
                         conversation_id=conversation_id,
                         backend_id=backend_id,
                         resolver=spec.session_id_resolver,
+                        stop=session_stop,
                     )
                 )
             await _pump(websocket, pty)
@@ -151,6 +153,7 @@ async def terminal_ws(websocket: WebSocket, backend_id: str) -> None:
         except Exception:
             pass
     finally:
+        session_stop.set()
         if session_task is not None:
             await session_task
         if teer is not None:
@@ -162,10 +165,14 @@ async def _register_session(
     conversation_id: str,
     backend_id: str,
     resolver: Callable[[], str | None],
+    stop: asyncio.Event,
 ) -> None:
     session_id = await asyncio.to_thread(resolver)
+    while session_id is None and not stop.is_set():
+        await asyncio.sleep(0.1)
+        session_id = await asyncio.to_thread(resolver)
     if session_id is None:
-        logger.warning("backend=%s session ID was not discovered", backend_id)
+        logger.warning("backend=%s session ID was not discovered before PTY exit", backend_id)
         return
     conversation = get_conversation(conversation_id)
     if conversation is None or conversation.backend != backend_id:

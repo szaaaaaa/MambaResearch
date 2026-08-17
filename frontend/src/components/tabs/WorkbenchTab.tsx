@@ -25,7 +25,7 @@ interface TerminalInput {
   text: string;
 }
 
-async function getResumeId(conversation: ConversationSummary): Promise<string | null> {
+async function getResumeId(conversation: ConversationSummary): Promise<string> {
   const response = await fetch(`${API_BASE}/api/conversations/${conversation.id}/segments`);
   if (!response.ok) throw new Error(await response.text());
   const body = (await response.json()) as {
@@ -36,7 +36,8 @@ async function getResumeId(conversation: ConversationSummary): Promise<string | 
     (current, segment) => (!current || segment.segment_index > current.segment_index ? segment : current),
     null,
   );
-  return latest?.cli_session_id ?? null;
+  if (!latest) throw new Error('该会话没有可恢复的 CLI session ID');
+  return latest.cli_session_id;
 }
 
 export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conversation }) => {
@@ -149,7 +150,6 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
 
   const switchConversation = React.useCallback(async (next: ConversationSummary) => {
     if (!enabledBackends.some((backend) => backend.id === next.backend)) return;
-    setActiveConversation(null);
     try {
       const nextResumeId = await getResumeId(next);
       setBackendId(next.backend);
@@ -159,7 +159,7 @@ export const WorkbenchTab: React.FC<WorkbenchTabProps> = ({ activeProject, conve
       setActiveConversation(next);
       setRestartTick((tick) => tick + 1);
     } catch (error) {
-      setLoadError(`加载会话失败：${String(error)}`);
+      setTerminalError(`加载会话失败：${String(error)}`);
     }
   }, [enabledBackends]);
 

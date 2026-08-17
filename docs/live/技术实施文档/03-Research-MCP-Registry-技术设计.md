@@ -1,19 +1,17 @@
 # Research MCP Registry 技术设计
 
-状态：部分完成（Batch 3，步骤 1-6 已实施，步骤 7 未完成）
+状态：已完成（Batch 3，步骤 1-7 已实施）
 依赖文档：[实施文档索引](00-实施文档索引.md)
 上层设计：[Mamba Kernel 插件化架构](../架构设计/mamba-kernel-plugin-architecture.md)
 强制规范：[代码实现规范](../代码规范/01-代码实现规范.md)、
 [测试规范](../代码规范/03-测试规范.md)
 
-实施记录（2026-08-16）：
+实施记录（2026-08-17）：
 
-- 已完成第 15 节步骤 1-6：六个 Research plugin、Kernel `McpRegistry`、项目选择校验、Codex
-  new/resume 注入、点号 ID TOML 编码、API 脱敏和旧入口删除均已切换到唯一生产路径。
-- 已通过：可访问的完整测试集 `32 passed`；前端 lint/build；`git diff --check`；Codex CLI
-  0.147.0 对无点号 inline MCP table 的解析 smoke。
-- 未完成真实 Codex 会话 smoke：当前环境 `codex login status` 返回 `Not logged in`，因此
-  尚未验证 new/resume、`/mcp`、Workspace 工具 cwd 和会话关闭后的子进程清理。
+- 已完成第 15 节步骤 1-7：六个 Research plugin、Kernel `McpRegistry`、项目选择校验、Codex
+  new/resume 注入、合法 server ID TOML 编码、API 脱敏、旧入口删除和真实 smoke 均已完成。
+- 已通过：完整测试集 `34 passed`；前端 lint/build；`git diff --check`；已登录 Codex CLI
+  0.147.0 的 new/resume、`/mcp`、Workspace cwd 和会话关闭后进程清理 smoke。
 
 当前要求核验：
 
@@ -22,11 +20,11 @@
 | 六个 provider 的唯一 Research owner | 已实施 | Catalog/Profile 只注册 `research.*`，中央 helper 枚举已删除 |
 | Workspace/Zotero MCP 与 HTTP 同 owner | 已实施 | plugin 原子测试和禁用 Zotero 集成流程通过 |
 | project selection 在 PATCH/launch 生效 | 已实施 | 缺失/空/子集/重复/未知路径测试通过 |
-| Codex new/resume 消费同一 Registry snapshot | 已实施 | 内建和合法点号 ID 均由标准 TOML 解析验证 |
+| Codex new/resume 消费同一 Registry snapshot | 已实施 | 内建合法 server ID 由标准 TOML 解析并经真实 new/resume 验证 |
 | secret 不进入 argv/list/detail | 已实施 | 生产序列化统一脱敏；集成测试显式断言列表、详情与 argv |
 | 旧生产入口、flag、re-export 删除 | 已实施 | 静态配置、旧枚举、旧开关、例外规则和 UI 旧说明均已删除 |
-| 完整自动化与构建 | 已实施 | `pytest tests` 32 passed，lint/build 与 `git diff --check` 通过 |
-| 真实 Codex new/resume smoke | 未完成 | Codex 0.147.0 未登录 |
+| 完整自动化与构建 | 已实施 | `pytest tests` 34 passed，lint/build 与 `git diff --check` 通过 |
+| 真实 Codex new/resume smoke | 已实施 | Codex 0.147.0 new/resume、MCP/cwd 与进程清理通过 |
 
 ## 1. 目标
 

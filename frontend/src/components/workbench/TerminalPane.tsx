@@ -246,8 +246,12 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
         // onerror 后浏览器一定会再触发 onclose，不在这里改 counter
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (closedByEffectRef.current) return;
+        if (event.code === 1000) {
+          onCloseRef.current?.('pty_exit');
+          return;
+        }
         reconnectAttemptsRef.current += 1;
         if (reconnectAttemptsRef.current >= RECONNECT_LIMIT) {
           onCloseRef.current?.('ws_unrecoverable');

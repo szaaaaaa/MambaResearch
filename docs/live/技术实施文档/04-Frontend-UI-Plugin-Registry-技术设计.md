@@ -1,6 +1,6 @@
 # Frontend UI Plugin Registry 技术设计
 
-状态：待实施（Batch 4；Phase 3 真实 Codex smoke 通过前禁止开工）
+状态：待实施（Batch 4；Phase 3 真实 Codex smoke 已通过）
 依赖文档：[实施文档索引](00-实施文档索引.md)
 上层设计：[Mamba Kernel 插件化架构](../架构设计/mamba-kernel-plugin-architecture.md)
 强制规范：[代码实现规范](../代码规范/01-代码实现规范.md)、
@@ -11,10 +11,9 @@
 下一开发阶段是 **Phase 4 / Batch 4：Frontend UI seam**，不是 Phase 5 外部插件，也不是继续为
 Research MCP 增加第二套前端隐藏逻辑。
 
-截至 2026-08-16，Phase 3 的生产路径、删除项和可访问自动化验证已经完成；尚缺真实已登录
-Codex 的 new/resume smoke。当前机器执行 `codex login status` 返回 `Not logged in`，因此 Batch 3
-仍是“部分完成”。此外，严格执行 `pytest tests` 时会被 ACL 保护的 `tests/.tmp_ship` 阻断收集；
-该目录是测试树污染物，必须删除并确认其产生源，不得通过扩大 `norecursedirs` 掩盖。
+截至 2026-08-17，Phase 3 的生产路径、删除项、自动化验证和真实已登录 Codex smoke 均已完成。
+Codex 0.147.0 的 new/resume、项目 MCP 列表、Workspace cwd 和 PTY/MCP 进程清理均已实测；
+严格 `pytest tests` 完成 34 项测试。Batch 3 已完成，Batch 4 进入门禁已开放。
 
 Batch 4 开工前必须同时满足：
 
@@ -25,8 +24,7 @@ Batch 4 开工前必须同时满足：
 5. 删除 `tests/.tmp_ship`，确认没有生产脚本继续向 `tests/` 写运行产物，并让严格
    `pytest tests` 完成收集和执行。
 
-以上是 Batch 4 的进入门禁，不属于 Batch 4 UI 实现。门禁未通过时可以评审和冻结本文档，不能
-开始生产代码替换。
+以上是 Batch 4 的进入门禁，不属于 Batch 4 UI 实现；本轮已全部满足。
 
 ## 2. 目标
 

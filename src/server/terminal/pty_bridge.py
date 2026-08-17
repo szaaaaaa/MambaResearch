@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Callable
@@ -134,9 +135,15 @@ class PtyBridge:
 
         def terminate() -> None:
             try:
-                pty.terminate(force=True)
+                subprocess.run(
+                    ("taskkill", "/PID", str(pty.pid), "/T", "/F"),
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                pty.close(force=True)
             except Exception:
-                logger.exception("pty.terminate failed")
+                logger.exception("PTY process tree cleanup failed")
 
         await loop.run_in_executor(None, terminate)
         self._pty = None

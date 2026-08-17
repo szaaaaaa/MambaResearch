@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -188,7 +187,7 @@ def _validate_mcp_config(server_id: str, config: object) -> None:
 def _mcp_override(server_id: str, config: McpStdioConfig) -> str:
     env_vars = tuple(dict.fromkeys((ACTIVE_PROJECT_ENV_VAR, *config.env)))
     return (
-        f"mcp_servers.{_toml_literal(server_id)}={{"
+        f"mcp_servers.{server_id}={{"
         f"command={_toml_literal(config.command)},"
         f"args={_toml_array(config.args)},"
         f"env_vars={_toml_array(env_vars)},"
@@ -241,15 +240,11 @@ def _new_session_id_resolver(
     existing = _session_files(sessions_root)
 
     def resolve() -> str | None:
-        deadline = time.monotonic() + 5.0
-        while True:
-            for session_file in _session_files(sessions_root) - existing:
-                session_id = _read_session_id(session_file, cwd)
-                if session_id is not None:
-                    return session_id
-            if time.monotonic() >= deadline:
-                return None
-            time.sleep(0.1)
+        for session_file in _session_files(sessions_root) - existing:
+            session_id = _read_session_id(session_file, cwd)
+            if session_id is not None:
+                return session_id
+        return None
 
     return resolve
 

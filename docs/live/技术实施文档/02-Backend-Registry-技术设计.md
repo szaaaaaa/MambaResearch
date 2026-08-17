@@ -1,6 +1,6 @@
 # Codex-first Backend Registry 技术设计
 
-状态：已实施（2026-08-16）；真实 Codex new/resume smoke 待复核
+状态：已实施（2026-08-17）；真实 Codex new/resume smoke 已通过
 前置条件：[Mamba Kernel 技术设计](01-Mamba-Kernel-技术设计.md) Batch 1 已通过
 上层设计：[Mamba Kernel 插件化架构](../架构设计/mamba-kernel-plugin-architecture.md)
 
@@ -15,9 +15,9 @@ Mamba Kernel
   -> Terminal / Auth / Conversation consumers
 ~~~
 
-> 落地记录：提交 <code>8d3d529</code> 完成 Codex-only 切换。2026-08-16 复核时，可访问测试
-> 32 passed，前端 lint/build 与 <code>git diff --check</code> 通过；当前机器 Codex 0.147.0
-> 未登录，因此真实 new/resume 会话 smoke 未复核。
+> 落地记录：提交 <code>8d3d529</code> 完成 Codex-only 切换。2026-08-17 复核时，完整测试
+> 34 passed，前端 lint/build 与 <code>git diff --check</code> 通过；已登录 Codex 0.147.0 的
+> new/resume、MCP/cwd 和关闭后进程清理 smoke 通过。
 
 Claude adapter、Claude provider、skill mount 和 MCP config 拼装不进入本批。Backend seam
 切换后，Claude 不再通过旧分支启动；历史 Claude conversation/segment/message 元数据仍可读取，
@@ -148,8 +148,8 @@ class LaunchSpec:
 ~~~
 
 <code>LaunchSpec</code> 可直接交给 <code>PtyBridge</code>。route 不再二次修改 argv/env。
-新会话无法在启动前取得 CLI session ID 时，backend 可提供一次性 resolver；host 在 PTY 启动后
-异步执行 resolver，并把结果登记到 conversation segment。
+新会话无法在启动前取得 CLI session ID 时，backend 可提供一次扫描 resolver；host 在 PTY 生命周期内
+异步轮询 resolver，并把结果登记到 conversation segment。
 
 ### 5.4 认证合同
 
@@ -300,7 +300,7 @@ class BackendRegistry:
 7. backend.resolve_launch(LaunchRequest)
 8. create TurnTeer with assistant_served_by=backend_id when mirror enabled
 9. async with PtyBridge(spec.argv, cwd=spec.cwd, env=spec.env)
-10. for a new session, resolve session ID and append conversation segment asynchronously
+10. for a new session, poll session ID and append conversation segment asynchronously
 11. run existing _pump()
 12. close TurnTeer in finally
 ~~~
@@ -601,6 +601,12 @@ COMMIT;
 5. 确认可写入第三个非空 backend ID，证明以后 Claude 插件无需 schema 迁移。
 6. 确认空字符串和纯空白 backend/served_by 被拒绝。
 7. 确认再次启动不重复迁移。
+
+### 13.4 v8 会话关联恢复
+
+对延迟 session 发现修复前已经落库、但没有 segment 的 Codex conversation，v8 migration 只从
+Codex assistant 镜像中精确匹配 `To continue this session, run codex resume <UUID>`，校验 UUID
+形状后补写已结束 segment。没有明确 resume 输出的空记录不猜测关联，也不在点击时降级为新会话。
 
 ## 14. 唯一真相源
 
