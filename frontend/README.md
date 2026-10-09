@@ -1,20 +1,9 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# MambaResearch 前端
 
-# Run and deploy your AI Studio app
+在仓库根运行 `npm ci --prefix frontend`、`npm run build --prefix frontend`。
+随后在 Codex App 调用 `$mambaresearch` 打开 MCP App 工作台。
 
-This contains everything you need to run your app locally.
+模型执行与论文检索由 Codex 原生能力提供，前端不配置或内联模型 API 密钥。
+`npm run dev --prefix frontend` 仅用于开发；普通浏览器不具备 Codex 宿主桥。
 
-View your app in AI Studio: https://ai.studio/apps/9c386d3c-2c89-4742-a46f-827dca574a5a
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+验证：`npm test --prefix frontend`、`npm run lint --prefix frontend`。

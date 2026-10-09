@@ -1,23 +1,4 @@
-"""Conversation messages — read-only mirror（v3.3 multi-conversation 模型）。
-
-设计要点
---------
-- 一条 message = 一段对话原子（user 输入 / assistant 回复 / system 标记）
-- ``served_by`` 区分谁产出（claude / codex / user / system / mambaresearch_compact）
-- ``tool_use_summary`` 给跨 conversation 引用（mamba_history MCP tool）做可读上下文
-- ``raw_payload`` 保留原始 SSE payload JSON 字符串，便于 debug
-- ``compacted`` 字段保留 schema 兼容老对话（v3.2 hybrid MT 时期的 rolling summary 标记）
-
-**v3.3 关键约定**：本表是 read-only mirror。**真相源在 backend 自己**（claude
-SDK 写 ``~/.claude/projects/<project>/<session>.jsonl``；codex 写
-``~/.codex/sessions/...``）。本表只用于：
-1. 浏览器刷新时 hydrate UI 历史
-2. 跨 conversation 引用（``mamba_history`` MCP tool 暴露 search / get 接口给
-   backend 主动调）
-
-**绝不要**把 ``list_by_conversation`` 的结果再注入回任何 backend session ——
-那是 v3.2 hybrid MT 的反模式，已经被 2026-04-27 pivot 撤掉。
-"""
+"""Research records and preserved historical messages; no transcript mirroring."""
 
 from __future__ import annotations
 
@@ -74,29 +55,7 @@ def append_message(
     tool_use_summary: str | None = None,
     raw_payload: str | None = None,
 ) -> Message:
-    """追加一条消息。返回完整 ``Message``（含新分配的 id 和 created_at）。
-
-    Parameters
-    ----------
-    conversation_id : str
-        所属 conversation。**不**校验 conversation 是否存在——上层路由保证。
-    role : str
-        ``user`` / ``assistant`` / ``system``。
-    text : str
-        消息正文。assistant 可能含 markdown；system 通常是 segment_boundary 标记
-        或 mambaresearch_compact 的 rolling summary。
-    served_by : str
-        谁产出。``user`` 表示用户输入；``claude`` / ``codex`` 表示对应 backend；
-        ``system`` 表示 MambaResearch 自身的标记；``mambaresearch_compact`` 表示
-        v3.2 auto-compact 产物。
-    tool_use_summary, raw_payload : str or None
-        可选辅助字段——见模块文档。
-
-    Returns
-    -------
-    Message
-        刚 append 的完整记录（id 由本函数生成）。
-    """
+    """追加明确保存的研究记录。"""
     if not served_by.strip():
         raise ValueError("served_by must be a non-empty string")
     now = int(time.time())
@@ -142,74 +101,12 @@ def list_by_conversation(conversation_id: str) -> list[Message]:
                    tool_use_summary, raw_payload, compacted, created_at
             FROM messages
             WHERE conversation_id = ?
-            ORDER BY created_at ASC, id ASC
+            ORDER BY created_at ASC, rowid ASC
             """,
             (conversation_id,),
         )
         rows = cur.fetchall()
     return [_row_to_message(row) for row in rows]
-
-
-def count_by_conversation(conversation_id: str) -> int:
-    """统计指定 conversation 的消息数（含 compacted 标记的）。"""
-    with _db().cursor() as cur:
-        cur.execute(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        (n,) = cur.fetchone()
-    return int(n)
-
-
-def mark_compacted(message_ids: list[str]) -> int:
-    """把指定 messages 标记为已被 compact summary 替代。
-
-    v3.2 完整版 — compact 完成后调：原始 N 条 messages 标 compacted=1，
-    序列化 prior history 时跳过；新写入的 mambaresearch_compact 段成为它们的
-    "代表"。**不删原文**——便于后续回溯 / 人工 review compact 质量。
-
-    Returns
-    -------
-    int
-        实际更新的行数。
-    """
-    if not message_ids:
-        return 0
-    placeholders = ",".join("?" for _ in message_ids)
-    with _db().cursor() as cur:
-        cur.execute(
-            f"UPDATE messages SET compacted = 1 WHERE id IN ({placeholders})",
-            message_ids,
-        )
-        return cur.rowcount
-
-
-def lookup_conversation_by_session(cli_session_id: str) -> str | None:
-    """从 ``cli_session_id`` 反查所属 ``conversation_id``。
-
-    为会话元数据查询提供 CLI session 到 conversation 的映射。
-    后需要找到对应 conversation 才能往 messages 表写入。
-
-    Returns
-    -------
-    str or None
-        找到则返回 conversation_id；任何 segment 都不指向此 session 时返回 None
-        （此时调用方应跳过持久化——可能是临时 / 未关联 conversation 的 session）。
-    """
-    with _db().cursor() as cur:
-        cur.execute(
-            """
-            SELECT conversation_id FROM conversation_segments
-            WHERE cli_session_id = ?
-            ORDER BY segment_index DESC
-            LIMIT 1
-            """,
-            (cli_session_id,),
-        )
-        row = cur.fetchone()
-    if row is None:
-        return None
-    return str(row[0])
 
 
 def _row_to_message(row) -> Message:
@@ -224,43 +121,3 @@ def _row_to_message(row) -> Message:
         compacted=bool(row[7]),
         created_at=int(row[8]),
     )
-
-
-# ---------------------------------------------------------------------------
-# Token 估算（v3.2 衔接：auto_compact_recommended 触发用）
-# ---------------------------------------------------------------------------
-
-
-def estimate_tokens(text: str) -> int:
-    """启发式 token 估算 — 不依赖 tiktoken，避免引入额外依赖。
-
-    规则（保守偏高，宁误报不漏报）：
-    - ASCII 字符按 4 字符 / token（GPT 系列经验值）
-    - 中日韩字符（CJK Unified Ideographs 等）按 1 字符 / token
-      （CJK 在 BPE 分词器里几乎一字一 token，BPE 偶尔合并成 multi-char token，
-      但稳健起见按 1:1 估）
-    - 其他 unicode 按 2 字符 / token
-
-    返回向上取整的整数。空字符串返 0。
-    """
-    if not text:
-        return 0
-    ascii_chars = 0
-    cjk_chars = 0
-    other_chars = 0
-    for ch in text:
-        code = ord(ch)
-        if code < 0x80:
-            ascii_chars += 1
-        elif (
-            0x4E00 <= code <= 0x9FFF  # CJK Unified
-            or 0x3040 <= code <= 0x30FF  # Hiragana + Katakana
-            or 0xAC00 <= code <= 0xD7AF  # Hangul
-        ):
-            cjk_chars += 1
-        else:
-            other_chars += 1
-    # 向上取整
-    ascii_tok = (ascii_chars + 3) // 4
-    other_tok = (other_chars + 1) // 2
-    return ascii_tok + cjk_chars + other_tok

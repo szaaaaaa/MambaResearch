@@ -12,14 +12,8 @@ from fastapi import APIRouter
 from src.server.integrations.colab.mcp_server import (
     default_mcp_config as colab_mcp_config,
 )
-from src.server.integrations.experiment.mcp_server import (
-    default_mcp_config as experiment_mcp_config,
-)
 from src.server.integrations.mamba_history.mcp_server import (
     default_mcp_config as history_mcp_config,
-)
-from src.server.integrations.paper_search.mcp_server import (
-    default_mcp_config as paper_search_mcp_config,
 )
 from src.server.integrations.zotero.mcp_server import (
     default_mcp_config as zotero_mcp_config,
@@ -115,22 +109,6 @@ def builtin_research_plugins() -> tuple[ResearchPlugin, ...]:
                 config_builder=zotero_mcp_config,
             ),
             router=library_router,
-        ),
-        ResearchPlugin(
-            plugin_id="research.experiment",
-            provider=_DefaultMcpProvider(
-                id="mamba_experiment",
-                label="Experiment",
-                config_builder=experiment_mcp_config,
-            ),
-        ),
-        ResearchPlugin(
-            plugin_id="research.paper_search",
-            provider=_DefaultMcpProvider(
-                id="paper_search",
-                label="Paper Search",
-                config_builder=paper_search_mcp_config,
-            ),
         ),
         ResearchPlugin(
             plugin_id="research.colab",

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
+import { openLink } from '../../api/workbench';
 
 interface MarkdownBlockProps {
   children: string;
@@ -24,17 +25,23 @@ function collectText(node: React.ReactNode): string {
 
 const CodeBlockWrapper: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const [copied, setCopied] = React.useState(false);
+  const [copyError, setCopyError] = React.useState(false);
+  const timer = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => () => clearTimeout(timer.current), []);
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(collectText(children));
+      setCopyError(false);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 1200);
     } catch {
-      /* clipboard 不可用时静默 */
+      setCopyError(true);
     }
   };
   return (
     <div className="group relative my-2">
+      {copyError && <p role="alert" className="text-xs text-red-600">宿主未允许复制，请选中文字复制。</p>}
       <button
         type="button"
         onClick={handleCopy}
@@ -57,8 +64,10 @@ const CodeBlockWrapper: React.FC<{ children?: React.ReactNode }> = ({ children }
  * - 代码块 hover 出现复制按钮
  */
 export const MarkdownBlock: React.FC<MarkdownBlockProps> = ({ children }) => {
+  const [linkError, setLinkError] = React.useState<string | null>(null);
   return (
     <div className="text-[14px] leading-relaxed text-slate-900">
+      {linkError && <p role="alert" className="text-red-600">{linkError}</p>}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -73,7 +82,7 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = ({ children }) => {
                 </code>
               );
             }
-            // 路径样内联代码（含 `/` / `\` / 有扩展名）走 CLI 里的蓝色，区分于普通 `x`
+            // 路径样内联代码用蓝色区分于普通变量。
             const text = collectText(children);
             const looksLikePath =
               /[\\/]/.test(text) || /\.[a-zA-Z0-9]{1,6}$/.test(text);
@@ -94,6 +103,12 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = ({ children }) => {
               target="_blank"
               rel="noreferrer"
               {...rest}
+              onClick={(event) => {
+                if (!rest.href?.match(/^https?:\/\//i)) return;
+                event.preventDefault();
+                setLinkError(null);
+                void openLink(rest.href).catch((reason) => setLinkError(String(reason)));
+              }}
             >
               {children}
             </a>

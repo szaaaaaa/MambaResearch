@@ -3,7 +3,11 @@ name: idea-brainstorming
 description: 想法探讨 pipeline。用户说"我有个 idea，帮我探讨" / "X 这个想法靠谱吗" / "帮我想想 ..." 时触发。串联 conductor → analyzer → critic，给"是否值得做"的诚实评估 + 风险点 + 下一步建议。不写实验脚本不写论文，纯思辨。
 ---
 
+论文检索由 Codex 原生搜索/浏览工具完成；核对原始论文页面及书目信息，不依赖额外模型 API 或论文检索 MCP。
+
 # Idea Brainstorming
+
+执行前读取[主 skill 的角色编排约定](../../plugins/mambaresearch/skills/mambaresearch/SKILL.md#角色编排)，按该节使用 Codex 原生子代理工具与文件交接；这里只读取约定，不额外打开工作台。
 
 帮用户把模糊的研究 idea 想清楚——值不值得做、有什么坑、跟现有工作的关系。
 
@@ -21,18 +25,18 @@ description: 想法探讨 pipeline。用户说"我有个 idea，帮我探讨" / 
 
 ## 步骤
 
-### 1. conductor → `outputs/<run_id>/idea_unpacked.md`
+### 1. conductor → `outputs/<run_id>/plan.md`
 
 ```
 spawn conductor(user_idea=<原话>, mode="idea_unpack")
 ```
 
-期望产物：`idea_unpacked.md` 含：
+期望产物：`plan.md` 含：
 - **Reformulated**：把模糊表达翻译成清晰的研究问题（一句话）
 - **Decomposition**：把 idea 拆 2-4 个可独立验证的子问题
 - **Assumptions**：idea 隐含的假设清单（"假设 X 可获取" / "假设 Y 不变"）
 
-### 2. (可选) paper-searcher → `outputs/<run_id>/related_work_quick.json`
+### 2. (可选) paper-searcher → `outputs/<run_id>/sources.json`
 
 如果用户没明示"我已知道相关工作"，spawn 一次轻量搜索（3-5 篇）了解 prior art：
 
@@ -40,22 +44,22 @@ spawn conductor(user_idea=<原话>, mode="idea_unpack")
 spawn paper-searcher(topic=<reformulated question>, max_results=5)
 ```
 
-### 3. analyzer → `outputs/<run_id>/idea_assessment.md`
+### 3. analyzer → `outputs/<run_id>/analysis.md`
 
 ```
-spawn analyzer(idea_unpacked=outputs/<run_id>/idea_unpacked.md, related_work=<可选 related_work_quick.json>, mode="idea_assessment")
+spawn analyzer(plan=outputs/<run_id>/plan.md, related_work=<可选 sources.json>, mode="idea_assessment")
 ```
 
-期望产物：`idea_assessment.md` 含 4 段：
+期望产物：`analysis.md` 含 4 段：
 - **Novelty**：相比已知工作，这个 idea 新在哪？已经被做过吗？
 - **Feasibility**：技术 / 数据 / compute 上可行吗？瓶颈在哪？
 - **Impact**：如果 work，对领域 / 用户的价值？
 - **Risks**：可能失败的方式（数据不可得 / 假设不成立 / 实验设计陷阱）
 
-### 4. critic → `outputs/<run_id>/devils_advocate.md`
+### 4. critic → `outputs/<run_id>/critique.md`
 
 ```
-spawn critic(idea_assessment=outputs/<run_id>/idea_assessment.md, mode="devils_advocate")
+spawn critic(analysis_md=outputs/<run_id>/analysis.md, mode="devils_advocate")
 ```
 
 critic 在本 pipeline 不是常规审；扮演 **"魔鬼代言人"**：
@@ -64,16 +68,16 @@ critic 在本 pipeline 不是常规审；扮演 **"魔鬼代言人"**：
 - "为什么大家都不做这个"的可能解释（已被否定？经济上不值？）
 - 严格的"go / no-go"建议
 
-期望产物：`devils_advocate.md`。
+期望产物：`critique.md`。
 
 ### 5. 综合回复用户
 
-主 agent 综合 4 份产物给一段中文总结：
+主 agent 综合 plan、analysis、critique 和实际检索过的 sources（可选），给一段中文总结：
 
 ```markdown
 ## Idea Brainstorm 结果
 
-**重新表述**: <一句话 from idea_unpacked.md>
+**重新表述**: <一句话 from plan.md>
 
 **评估**:
 - ✨ 新颖性：<1-3 句>
@@ -82,17 +86,17 @@ critic 在本 pipeline 不是常规审；扮演 **"魔鬼代言人"**：
 - ⚠️ 风险：<1-3 句>
 
 **Devil's advocate 关键反驳**:
-- <从 devils_advocate.md 挑 2-3 条>
+- <从 critique.md 挑 2-3 条>
 
 **建议**: <go ahead with X / refine Y first / drop because Z>
 ```
 
 ## Artifact 命名约定
 
-- `outputs/<run_id>/idea_unpacked.md`
-- `outputs/<run_id>/related_work_quick.json`（可选）
-- `outputs/<run_id>/idea_assessment.md`
-- `outputs/<run_id>/devils_advocate.md`
+- `outputs/<run_id>/plan.md`
+- `outputs/<run_id>/sources.json`（可选）
+- `outputs/<run_id>/analysis.md`
+- `outputs/<run_id>/critique.md`
 
 ## 失败 / 重启策略
 
@@ -101,7 +105,7 @@ critic 在本 pipeline 不是常规审；扮演 **"魔鬼代言人"**：
 
 ## 完成态
 
-四份产物存在 + 主 agent 给出 go/no-go 建议。
+必需的 plan.md、analysis.md、critique.md 已核对；执行检索时 sources.json 也已核对；主 agent 给出有证据边界的 go/no-go 建议。
 
 ## 不做的事
 

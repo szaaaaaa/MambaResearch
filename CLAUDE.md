@@ -32,7 +32,7 @@ If you find yourself about to write code without having invoked the applicable o
 - 不可逆动作 ask 信号：以 `🛑 需要你确认：...` 开头
 - 上报暂停条件：blocking dep 缺、改动破坏既有契约、advisor 连续 3 次说停、同一处 pytest 2 次修不好
 
-优先级队列：polish 收尾 → F1 (Codex agent TOML) → 5d (Codex E2E) → Stage 5 (DAG-as-MCP) → ...
+当前迁移与验收范围见 `docs/live/前端改造计划/00-前端核心重构计划.md`。
 
 # 常用命令
 
@@ -49,22 +49,20 @@ If you find yourself about to write code without having invoked the applicable o
 
 被 routes / MCP / tests 共享的核心模块，改动可能影响上下游。
 
-- `src/server/projects/registry.py` — active project 单例 + 进程级 env 管理；改动会影响所有 session 创建路径与 MCP 子进程启动
+- `src/server/projects/registry.py` — 项目注册表与请求上下文；改动会影响任务和科研 API 的项目隔离
 - `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
 - `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
-- `src/server/terminal/pty_bridge.py` — Codex PTY 子进程桥（pywinpty + env 注入）；改完跑受影响的 server 集成测试
-- `src/server/terminal/output_parser.py` — PTY → messages 表 mirror 的 ANSI strip + turn 切分；改完跑 `pytest tests/test_terminal_output_parser.py`
+- `src/server/workbench/` — MCP UI、项目范围与任务结果；改完跑真实 stdio 集成测试
+- `src/server/mcp/native_server.py` — 原生科研领域 MCP transport；改动必须验证固定项目、路径与研究记录归属
 
 规则：改完运行 `pytest tests/`；失败必须修复。
 
 ## 🟡 中风险 — 配置注册表（手编请走 schema）
 
-枢转后全局 yaml 已物理删除，配置拆为 4 个 json 文件，schema 收紧到注册表语义；改完不必跑 pytest，但形状错会让对应 backend session 拉不起来。
+配置遵守各自 schema；科研 server 的命令由唯一 provider 定义，界面只编辑支持的字段。
 
-- `configs/claude_code/providers.json` — Claude Code provider 注册表（`name → {base_url, api_key_env, default_model}`）；优先走 `PATCH /api/cli-providers` 或前端 CLI 视图
-- `configs/mcp/env_overrides.json` — MCP 子进程 user 层 env override（`server_name → {KEY: value}`）；优先走 `PATCH /api/mcp/servers/{name}/env` 或前端 MCP 视图
-- `configs/codex/auth.json` — Codex OAuth profile 绑定（``default_profile`` / ``allowed_profiles``）
-- `<project>/.mambaresearch/config.json` — 项目级 lazy 配置（当前仅 `{enabled_mcp_servers}`）；优先走 `PATCH /api/project-config`
+- `configs/plugins.json` — Kernel 插件 profile。
+- `plugins/mambaresearch/.mcp.json` — Codex 插件正式 MCP 入口。
 
 ## 🟢 安全区 — 可直接修改
 
@@ -77,11 +75,11 @@ If you find yourself about to write code without having invoked the applicable o
 | 类型 | 位置 | 注册方式 |
 |------|------|----------|
 | 新 pipeline | `.skills-shared/<pipeline-name>/SKILL.md`（双向 mirror 到 `.claude/skills/` 与 `.codex/skills/`） | 跑 `pwsh scripts/skills_mirror.ps1 -Scope project` 建/补 junction |
-| 新 sub-agent | `.claude/agents/<role>.md`（frontmatter + 系统提示） | `scripts/sync_subagents.py` 同步 .codex/agents/*.toml |
+| 科研角色 | `.claude/agents/<role>.md` 的职责正文 | 主聊天按正式 skill 的角色编排约定使用 Codex 原生子代理工具；不生成模型或工具配置 |
 | 新 API | `src/server/routes/` 新文件 | 由能力 owner 的 plugin 注册到 Kernel `HttpRegistry` |
 | 新前端组件 | `frontend/src/components/*.tsx` | 父组件引用 |
 | 新 MCP server | `src/server/integrations/<name>/mcp_server.py` 写 `default_mcp_config()` | 对应 Research plugin 注册到 Kernel `McpRegistry` |
-| 聊天 PTY 入口 | `backend.codex` 生成 `LaunchSpec`，`WS /api/terminal/{backend_id}` 只消费 Backend Registry | 前端 `WorkbenchTab` 从 `/api/capabilities` 选择启用 backend，`TerminalPane` 承担 xterm.js + WS |
+| 科研任务入口 | `core.workbench` 注册工作台 MCP，任务 prepare/result 保存在研究 DB | 前端经 HostBridge 向当前 Codex 聊天投递；App 拥有模型交互 |
 
 # 测试原则
 
@@ -91,7 +89,7 @@ If you find yourself about to write code without having invoked the applicable o
 
 不要测：第三方 API 对接细节；LLM 输出纠错每种场景；显示层小逻辑；一次性验证。
 
-编写规则：测真实行为不测 mock 配合；同一逻辑 1-2 个测试即可；新功能非强制带测；改 🟠 区必须保证现有测试通过；前端不写测试，`tsc --noEmit` + 构建通过即可。
+编写规则：测真实行为不测 mock 配合；同一逻辑 1-2 个测试即可；非平凡新逻辑保留最小行为测试；改 🟠 区保证完整有效测试通过；前端纯逻辑使用现有 node:test + tsx，并运行类型检查与构建。
 
 # 代码风格
 

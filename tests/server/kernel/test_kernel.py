@@ -11,7 +11,6 @@ import pytest
 from fastapi import APIRouter, FastAPI
 
 from src.server.kernel.contracts import (
-    BackendDescriptor,
     DuplicateCapabilityError,
     McpStdioConfig,
     DuplicatePluginError,
@@ -22,7 +21,7 @@ from src.server.kernel.contracts import (
 )
 from src.server.kernel.lifecycle import build_lifespan
 from src.server.kernel.loader import load_kernel
-from src.server.kernel.registry import BackendRegistry, HttpRegistry, McpRegistry
+from src.server.kernel.registry import HttpRegistry, McpRegistry
 
 
 class FakePlugin:
@@ -58,11 +57,6 @@ class FakePlugin:
                 raise self._dispose_error
 
         return dispose
-
-
-@dataclass(frozen=True)
-class FakeBackend:
-    descriptor: BackendDescriptor
 
 
 @dataclass(frozen=True)
@@ -151,23 +145,6 @@ def test_registries_preserve_order_and_reject_duplicate_or_unknown_ids() -> None
     assert [contribution.id for contribution in http.list()] == ["http.a", "http.b"]
     with pytest.raises(DuplicateCapabilityError):
         http.register(contribution_id="http.a", plugin_id="plugin.a", router=router_a)
-
-    backends = BackendRegistry()
-    backend = FakeBackend(
-        descriptor=BackendDescriptor(
-            id="codex",
-            label="Codex",
-            supports_resume=True,
-            supports_provider_selection=False,
-        )
-    )
-    backends.register(plugin_id="backend.codex", backend=backend)
-
-    assert backends.require("codex") is backend
-    with pytest.raises(DuplicateCapabilityError):
-        backends.register(plugin_id="backend.codex-copy", backend=backend)
-    with pytest.raises(UnknownCapabilityError, match="codex"):
-        backends.require("missing")
 
     mcp = McpRegistry()
     first = FakeMcpProvider(id="mcp.first", label="First")

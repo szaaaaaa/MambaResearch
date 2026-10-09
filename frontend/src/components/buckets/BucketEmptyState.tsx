@@ -8,8 +8,8 @@ import type { LucideIcon } from 'lucide-react';
  *
  * - ``no_source_dirs``         workspace 还没配置任何源目录 → 引导去设置
  * - ``never_scanned``          有 source_dirs 但 classification.db 全空 → 引导扫描
- * - ``awaiting_classification`` 已扫描但该 bucket 还没东西，unknown 桶里还有未分类
- *                                → 引导去工作台跑 classify-workspace skill
+ * - ``awaiting_classification`` 已扫描但该栏目为空，unknown 可能包含科研无关文件
+ *                                → 可由 ChatGPT 检查用途，不要求填满栏目
  * - ``genuinely_empty``        全部已分类、单纯就是该类型 0 个文件 → 单纯告知
  */
 export type BucketEmptyTier =
@@ -38,11 +38,11 @@ const DEFAULTS: Record<BucketEmptyTier, { description: string; hint: string }> =
   },
   never_scanned: {
     description: '已配置源目录，但还没扫描过。',
-    hint: '点击"扫描 workspace"——会建立文件指纹并把新文件入库为 unknown，等待分类。',
+    hint: '点击"扫描 workspace"建立文件索引，再由 ChatGPT 判断实际科研用途；无关文件保留在栏目之外。',
   },
   awaiting_classification: {
-    description: 'Claude / Codex 还没分类完，该 bucket 暂时没东西。',
-    hint: '去工作台说"整理我的 workspace"或运行 /classify-workspace，让 Claude 把 unknown 文件按 4 bucket 归位。',
+    description: '此栏目尚未发现已确认相关的科研文件。',
+    hint: '可运行 classify-workspace，由 ChatGPT 阅读内容并判断科研用途。无关或用途不明的文件不进入科研栏目，栏目为空也可能是正确结果。',
   },
   genuinely_empty: {
     description: '全部已分类——这个类型确实没有文件。',

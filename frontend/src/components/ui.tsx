@@ -29,6 +29,30 @@ export const Button: React.FC<
   />
 );
 
+export const ConfirmDialog: React.FC<{
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}> = ({ message, onConfirm, onCancel }) => {
+  const ref = React.useRef<HTMLDialogElement>(null);
+  const label = React.useId();
+  React.useEffect(() => {
+    const dialog = ref.current!;
+    dialog.showModal();
+    return () => dialog.close();
+  }, []);
+  return (
+    <dialog ref={ref} aria-labelledby={label} className="m-auto max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-lg backdrop:bg-slate-950/35"
+      onClick={(event) => event.stopPropagation()} onCancel={(event) => { event.preventDefault(); onCancel(); }}>
+      <p id={label} className="whitespace-pre-wrap text-sm text-slate-800">{message}</p>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="secondary" autoFocus onClick={onCancel}>取消</Button>
+        <Button variant="danger" onClick={onConfirm}>确认执行</Button>
+      </div>
+    </dialog>
+  );
+};
+
 export const Input: React.FC<
   React.InputHTMLAttributes<HTMLInputElement> & { label: string; description?: string }
 > = ({ label, description, className, ...props }) => (

@@ -31,7 +31,7 @@ class LoadedKernel:
     plugins: tuple[Plugin, ...]
 
     def snapshot(self) -> KernelSnapshot:
-        return KernelSnapshot(api_version=1, enabled_plugins=self.config.plugin_ids)
+        return KernelSnapshot(api_version=2, enabled_plugins=self.config.plugin_ids)
 
 
 def load_kernel(

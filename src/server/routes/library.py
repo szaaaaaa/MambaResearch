@@ -5,11 +5,11 @@
 - ``GET  /api/library/zotero/items?collection=&query=``   搜 / 列 items
 - ``POST /api/library/zotero/import``                     下载 item PDF 到本地
 
-凭据缺失时返回 502（Bad Gateway）+ 引导 message，让前端给"去配置"按钮。
+凭据缺失时返回 502（Bad Gateway）+ 环境配置引导 message。
 
 import 端点直接调 ``ZoteroClient.download_attachment`` 写盘到 ``dest_dir``
 （不传则默认 active project 根 + ``zotero_imports/``）；MCP ``download_pdf``
-工具留给 Claude PTY 走自然语言决策（譬如指定特定 collection 子目录）。
+工具由当前聊天按用户任务调用（譬如指定特定 collection 子目录）。
 """
 from __future__ import annotations
 

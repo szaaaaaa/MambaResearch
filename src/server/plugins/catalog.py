@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from src.server.kernel.contracts import Plugin
-from src.server.plugins.backend_codex import CodexBackendPlugin
 from src.server.plugins.core_http import CoreHttpPlugin
 from src.server.plugins.research import builtin_research_plugins
+from src.server.plugins.workbench import WorkbenchPlugin
 
 
 def builtin_plugins() -> tuple[Plugin, ...]:
     return (
         CoreHttpPlugin(),
-        CodexBackendPlugin(),
+        WorkbenchPlugin(),
         *builtin_research_plugins(),
     )

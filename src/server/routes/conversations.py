@@ -1,32 +1,9 @@
-"""Conversations 与 segments 的 HTTP 路由。
-
-端点
-----
-- ``GET    /api/conversations?project_id=<id>[&asset_kind=<kind|null>]``
-                                                   列出指定项目的会话；可选按
-                                                   asset_kind 过滤；``null`` 表示
-                                                   asset_kind IS NULL（草稿箱）
-- ``POST   /api/conversations``                    新建空会话
-                                                   ``{project_id, title?, backend?,
-                                                    asset_kind?, asset_label?}``
-- ``GET    /api/conversations/{id}``               单会话详情
-- ``PATCH  /api/conversations/{id}``               改 title / asset 字段
-                                                   ``{title?, asset_kind?, asset_label?}``
-- ``DELETE /api/conversations/{id}``               删（级联删 segments）
-- ``GET    /api/conversations/{id}/segments``      列 segments
-- ``POST   /api/conversations/{id}/promote-to-asset``
-                                                   草稿 → 素材一键转换
-                                                   ``{asset_kind, asset_label}``
-
-**不**暴露 segment 创建端点——segment 由 Stage 3 跨 CLI 桥在 backend 内部
-自动写入，前端不需要也不应该直接控制 segment 序列。
-"""
+"""Research record metadata, assets and stored messages."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from src.server.kernel.contracts import UnknownCapabilityError
 from src.server.projects.conversations import (
     DRAFTS_FILTER,
     VALID_ASSET_KINDS,
@@ -34,14 +11,13 @@ from src.server.projects.conversations import (
     delete_conversation,
     get_conversation,
     list_by_project,
-    list_segments,
     update_asset,
     update_title,
 )
 from src.server.projects.messages_store import (
     list_by_conversation as list_messages,
-    lookup_conversation_by_session,
 )
+from src.server.projects.registry import get_registry, ProjectNotFoundError
 
 
 router = APIRouter()
@@ -107,16 +83,12 @@ async def post_conversation(request: Request) -> dict:
     project_id_raw = payload.get("project_id")
     if not isinstance(project_id_raw, str) or not project_id_raw.strip():
         raise HTTPException(status_code=400, detail="project_id is required")
+    try:
+        get_registry().get_project(project_id_raw.strip())
+    except ProjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
     title_raw = payload.get("title")
     title = title_raw.strip() if isinstance(title_raw, str) and title_raw.strip() else None
-    backend_raw = payload.get("backend")
-    if not isinstance(backend_raw, str) or not backend_raw.strip():
-        raise HTTPException(status_code=400, detail="backend is required")
-    backend = backend_raw.strip().lower()
-    try:
-        request.app.state.kernel.context.capabilities.backends.require(backend)
-    except UnknownCapabilityError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     # 2026-04-29 asset-centric：可选 asset_kind + asset_label 一并落库
     asset_kind = _validate_asset_kind_value(payload.get("asset_kind"), allow_none=True)
     asset_label_raw = payload.get("asset_label")
@@ -128,7 +100,7 @@ async def post_conversation(request: Request) -> dict:
     conv = create_conversation(
         project_id=project_id_raw.strip(),
         title=title,
-        backend=backend,
+        backend="codex_app",
         asset_kind=asset_kind,
         asset_label=asset_label,
     )
@@ -239,44 +211,9 @@ def delete_one(conversation_id: str) -> dict:
     return {"status": "deleted", "id": conversation_id}
 
 
-@router.get("/api/conversations/{conversation_id}/segments")
-def list_conv_segments(conversation_id: str) -> dict:
-    if get_conversation(conversation_id) is None:
-        raise HTTPException(status_code=404, detail="conversation not found")
-    rows = list_segments(conversation_id)
-    return {"segments": [s.to_dict() for s in rows]}
-
-
-@router.get("/api/conversations/by-session/{cli_session_id}")
-def get_by_session(cli_session_id: str) -> dict:
-    """根据 cli_session_id 反查它所属的 conversation。
-
-    用途（v3.3 multi-conversation）：
-    - 前端切换到一条已有 codex session 时，需要找到它对应的 conversation 才能
-      从 messages mirror 拉历史 hydrate UI。Codex 路径没有 SSE 事件回放端点，
-      只能走 conversation mirror 这条路。
-    - 找不到 → 404；找到 → 返回 ``{"conversation_id": "<id>"}``。
-    """
-    conv_id = lookup_conversation_by_session(cli_session_id)
-    if conv_id is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"no conversation associated with session {cli_session_id}",
-        )
-    return {"conversation_id": conv_id}
-
-
 @router.get("/api/conversations/{conversation_id}/messages")
 def list_conv_messages(conversation_id: str) -> dict:
-    """暴露 messages 表 mirror 给前端读（v3.3 multi-conversation）。
-
-    用途：
-    - WorkbenchTab mount 时 hydrate 历史（刷新页面不丢对话 UI）
-    - 跨 conversation 引用（mamba_history MCP tool 内部也走同样数据）
-
-    返回按 created_at 升序；老对话残留的 ``compacted=1`` / ``mambaresearch_compact``
-    段照常返回，前端可按需展示。
-    """
+    """读取保存的研究记录与历史消息。"""
     if get_conversation(conversation_id) is None:
         raise HTTPException(status_code=404, detail="conversation not found")
     msgs = list_messages(conversation_id)

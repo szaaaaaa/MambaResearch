@@ -1,6 +1,6 @@
+import { apiFetch } from '../../api/workbench';
 import React from 'react';
 import { BookOpen, Download, RefreshCw } from 'lucide-react';
-import { API_BASE } from '../../store';
 
 interface ZoteroCollection {
   key: string;
@@ -55,7 +55,7 @@ export const LibraryTab: React.FC = () => {
   const loadCollections = React.useCallback(async () => {
     setError(null);
     try {
-      const resp = await fetch(`${API_BASE}/api/library/zotero/collections`);
+      const resp = await apiFetch(`/api/library/zotero/collections`);
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${resp.status}`);
@@ -76,7 +76,7 @@ export const LibraryTab: React.FC = () => {
       // 直接过滤；这是已知限制，UX 上 collection dropdown 主要用于"切到该
       // collection 浏览"语义提示。完整 collection 内列表需要 ZoteroClient
       // 加新方法（list_items_in_collection），后续优化。
-      const resp = await fetch(`${API_BASE}/api/library/zotero/items?${params.toString()}`);
+      const resp = await apiFetch(`/api/library/zotero/items?${params.toString()}`);
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${resp.status}`);
@@ -101,7 +101,7 @@ export const LibraryTab: React.FC = () => {
       [item.key]: { itemKey: item.key, status: 'pending' },
     }));
     try {
-      const resp = await fetch(`${API_BASE}/api/library/zotero/import`, {
+      const resp = await apiFetch(`/api/library/zotero/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ item_key: item.key }),
@@ -196,7 +196,7 @@ export const LibraryTab: React.FC = () => {
       <div className="flex-1 overflow-auto">
         {items.length === 0 && !loading ? (
           <div className="flex h-full items-center justify-center text-sm text-slate-400">
-            （无结果——首次使用请在设置面板配置 ZOTERO_USER_ID + ZOTERO_API_KEY）
+            （无结果——首次使用请在环境变量或仓库 .env 中配置 ZOTERO_USER_ID + ZOTERO_API_KEY）
           </div>
         ) : (
           <table className="w-full text-xs">

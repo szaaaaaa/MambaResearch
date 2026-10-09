@@ -9,7 +9,6 @@ from fastapi import APIRouter
 from src.server.kernel.contracts import (
     DuplicateCapabilityError,
     McpServerProvider,
-    TerminalBackend,
     UnknownCapabilityError,
     validate_plugin_id,
 )
@@ -49,30 +48,6 @@ class HttpRegistry:
         return tuple(self._contributions.values())
 
 
-class BackendRegistry:
-    def __init__(self) -> None:
-        self._backends: dict[str, TerminalBackend] = {}
-
-    def register(self, *, plugin_id: str, backend: TerminalBackend) -> None:
-        validate_plugin_id(plugin_id)
-        backend_id = validate_plugin_id(backend.descriptor.id)
-        if backend_id in self._backends:
-            raise DuplicateCapabilityError(f"backend already registered: {backend_id}")
-        self._backends[backend_id] = backend
-
-    def require(self, backend_id: str) -> TerminalBackend:
-        backend = self._backends.get(backend_id)
-        if backend is None:
-            available = ", ".join(self._backends) or "<none>"
-            raise UnknownCapabilityError(
-                f"unknown backend {backend_id!r}; available: {available}"
-            )
-        return backend
-
-    def list(self) -> tuple[TerminalBackend, ...]:
-        return tuple(self._backends.values())
-
-
 class McpRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, McpServerProvider] = {}
@@ -102,5 +77,4 @@ class McpRegistry:
 class CapabilityRegistry:
     def __init__(self) -> None:
         self.http = HttpRegistry()
-        self.backends = BackendRegistry()
         self.mcp = McpRegistry()

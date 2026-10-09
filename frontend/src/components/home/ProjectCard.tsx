@@ -1,6 +1,7 @@
 import React from 'react';
 import { Folder, MoreVertical, Trash2 } from 'lucide-react';
 import type { Project } from '../../api/projects';
+import { ConfirmDialog } from '../ui';
 
 interface Props {
   project: Project;
@@ -13,6 +14,7 @@ interface Props {
  */
 export const ProjectCard: React.FC<Props> = ({ project, onOpen, onDelete }) => {
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const lastActive = new Date(project.last_active_at * 1000);
 
   return (
@@ -57,16 +59,7 @@ export const ProjectCard: React.FC<Props> = ({ project, onOpen, onDelete }) => {
             className="flex w-full items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
             onClick={() => {
               setMenuOpen(false);
-              if (
-                window.confirm(
-                  `删除项目"${project.name}"？\n\n` +
-                    `会清除：项目注册项 + 该项目下所有对话历史 / 消息 / MCP 调用记录 / 实验运行记录。\n\n` +
-                    `不会动：物理目录及其文件、项目内 .mambaresearch/ 工作区元数据、` +
-                    `Claude/Codex 自己的会话存储（仍能用 CLI --resume 打开）。`,
-                )
-              ) {
-                onDelete();
-              }
+              setConfirmDelete(true);
             }}
           >
             <Trash2 size={14} />
@@ -74,6 +67,9 @@ export const ProjectCard: React.FC<Props> = ({ project, onOpen, onDelete }) => {
           </button>
         </div>
       ) : null}
+      {confirmDelete && <ConfirmDialog
+        message={`删除项目“${project.name}”？\n\n将清除项目注册项、研究记录、任务、MCP 调用记录和实验记录。项目文件、工作区元数据及 Codex 原生聊天保留。`}
+        onCancel={() => setConfirmDelete(false)} onConfirm={() => { setConfirmDelete(false); onDelete(); }} />}
     </div>
   );
 };

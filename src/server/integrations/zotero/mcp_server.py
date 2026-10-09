@@ -7,7 +7,7 @@
 设计要点
 ~~~~~~~~
 * **standalone**：只依赖 ``client.py`` + ``credentials.py``——不引 web 进程，
-  可被 Claude Code SDK 与 Codex CLI 任一启动
+  由科研 MCP transport 调用
 * **lazy ZoteroClient**：每次 ``tools/call`` 现场构造 client；这样用户在 .env
   里改了 ``ZOTERO_USER_ID`` / ``ZOTERO_API_KEY`` 后无需重启 MCP server
 * **凭据缺失走 ``isError: true``**：与 workspace MCP 同语义——业务层错误不抛

@@ -7,8 +7,7 @@ import { getWorkspaceStats } from '../../api/projects';
  *
  * 触发规则：进入工作台时 GET /api/workspace/stats，若 ``unknown 计数 > 20``
  * 且（``last_classified_at`` 为空 或 距今 > 24h），就显示 dim 提示行 +
- * "好" 按钮。"好"会把 ``运行 classify-workspace skill`` 注入输入框（不直接
- * 发送，让用户能改 prompt）。
+ * "好" 按钮。"好"会把 ``运行 classify-workspace skill`` 加入可靠投递队列。
  *
  * dismiss 落 localStorage（24h 静默）；后端无 active project / stats 端点
  * 返 409 时静默不显示，避免在 IDE 还没准备好时打扰用户。
@@ -23,11 +22,11 @@ const MIN_UNCLASSIFIED = 20;
  * classify-workspace 注入提示——同时被 4 bucket 空态按钮（``App.tsx``）和
  * 本组件的"好"按钮共用，避免两处文案漂移。
  */
-export const CLASSIFY_WORKSPACE_PROMPT = '运行 classify-workspace skill 帮我整理 workspace';
+export const CLASSIFY_WORKSPACE_PROMPT = '运行 classify-workspace skill 帮我整理 workspace。先由 ChatGPT 判断工作目录和文件的实际科研用途，只将确认属于科学实验、研究文献、研究数据或研究思路的文件归入对应栏目；与科研无关或用途不明的内容不归入任何科研栏目，不按扩展名或目录名批量猜测。';
 
 interface Props {
-  /** 用户点"好"时把 prompt 注入到 composer。父组件（WorkbenchTab）负责 setPrompt。 */
-  onAccept: (prompt: string) => void;
+  /** 返回 true 表示命令已进入 AppRuntime 队列。 */
+  onAccept: (prompt: string) => boolean;
 }
 
 export const ClassifyHintBar: React.FC<Props> = ({ onAccept }) => {
@@ -78,8 +77,7 @@ export const ClassifyHintBar: React.FC<Props> = ({ onAccept }) => {
   }, []);
 
   const handleAccept = React.useCallback(() => {
-    onAccept(CLASSIFY_WORKSPACE_PROMPT);
-    handleDismiss();
+    if (onAccept(CLASSIFY_WORKSPACE_PROMPT)) handleDismiss();
   }, [handleDismiss, onAccept]);
 
   if (dismissed || unknownCount === null) return null;
@@ -102,7 +100,7 @@ export const ClassifyHintBar: React.FC<Props> = ({ onAccept }) => {
       <Sparkles size={12} style={{ flexShrink: 0, color: 'var(--accent-fg)' }} />
       <span style={{ flex: 1 }}>
         工作区有 <strong style={{ color: 'var(--fg-1)' }}>{unknownCount}</strong>{' '}
-        个文件还没分类。让 Claude / Codex 帮你扫一下？
+        个文件尚未归入科研栏目。让 ChatGPT 检查科研用途？
       </span>
       <button
         type="button"
@@ -116,7 +114,7 @@ export const ClassifyHintBar: React.FC<Props> = ({ onAccept }) => {
           color: 'var(--fg-1)',
           cursor: 'pointer',
         }}
-        title="把 prompt 注入输入框（你可以再改）"
+        title="加入 Workbench 命令队列"
       >
         好
       </button>

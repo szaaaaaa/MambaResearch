@@ -5,7 +5,7 @@ upload_pdf 走 Zotero 官方三步流程：(1) 创建 attachment item → (2) �
 upload auth → (3) 实际 PUT 文件到 Zotero S3。失败任意一步即返回 dict
 ``{"ok": False, "error": "..."}``，让上层 MCP tool 把错误扁平回给用户。
 
-HTTP 库选 ``requests`` 与项目现有 ``src/ingest/web_fetcher.py`` 对齐；
+HTTP 使用 ``requests``；
 同步路径足够，MCP server 进程独立、tool 调用串行，无需异步并发。
 """
 from __future__ import annotations

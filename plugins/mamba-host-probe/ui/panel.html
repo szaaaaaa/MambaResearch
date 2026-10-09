@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MambaResearch 接入验证</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; background: light-dark(#fbf8f2,#202321); color: light-dark(#262a26,#eef0eb); }
+    main { max-width: 760px; margin: auto; }
+    h1 { font-size: 23px; margin: 0 0 10px; }
+    p { line-height: 1.65; }
+    li { padding: 9px 0; }
+    button { padding: 10px 16px; border: 1px solid #758979; border-radius: 7px; margin: 0 8px 8px 0; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+    #error { color: light-dark(#9d2929,#ffb3b3); }
+    .note { opacity: .75; font-size: 13px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>MambaResearch · 接入验证</h1>
+  <p>检查科研工作台能否在当前聊天旁运行，并把按钮操作交给 Codex 执行。</p>
+  <ol aria-live="polite">
+    <li id="handshake">等待宿主握手</li>
+    <li id="delivery">尚未发送任务</li>
+    <li id="confirmation">等待模型执行并回传</li>
+  </ol>
+  <button id="send" disabled>发送验证任务</button>
+  <button id="check" disabled>检查回传</button>
+  <p id="error" role="alert"></p>
+  <details><summary>连接证据</summary><pre id="evidence"></pre></details>
+  <p class="note">开发验收面板，不修改科研数据。消息发送成功不代表模型已执行；请同时核对消息是否出现在当前聊天。</p>
+</main>
+<script type="module">
+/* HOST_BRIDGE */
+const bridge = new HostBridge(window);
+const el = (id) => document.getElementById(id);
+let host;
+let probe;
+let attempted = false;
+let disposed = false;
+let pollTimer;
+let pollDeadline;
+const stopPolling = () => { clearTimeout(pollTimer); pollTimer = undefined; };
+const showEvidence = () => { el('evidence').textContent = JSON.stringify({ host, probe }, null, 2); };
+const update = (result) => {
+  const value = result?.structuredContent;
+  if (disposed || !value?.probe_id || (probe && value.probe_id !== probe.probe_id)) return;
+  if (probe?.status === 'confirmed' && value.status !== 'confirmed') return;
+  probe = value;
+  if (probe.status === 'confirmed') { stopPolling(); el('error').textContent = ''; }
+  el('confirmation').textContent = probe.status === 'confirmed' ? '模型确认结果已返回，请核对当前聊天' : '等待模型确认；尚未完成验证';
+  el('send').disabled = !host || attempted || !host.hostCapabilities?.message?.text || !host.hostCapabilities?.serverTools;
+  el('check').disabled = !host || !host.hostCapabilities?.serverTools;
+  showEvidence();
+};
+const poll = async () => {
+  pollTimer = undefined;
+  if (disposed || bridge.closed || probe?.status === 'confirmed') return;
+  if (Date.now() >= pollDeadline) {
+    el('confirmation').textContent = '自动检查已结束；可点击“检查回传”获取最新状态';
+    return;
+  }
+  try {
+    update(await bridge.callTool('read_probe', { probe_id: probe.probe_id }));
+  } catch (error) {
+    if (!disposed) el('error').textContent = String(error);
+    return;
+  }
+  if (!disposed && !bridge.closed && probe.status !== 'confirmed') pollTimer = setTimeout(poll, 2000);
+};
+const dispose = () => { disposed = true; stopPolling(); bridge.close(); };
+bridge.onnotification = (method, params) => {
+  if (method === 'ui/notifications/tool-result') update(params);
+  if (method === 'ui/notifications/tool-cancelled') el('error').textContent = '工具调用已取消，未完成验证。';
+  if (method === 'ui/resource-teardown') dispose();
+};
+window.addEventListener('pagehide', dispose, { once: true });
+el('send').addEventListener('click', async () => {
+  attempted = true;
+  el('send').disabled = true;
+  el('error').textContent = '';
+  try {
+    const prepared = await bridge.callTool('prepare_probe', {
+      probe_id: probe.probe_id,
+      host_name: host.hostInfo?.name || '',
+      host_version: host.hostInfo?.version || '',
+      protocol: host.protocolVersion, text_messages: true, server_tools: true,
+    });
+    if (disposed) return;
+    const prompt = prepared.structuredContent?.message;
+    if (typeof prompt !== 'string' || !prompt) throw new Error('验证服务未返回任务消息');
+    pollDeadline = Date.now() + 90000;
+    pollTimer = setTimeout(poll, 0);
+    el('delivery').textContent = '正在向当前聊天发送任务…';
+    await bridge.sendMessage(prompt);
+    el('delivery').textContent = '宿主已接受消息；等待模型执行';
+  } catch (error) {
+    el('delivery').textContent = '投递未获确认，请检查当前聊天';
+    el('error').textContent = String(error);
+  }
+});
+el('check').addEventListener('click', async () => {
+  el('check').disabled = true;
+  try {
+    update(await bridge.callTool('read_probe', { probe_id: probe.probe_id }));
+  } catch (error) {
+    el('error').textContent = String(error);
+  } finally {
+    if (!disposed) el('check').disabled = false;
+  }
+});
+try {
+  host = await bridge.initialize();
+  const supported = host.hostCapabilities?.message?.text && host.hostCapabilities?.serverTools;
+  el('handshake').textContent = supported ? '宿主握手完成，支持文本消息和工具调用' : '握手完成，但宿主未声明所需的消息/工具能力';
+  showEvidence();
+  if (probe) update({ structuredContent: probe });
+} catch (error) {
+  el('handshake').textContent = '宿主握手未完成';
+  el('error').textContent = String(error);
+}
+</script>
+</body>
+</html>

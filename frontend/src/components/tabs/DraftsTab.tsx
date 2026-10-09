@@ -18,7 +18,7 @@ import {
   promoteToAsset,
 } from '../../api/conversations';
 import { getActiveProject, type Project } from '../../api/projects';
-import { useContextualTabs } from '../../store/contextual';
+import { useContextualTabs } from '../../runtime/appRuntime';
 
 const KIND_OPTIONS: { value: AssetKind; label: string; icon: LucideIcon }[] = [
   { value: 'experiment', label: '实验', icon: FlaskConical },
@@ -429,7 +429,7 @@ export const DraftsTab: React.FC = () => {
                       {conv.title || `（无标题）${conv.id.slice(0, 8)}`}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2 }}>
-                      最近活动：{formatRelative(conv.last_active_at)} · {conv.backend === 'codex' ? 'Codex' : 'Claude'}
+                      最近活动：{formatRelative(conv.last_active_at)} · {conv.backend}
                     </div>
                   </div>
                 </div>

@@ -88,8 +88,7 @@ def delete_project(project_id: str) -> dict:
        已删 project 后 cleanup 失败造成 orphan
     2. ``registry.delete_project`` —— 从 ``projects.json`` 移除 + 处理 active
 
-    **不动**：物理目录 / 项目内 ``.mambaresearch/`` 工作区文件 / backend 自己
-    的 JSONL（claude code / codex 仍可通过原生 CLI ``--resume`` 打开）。
+    保留物理目录、项目内工作区文件和 Codex App 原生聊天。
     """
     try:
         get_registry().get_project(project_id)

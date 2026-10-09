@@ -1,7 +1,6 @@
 """MambaResearch 项目级实体模块。
 
-本包负责"研究项目"（Project）这一概念的注册、激活、与持久化——和已有的
-``ProjectConfig``（LLM/Provider 配置，``store.tsx`` 中字段同名）严格区分。
+本包负责研究项目的注册、激活与持久化；科研工具的配置与权限由 Codex 管理。
 
 数据布局：
 - ``~/.mambaresearch/projects.json`` — 项目注册表（全局，跨机器需手动同步）

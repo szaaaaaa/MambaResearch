@@ -5,32 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "research-agent"
 version = "0.2.0"
-description = "Autonomous research agent powered by LangGraph"
+description = "Research workbench for Codex App skills and MCP tools"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
-    "feedparser>=6.0.0",
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.2.0",
-    "langchain-core>=0.3.0",
-    "openai>=1.0.0",
-    "google-genai>=0.8.0",
-    "chromadb>=0.4.0",
-    "faiss-cpu>=1.8.0",
-    "sentence-transformers>=2.2.0",
-    "pymupdf>=1.23.0",
+    "mcp==1.27.0",
+    "pypdfium2>=4.30.0",
+    "Pillow>=9.1.0",
     "requests>=2.31.0",
-    "pyyaml>=6.0",
-    "matplotlib>=3.8.0",
-    "numpy>=1.24.0",
-    "rank-bm25>=0.2.2",
-    "duckduckgo-search>=6.0.0",
-    "trafilatura>=1.6.0",
-    "beautifulsoup4>=4.12.0",
-    "TexSoup>=0.3.0",
     "uvicorn>=0.30.0",
-    "marker-pdf>=1.0.0",
-    "networkx>=3.0",
-    "uv>=0.6.0",
-    "claude-agent-sdk>=0.1.0",
 ]

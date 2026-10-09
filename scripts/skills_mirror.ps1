@@ -1,9 +1,9 @@
 ﻿<#
 .SYNOPSIS
-    把 Claude Code 与 Codex CLI 的 skills 目录做成"双向 mirror"：单一物理源 + 两侧 NTFS junction。
+    把 Claude Code 与 Codex 的 skills 目录做成"双向 mirror"：单一物理源 + 两侧 NTFS junction。
 
 .DESCRIPTION
-    问题：Claude Code 默认从 `~/.claude/skills/<name>/SKILL.md` 加载 skill，Codex CLI 从
+    问题：Claude Code 默认从 `~/.claude/skills/<name>/SKILL.md` 加载 skill，Codex 从
     `~/.codex/skills/<name>/SKILL.md` 加载。两条路径独立，导致同一个 skill 要写两份。
 
     解决：把物理文件搬到中立位置（全局 = `~/skills-shared/`，项目 = `<repo>/.skills-shared/`），

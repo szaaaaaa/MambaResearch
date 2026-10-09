@@ -1,1 +1,0 @@
-"""Paper Search integration package。"""

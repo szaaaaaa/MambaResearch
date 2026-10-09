@@ -1,14 +1,11 @@
 import React, { Suspense } from 'react';
-import { useActiveContextualTab } from '../../store/contextual';
+import { useActiveRuntimeTab } from '../../runtime/appRuntime';
 
 const LiteratureTab = React.lazy(() =>
   import('./literature/LiteratureTab').then((m) => ({ default: m.LiteratureTab })),
 );
 const ExperimentRunTab = React.lazy(() =>
   import('./experiment/ExperimentRunTab').then((m) => ({ default: m.ExperimentRunTab })),
-);
-const ThinkingTab = React.lazy(() =>
-  import('./thinking/ThinkingTab').then((m) => ({ default: m.ThinkingTab })),
 );
 const AssetWorkspace = React.lazy(() =>
   import('./asset/AssetWorkspace').then((m) => ({ default: m.AssetWorkspace })),
@@ -25,17 +22,13 @@ const Loading: React.FC<{ label: string }> = ({ label }) => (
 
 /**
  * 渲染当前 active contextual tab 的内容；无 active tab 返回 null
- * （让 App.renderMain 走原 sidebar nav 路径）。
+ * （让 App 回到当前 Registry view）。
  *
- * 各 tab type 都 React.lazy 异步加载，主 App 启动不背重渲染包；
- * Suspense 兜底显示 "加载…" 文本。
- *
- * 2026-04-29 asset-centric pivot：'asset' 类型由 AssetWorkspace 渲染——
- * T3 阶段是占位（顶部素材标识 + 中部 placeholder），T4 实装双栏（左
- * AssetDrawer + 右对话主区）。
+ * Suspense 等待各视图模块，构建时全部内联到同一 MCP UI 资源。
+ * 素材页复用 AssetWorkspace 的资料与研究记录双栏。
  */
 export const ContextualTabFrame: React.FC = () => {
-  const active = useActiveContextualTab();
+  const active = useActiveRuntimeTab();
   if (active === null) return null;
 
   switch (active.type) {
@@ -47,14 +40,8 @@ export const ContextualTabFrame: React.FC = () => {
       );
     case 'experiment_run':
       return (
-        <Suspense fallback={<Loading label="实验执行" />}>
+        <Suspense fallback={<Loading label="实验记录" />}>
           <ExperimentRunTab key={active.id} {...(active.props as any)} />
-        </Suspense>
-      );
-    case 'thinking':
-      return (
-        <Suspense fallback={<Loading label="Agent 思考" />}>
-          <ThinkingTab key={active.id} {...(active.props as any)} />
         </Suspense>
       );
     case 'asset':

@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
 from typing import Any, Protocol, TypeAlias
 
 
@@ -46,10 +44,6 @@ class UnknownCapabilityError(KernelConfigurationError):
     """请求了未注册的能力。"""
 
 
-class BackendLaunchError(RuntimeError):
-    """Backend 无法解析当前启动请求。"""
-
-
 @dataclass(frozen=True)
 class McpStdioConfig:
     """当前 Mamba 托管 stdio MCP server 的启动配置。"""
@@ -60,7 +54,7 @@ class McpStdioConfig:
 
 
 class McpServerProvider(Protocol):
-    """由 Research plugin 注册、由 backend 在启动时解析的 MCP provider。"""
+    """由 Research plugin 注册、由 Codex App 与工作台解析的 MCP provider。"""
 
     id: str
     label: str
@@ -108,59 +102,6 @@ class KernelConfig:
 class KernelSnapshot:
     api_version: int
     enabled_plugins: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class BackendDescriptor:
-    """Backend 对外发布的稳定能力描述。"""
-
-    id: str
-    label: str
-    supports_resume: bool
-    supports_provider_selection: bool
-
-    def __post_init__(self) -> None:
-        validate_plugin_id(self.id)
-
-
-@dataclass(frozen=True)
-class LaunchRequest:
-    cwd: Path
-    resume_id: str | None
-    provider_id: str | None
-
-
-@dataclass(frozen=True)
-class LaunchSpec:
-    argv: tuple[str, ...]
-    cwd: Path
-    env: dict[str, str]
-    session_id_resolver: Callable[[], str | None] | None = None
-
-
-class BackendStatus(str, Enum):
-    LOGGED_IN = "logged_in"
-    NOT_LOGGED_IN = "not_logged_in"
-    CLI_NOT_FOUND = "cli_not_found"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True)
-class BackendAuthProbe:
-    status: BackendStatus
-    detail: dict[str, str]
-
-
-class TerminalBackend(Protocol):
-    """可被 Backend Registry 消费的终端 backend 合同。"""
-
-    descriptor: BackendDescriptor
-
-    def resolve_launch(self, request: LaunchRequest) -> LaunchSpec:
-        ...
-
-    async def probe_auth(self) -> BackendAuthProbe:
-        ...
 
 
 AsyncDisposer: TypeAlias = Callable[[], Awaitable[None]]

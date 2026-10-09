@@ -3,7 +3,11 @@ name: method-comparison
 description: 方法对比 pipeline。用户说"对比 A 和 B" / "X vs Y 哪个好" 时触发。串联 paper-searcher → evidence-extractor → analyzer → writer，产出对比表 + 利弊分析 + 选型建议。本 pipeline 不跑实验，纯文献对比；要含 empirical 数字走 empirical-study 或 experiment-iteration。
 ---
 
+论文检索由 Codex 原生搜索/浏览工具完成；核对原始论文页面及书目信息，不依赖额外模型 API 或论文检索 MCP。
+
 # Method Comparison
+
+执行前读取[主 skill 的角色编排约定](../../plugins/mambaresearch/skills/mambaresearch/SKILL.md#角色编排)，按该节使用 Codex 原生子代理工具与文件交接；这里只读取约定，不额外打开工作台。
 
 把两种 / 多种方法（算法 / 模型架构 / 工具）的文献证据收齐做结构化对比。
 
@@ -19,31 +23,31 @@ description: 方法对比 pipeline。用户说"对比 A 和 B" / "X vs Y 哪个�
 
 ## 步骤
 
-### 1. paper-searcher → `outputs/<run_id>/sources_<method>.json` (per method)
+### 1. paper-searcher → `outputs/<run_id>/sources.json`
 
-对每个待比方法分别搜：
-
-```
-spawn paper-searcher(topic="<method> in context of <user 描述场景>")
-```
-
-产物：`sources_<method>.json`（如 `sources_transformer.json` / `sources_mamba.json`）。
-
-### 2. evidence-extractor → `outputs/<run_id>/evidence_<method>.json` (per method)
+同一 paper-searcher 对各待比方法分别检索后合并去重：
 
 ```
-spawn evidence-extractor(sources_json=sources_<method>.json, research_question="<method> 在 <场景> 的强项 / 弱项 / benchmark 数字")
+spawn paper-searcher(methods=<待比较方法列表>, context=<用户描述场景>)
 ```
 
-每个 method 独立抽证据，避免一份 evidence 跨方法搅在一起。
+产物：`sources.json`。每条包含稳定唯一 paper_id、书目信息及 methods 数组，标明与哪些待比方法相关。
 
-### 3. analyzer (对比) → `outputs/<run_id>/comparison.md`
+### 2. evidence-extractor → `outputs/<run_id>/evidence.json`
 
 ```
-spawn analyzer(evidence_files=[evidence_<method>.json, ...], task="comparative_analysis", dimensions=<可选用户指定>)
+spawn evidence-extractor(sources_json=outputs/<run_id>/sources.json, research_question="各方法在指定场景的强项 / 弱项 / benchmark 数字")
 ```
 
-**重点**：analyzer 输出的 `comparison.md` 必须含一个对比表：
+同一 evidence-extractor 写 evidence.json；每条证据保留 paper_id、对应方法、实验条件和来源位置，避免跨方法或不同条件混用数字。
+
+### 3. analyzer (对比) → `outputs/<run_id>/analysis.md`
+
+```
+spawn analyzer(evidence_json=outputs/<run_id>/evidence.json, task="comparative_analysis", dimensions=<可选用户指定>)
+```
+
+**重点**：analyzer 输出的 `analysis.md` 必须含一个对比表：
 
 ```markdown
 | 维度 | Method A | Method B |
@@ -60,30 +64,30 @@ spawn analyzer(evidence_files=[evidence_<method>.json, ...], task="comparative_a
 ### 4. writer → `outputs/<run_id>/report.md`
 
 ```
-spawn writer(comparison_md=outputs/<run_id>/comparison.md, evidence_files=[...])
+spawn writer(analysis_md=outputs/<run_id>/analysis.md, evidence_json=outputs/<run_id>/evidence.json)
 ```
 
 期望产物：`report.md` 含：
 - 一段总览（"在 <user 场景> 下选哪个"的最终建议）
-- 对比表（直接引 comparison.md 的）
+- 对比表（直接引 analysis.md 的）
 - 每个方法的详细叙述段
 - 局限性段（每个方法 + 整体对比的局限）
 
 ## Artifact 命名约定
 
-- `outputs/<run_id>/sources_<method>.json` (per method)
-- `outputs/<run_id>/evidence_<method>.json` (per method)
-- `outputs/<run_id>/comparison.md`
+- `outputs/<run_id>/sources.json`
+- `outputs/<run_id>/evidence.json`
+- `outputs/<run_id>/analysis.md`
 - `outputs/<run_id>/report.md`
 
 ## 失败 / 重启策略
 
 - 某个 method 候选 paper < 3 → 让 paper-searcher 换 query 或扩范围
-- 对比表数字稀疏（半数维度 N/A） → analyzer 在 comparison.md 标 "evidence-thin in dimensions: X, Y"，writer 在 report 中诚实标注
+- 对比表数字稀疏（半数维度 N/A） → analyzer 在 analysis.md 标 "evidence-thin in dimensions: X, Y"，writer 在 report 中诚实标注
 
 ## 完成态
 
-`comparison.md` 含至少 3 维 × N method 的对比表 + `report.md` 给出明确选型建议（或诚实标"证据不足以选型"）。
+`analysis.md` 含至少 3 维 × N method 的对比表 + `report.md` 给出明确选型建议（或诚实标"证据不足以选型"）。
 
 最终用户回复：
 ```

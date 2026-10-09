@@ -1,7 +1,7 @@
 """Literature contextual tab 后端路由。
 
 端点：
-- ``GET  /api/literature/file?path=<abs>``          返回 PDF 字节（用于 <embed>）
+- ``GET  /api/literature/pdf-page?path=<abs>``      返回页面 PNG 与可选择文本
 - ``GET  /api/literature/summary?path=<abs>``       从 classification.db 取 summary + 元信息
 - ``GET  /api/literature/annotation?path=<abs>``    读 ``.mambaresearch/annotations/<sha>.md``
 - ``PUT  /api/literature/annotation?path=<abs>``    写 ``.mambaresearch/annotations/<sha>.md``
@@ -15,16 +15,22 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import io
+import threading
+from contextlib import closing
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
+import pypdfium2 as pdfium
 
 from src.server.projects.registry import get_registry
 from src.server.workspace.classification import get_db_for_project
 
 
 router = APIRouter()
+_PDF_LOCK = threading.Lock()
 
 
 def _require_active_project_path() -> Path:
@@ -57,16 +63,30 @@ def _annotation_path(project_path: Path, sha256: str) -> Path:
     return folder / f"{sha256[:16]}.md"
 
 
-@router.get("/api/literature/file")
-def get_literature_file(path: str = Query(..., description="本地 PDF 绝对路径")):
+@router.get("/api/literature/pdf-page")
+def get_pdf_page(path: str = Query(...), page: int = Query(default=0, ge=0)):
     project_path = _require_active_project_path()
     entry = _require_indexed_file(project_path, path)
-    real = Path(entry.path)
-    if not real.exists() or not real.is_file():
-        raise HTTPException(status_code=404, detail=f"文件已不存在：{real}")
-    suffix = real.suffix.lower()
-    media = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
-    return FileResponse(str(real), media_type=media, filename=real.name)
+    if Path(entry.path).suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="文件不是 PDF")
+    try:
+        with _PDF_LOCK, pdfium.PdfDocument(entry.path) as document:
+            count = len(document)
+            if page >= count:
+                raise HTTPException(status_code=400, detail="PDF 页码越界")
+            with closing(document[page]) as pdf_page:
+                with closing(pdf_page.get_textpage()) as text_page:
+                    text = text_page.get_text_range()
+                with closing(pdf_page.render(scale=1.5)) as bitmap:
+                    image = bitmap.to_pil()
+                    try:
+                        buffer = io.BytesIO()
+                        image.save(buffer, format="PNG")
+                    finally:
+                        image.close()
+            return {"pages": count, "page": page, "text": text, "png": base64.b64encode(buffer.getvalue()).decode()}
+    except (OSError, pdfium.PdfiumError) as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取 PDF：{exc}") from exc
 
 
 @router.get("/api/literature/summary")

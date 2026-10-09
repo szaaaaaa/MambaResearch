@@ -1,4 +1,4 @@
-"""mamba_history MCP server — cross-conversation reference (v3.3 multi-conversation).
+"""mamba_history MCP server — 显式项目范围内的历史查询。
 
 启动方式::
 
@@ -6,26 +6,22 @@
 
 设计动机
 ~~~~~~~~
-v3.3 把"会话"还给 backend——每条 conversation 绑死一个 backend，永不切换。
-但用户偶尔需要"把另一条对话里的脚本/结论引过来"，这种**稀疏跨对话引用**
-不应该常态化预注入（v3.2 hybrid MT 那条路），而是 backend 主动 lazy pull。
+用户需要引用另一条对话里的脚本或结论时，按需查询既有消息库。
 
-本 MCP server 暴露两个工具，让 backend 自己判断"要不要查"：
+本 MCP server 暴露两个工具，供当前聊天按需查询研究记录：
 
-- ``search_conversations(query, k)`` —— 模糊搜本 project 下的对话标题 + 消息
-- ``get_conversation_messages(conversation_id, last_n)`` —— 取指定对话最近 N 条
+- ``search_conversations(project_id, query, k)`` —— 搜目标项目的对话标题 + 消息
+- ``get_conversation_messages(project_id, conversation_id, last_n)`` —— 取目标项目对话最近 N 条
 
 二者都按需调，**不**预 push 任何上下文 = token 开销 O(实际查询)。
 
 设计取舍
 ~~~~~~~~
 * **standalone**：直接读 ``~/.mambaresearch/mamba.db`` + ``projects.json``——
-  不依赖 web 进程；可被 Claude SDK / Codex CLI 任一长生命子进程托管
-* **per-request 读 active project**：每次 ``tools/call`` 重新读
-  ``MAMBA_ACTIVE_PROJECT_PATH``，让用户切 project 不需要重启 MCP server
-* **NDJSON 协议**：与 ``workspace.mcp_server`` 一致；与 Claude SDK / Codex
-  stdio MCP transport 一致
-* **LIKE 搜索 v1**：用 SQLite ``LIKE`` 简单 substring 匹配，不上 FTS5——
+  不依赖 web 进程，也不读取 Codex App 原生聊天
+* **显式 project_id**：每次请求经现有项目注册表校验 ID；同目录项目按 ID 隔离
+* **NDJSON 协议**：与 ``workspace.mcp_server`` 一致
+* **LIKE 搜索**：用 SQLite ``LIKE`` 简单 substring 匹配，不上 FTS5——
   对话历史规模通常 < 几百条，全表扫足够；FTS5 加 schema 复杂度收益不大
 """
 
@@ -34,7 +30,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -46,11 +41,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-ACTIVE_PROJECT_ENV_VAR = "MAMBA_ACTIVE_PROJECT_PATH"
-SERVER_NAME = "mamba-history"
-SERVER_VERSION = "1.0.0"
+from src.server.projects.registry import (  # noqa: E402
+    ProjectError,
+    ProjectNotFoundError,
+    get_registry,
+)
 
-_REGISTRY_PATH = Path.home() / ".mambaresearch" / "projects.json"
+
+SERVER_NAME = "mamba-history"
+SERVER_VERSION = "2.0.0"
+
 _DB_PATH = Path.home() / ".mambaresearch" / "mamba.db"
 
 
@@ -107,50 +107,24 @@ def _tool_error_result(message: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Active project ↔ project_id 解析
+# 显式项目身份校验
 # ---------------------------------------------------------------------------
 
 
-def _resolve_active_project_id() -> tuple[str | None, str | None]:
-    """读 env + projects.json，返回 active project_id 或错误信息。
-
-    Returns
-    -------
-    (project_id, error_message)
-        project_id 为 None 时 error_message 给出原因。
-    """
-    raw = os.environ.get(ACTIVE_PROJECT_ENV_VAR, "").strip()
-    if not raw:
-        return None, (
-            f"{ACTIVE_PROJECT_ENV_VAR} 未设置——无法定位 active project。"
-            "请先在 MambaResearch 选/建一个 project。"
-        )
-    if not _REGISTRY_PATH.exists():
-        return None, (
-            f"projects.json 不存在：{_REGISTRY_PATH}。"
-            "MambaResearch 后端可能从未启动过。"
-        )
+def _resolve_project_id(arguments: dict[str, Any]) -> tuple[str | None, str | None]:
+    raw = arguments.get("project_id")
+    if not isinstance(raw, str) or not raw.strip():
+        return None, "project_id 必须是注册项目的非空 ID"
     try:
-        registry = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return None, f"projects.json 读取失败：{exc}"
-    projects = registry.get("projects") or []
-    target = Path(raw).resolve()
-    for proj in projects:
-        if not isinstance(proj, dict):
-            continue
-        proj_path = proj.get("path")
-        if isinstance(proj_path, str) and Path(proj_path).resolve() == target:
-            proj_id = proj.get("id")
-            if isinstance(proj_id, str) and proj_id:
-                return proj_id, None
-    return None, (
-        f"projects.json 中找不到与 {ACTIVE_PROJECT_ENV_VAR}={raw} 匹配的项目。"
-    )
+        return get_registry().get_project(raw.strip()).id, None
+    except ProjectNotFoundError:
+        return None, f"未知 project_id：{raw.strip()}"
+    except ProjectError as exc:
+        return None, f"项目注册表读取失败：{exc}"
 
 
 # ---------------------------------------------------------------------------
-# DB 访问（直读 mamba.db；与后端共享同一文件，WAL 并发安全）
+# DB 访问（与工作台共享 SQLite 研究记录）
 # ---------------------------------------------------------------------------
 
 
@@ -169,13 +143,13 @@ def _open_db() -> sqlite3.Connection | None:
 
 
 def _tool_descriptors() -> list[dict[str, Any]]:
-    return [
+    tools = [
         {
             "name": "search_conversations",
             "description": (
-                "在 active project 范围内模糊搜对话——同时匹配标题与消息正文。"
+                "在显式 project_id 范围内模糊搜对话——同时匹配标题与消息正文。"
                 "返回最近活跃的前 k 条命中。常用场景：用户问『我之前在另一条对话"
-                "讨论 X 的结论是什么』 → backend 调本工具找到 conv_id，"
+                "讨论 X 的结论是什么』 → 当前聊天调本工具找到 conv_id，"
                 "再用 get_conversation_messages 取细节。"
             ),
             "inputSchema": {
@@ -224,6 +198,15 @@ def _tool_descriptors() -> list[dict[str, Any]]:
             },
         },
     ]
+    for tool in tools:
+        schema = tool["inputSchema"]
+        schema["properties"]["project_id"] = {
+            "type": "string",
+            "minLength": 1,
+            "description": "本次任务的注册项目 ID，来自工作台项目上下文。",
+        }
+        schema["required"].append("project_id")
+    return tools
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +318,7 @@ def _call_get_conversation_messages(
         return _tool_error_result(f"mamba.db 不存在：{_DB_PATH}")
     try:
         conv_id = conv_id_raw.strip()
-        # 跨 project 安全护栏：只能查 active project 下的 conversation
+        # 只允许读取请求明确指定项目的对话。
         cur = conn.execute(
             "SELECT id, project_id, title, backend FROM conversations WHERE id = ?",
             (conv_id,),
@@ -346,7 +329,7 @@ def _call_get_conversation_messages(
         if conv_row["project_id"] != project_id:
             return _tool_error_result(
                 f"conversation {conv_id} 属于其它 project，"
-                "本工具只允许查 active project 内的对话。"
+                "本工具只允许查指定 project_id 内的对话。"
             )
 
         # 取最后 last_n 条；用子查询拿尾部，外层按 created_at 升序方便阅读
@@ -354,12 +337,12 @@ def _call_get_conversation_messages(
             """
             SELECT role, text, served_by, tool_use_summary, created_at
             FROM (
-              SELECT id, role, text, served_by, tool_use_summary, created_at
+              SELECT rowid AS insertion_order, role, text, served_by, tool_use_summary, created_at
               FROM messages WHERE conversation_id = ?
-              ORDER BY created_at DESC, id DESC
+              ORDER BY created_at DESC, rowid DESC
               LIMIT ?
             )
-            ORDER BY created_at ASC, id ASC
+            ORDER BY created_at ASC, insertion_order ASC
             """,
             (conv_id, last_n),
         )
@@ -428,11 +411,10 @@ def _handle_tools_call(msg_id: Any, params: dict[str, Any]) -> dict[str, Any]:
             ),
         )
 
-    project_id, err = _resolve_active_project_id()
-    if project_id is None:
-        return _result(msg_id, _tool_error_result(err or "active project 解析失败"))
-
     try:
+        project_id, err = _resolve_project_id(arguments)
+        if project_id is None:
+            return _result(msg_id, _tool_error_result(err))
         result = handler(arguments, project_id)
     except Exception as exc:  # noqa: BLE001
         return _result(msg_id, _tool_error_result(f"工具内部错误：{exc}"))

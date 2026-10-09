@@ -3,7 +3,6 @@
    暖中性纸张 + 赤陶强调，作用域 .ds-scope，避免和 Tailwind @theme 冲突
    ============================================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Noto+Serif+SC:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 .ds-scope {
   /* ============================================================

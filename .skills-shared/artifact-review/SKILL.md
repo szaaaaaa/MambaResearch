@@ -5,6 +5,8 @@ description: 单 artifact 评审 pipeline。用户说"审一下这份 X" / "revi
 
 # Artifact Review
 
+执行前读取[主 skill 的角色编排约定](../../plugins/mambaresearch/skills/mambaresearch/SKILL.md#角色编排)，按该节使用 Codex 原生子代理工具与文件交接；这里只读取约定，不额外打开工作台。
+
 对一份独立 artifact（report.md / sources.json / experiment 结果 / 用户自己写的草稿）做双层评审。
 
 ## 触发场景
@@ -64,7 +66,7 @@ spawn critic(target_artifact=<path>, reviewer_review=outputs/<run_id>/review.md,
 ## 失败 / 重启策略
 
 - artifact 文件不存在 → 直接报错让用户检查路径，不创建空 review
-- artifact 是 binary（pdf / image） → reviewer / critic 用 Read 工具看内容；超大 PDF 提示用户先转 markdown
+- artifact 是 PDF / image → reviewer / critic 使用 Codex 原生阅读或图像工具检查实际内容；大文件按相关页或章节读取，明确未覆盖的范围
 - reviewer 与 critic verdict 严重冲突（reviewer ✅ critic 🔴）→ 在最终回复中**双方意见都展示**，让用户判断
 
 ## 完成态

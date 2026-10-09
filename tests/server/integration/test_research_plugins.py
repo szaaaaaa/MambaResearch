@@ -9,46 +9,55 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app as application
-from src.server.integrations.paper_search import mcp_server as paper_search_mcp
-from src.server.kernel.contracts import BackendLaunchError, LaunchRequest
-from src.server.plugins import backend_codex
+from src.server.integrations.zotero import mcp_server as zotero_mcp
+from src.server.plugins import research as research_plugins
 from src.server.projects.db import MambaDb, set_db_for_tests
 from src.server.projects.registry import ProjectRegistry, set_registry_for_tests
 
 
-def test_default_profile_wires_research_mcp_routes_and_redacts_env(
+def test_research_capabilities_keep_domain_routes_without_generic_management(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(backend_codex.shutil, "which", lambda _candidate: "codex")
-    monkeypatch.setattr(
-        paper_search_mcp,
-        "load_env_overrides",
-        lambda _server_id: {"PAPER_SEARCH_MCP_CORE_API_KEY": "api-secret"},
+    profile = tmp_path / "plugins.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "profile": "all-research",
+                "plugins": [
+                    {"id": "core.http"},
+                    {"id": "core.workbench"},
+                    {"id": "research.workspace"},
+                    {"id": "research.zotero"},
+                    {"id": "research.colab"},
+                    {"id": "research.mamba_history"},
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
+    def zotero_config(root):
+        config = zotero_mcp.default_mcp_config(root)
+        config["mamba_zotero"]["env"]["ZOTERO_API_KEY"] = "api-secret"
+        return config
+
+    monkeypatch.setattr(research_plugins, "zotero_mcp_config", zotero_config)
+    monkeypatch.setattr(application, "_PROFILE_PATH", profile)
     set_registry_for_tests(ProjectRegistry(tmp_path / "projects.json"))
     set_db_for_tests(MambaDb(tmp_path / "mamba.db"))
     try:
         with TestClient(application.create_app()) as client:
-            servers = client.get("/api/mcp/servers").json()["servers"]
-            paper_search = client.get("/api/mcp/servers/paper_search").json()
-            backend = client.app.state.kernel.context.capabilities.backends.require("codex")
-            launch = backend.resolve_launch(
-                LaunchRequest(cwd=tmp_path, resume_id=None, provider_id=None)
-            )
+            inventory = client.get("/api/capabilities").json()
+            providers = client.app.state.kernel.context.capabilities.mcp.list()
+            assert client.get("/api/mcp/servers").status_code == 404
+            assert client.get("/api/credentials").status_code == 404
             route_paths = client.get("/openapi.json").json()["paths"]
 
-        assert [server["name"] for server in servers[:6]] == [
-            "mamba_workspace",
-            "mamba_zotero",
-            "mamba_experiment",
-            "paper_search",
-            "mamba_colab",
-            "mamba_history",
+        assert [provider.id for provider in providers] == [
+            "mamba_workbench", "mamba_workspace", "mamba_zotero", "mamba_colab", "mamba_history",
         ]
-        assert all("api-secret" not in json.dumps(server) for server in servers)
-        assert "api-secret" not in json.dumps(paper_search)
-        assert all("api-secret" not in item for item in launch.argv)
+        assert "api-secret" not in json.dumps(inventory)
+        assert not {"/api/credentials", "/api/skills", "/api/agents", "/api/mcp/servers", "/api/project-config"} & route_paths.keys()
         assert "/api/workspace" in route_paths
         assert "/api/library/zotero/items" in route_paths
     finally:
@@ -56,7 +65,7 @@ def test_default_profile_wires_research_mcp_routes_and_redacts_env(
         set_registry_for_tests(None)
 
 
-def test_disabled_zotero_removes_mcp_and_route_and_rejects_project_reenable(
+def test_disabled_zotero_has_no_provider_or_domain_route(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -67,10 +76,8 @@ def test_disabled_zotero_removes_mcp_and_route_and_rejects_project_reenable(
                 "profile": "without-zotero",
                 "plugins": [
                     {"id": "core.http"},
-                    {"id": "backend.codex"},
+                    {"id": "core.workbench"},
                     {"id": "research.workspace"},
-                    {"id": "research.experiment"},
-                    {"id": "research.paper_search"},
                     {"id": "research.colab"},
                     {"id": "research.mamba_history"},
                 ],
@@ -88,25 +95,10 @@ def test_disabled_zotero_removes_mcp_and_route_and_rejects_project_reenable(
     set_db_for_tests(MambaDb(tmp_path / "mamba.db"))
     try:
         with TestClient(application.create_app()) as client:
-            servers = client.get("/api/mcp/servers").json()["servers"]
-            rejected = client.patch(
-                "/api/project-config",
-                json={"enabled_mcp_servers": ["mamba_zotero"]},
-            )
-            config_path = project_root / ".mambaresearch" / "config.json"
-            config_path.write_text(
-                json.dumps({"enabled_mcp_servers": ["mamba_zotero"]}),
-                encoding="utf-8",
-            )
-            backend = client.app.state.kernel.context.capabilities.backends.require("codex")
-            with pytest.raises(BackendLaunchError, match="enabled_mcp_servers"):
-                backend.resolve_launch(
-                    LaunchRequest(cwd=project_root, resume_id=None, provider_id=None)
-                )
+            providers = client.app.state.kernel.context.capabilities.mcp.list()
             route_paths = client.get("/openapi.json").json()["paths"]
 
-        assert "mamba_zotero" not in {server["name"] for server in servers}
-        assert rejected.status_code == 400
+        assert "mamba_zotero" not in {provider.id for provider in providers}
         assert "/api/library/zotero/items" not in route_paths
     finally:
         set_db_for_tests(None)

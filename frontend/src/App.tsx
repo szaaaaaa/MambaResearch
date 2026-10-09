@@ -1,139 +1,134 @@
 import React from 'react';
-import { Database, FileText, FlaskConical, Lightbulb } from 'lucide-react';
-import { AppProvider } from './store';
-import { MambaSidebar, NavId } from './components/MambaSidebar';
-import { HistoryTab } from './components/tabs/HistoryTab';
-import { SkillsTab } from './components/tabs/SkillsTab';
-import { WorkbenchTab } from './components/tabs/WorkbenchTab';
-import { SettingsModal } from './components/settings/SettingsModal';
-import { UiPreferences } from './components/settings/types';
-import { HomeScreen } from './components/home/HomeScreen';
-import { TopBar } from './components/layout/TopBar';
-import { BucketContainer } from './components/buckets/BucketContainer';
-import { McpTab } from './components/mcp/McpTab';
-import { LibraryTab } from './components/library/LibraryTab';
-import { DraftsTab } from './components/tabs/DraftsTab';
-import { getActiveProject, type Project } from './api/projects';
-import { ContextualTabsProvider, useActiveContextualTab, useContextualTabs } from './store/contextual';
+import { getActiveProject } from './api/projects';
+import { MambaSidebar } from './components/MambaSidebar';
 import { ContextualTabBar } from './components/contextual/ContextualTabBar';
 import { ContextualTabFrame } from './components/contextual/ContextualTabFrame';
-import { CLASSIFY_WORKSPACE_PROMPT } from './components/workbench/ClassifyHintBar';
+import { HomeScreen } from './components/home/HomeScreen';
+import { TopBar } from './components/layout/TopBar';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { CapabilityInventoryProvider, useCapabilityInventory } from './kernel/capabilityInventory';
+import {
+  createUiPluginRegistry,
+  discoverUiPlugins,
+  type UiPluginRegistry,
+} from './kernel/pluginRegistry';
+import { AppRuntimeProvider, useAppRuntime } from './runtime/appRuntime';
 
-const UI_PREFERENCES_KEY = 'research-agent-ui-preferences';
-const LAST_NAV_KEY = 'mamba_last_nav';
-
-const DEFAULT_UI_PREFERENCES: UiPreferences = {
-  theme: 'system',
-  density: 'comfortable',
-  chatWidth: 'standard',
-  messageFont: 'base',
-  showWelcomeHints: true,
-};
-
-function loadUiPreferences(): UiPreferences {
-  try {
-    const raw = window.localStorage.getItem(UI_PREFERENCES_KEY);
-    return raw ? { ...DEFAULT_UI_PREFERENCES, ...(JSON.parse(raw) as Partial<UiPreferences>) } : DEFAULT_UI_PREFERENCES;
-  } catch {
-    return DEFAULT_UI_PREFERENCES;
-  }
-}
-
-function loadLastNav(): Exclude<NavId, 'set'> {
-  const valid: Exclude<NavId, 'set'>[] = ['exp', 'pap', 'data', 'idea', 'drafts', 'skill', 'mcp', 'bench', 'hist', 'library'];
-  const raw = window.localStorage.getItem(LAST_NAV_KEY);
-  return raw && valid.includes(raw as Exclude<NavId, 'set'>) ? raw as Exclude<NavId, 'set'> : 'bench';
-}
-
-type AppView = 'home' | 'ide';
-
-const AppContent: React.FC = () => {
-  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const [uiPreferences, setUiPreferences] = React.useState<UiPreferences>(loadUiPreferences);
-  const [appView, setAppView] = React.useState<AppView>('home');
-  const [activeProject, setActiveProject] = React.useState<Project | null>(null);
-  const [bootstrapping, setBootstrapping] = React.useState(true);
-  const [activeNav, setActiveNav] = React.useState<Exclude<NavId, 'set'>>(loadLastNav);
-  const activeContextualTab = useActiveContextualTab();
-  const { pendingComposerPrompt, injectComposerPrompt, activateTab } = useContextualTabs();
-
-  React.useEffect(() => {
-    if (pendingComposerPrompt === null) return;
-    setActiveNav('bench');
-    activateTab(null);
-  }, [activateTab, pendingComposerPrompt]);
-
-  React.useEffect(() => {
-    window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences));
-  }, [uiPreferences]);
-
-  React.useEffect(() => {
-    window.localStorage.setItem(LAST_NAV_KEY, activeNav);
-  }, [activeNav]);
-
+const COMPILED_UI_PLUGINS = discoverUiPlugins();
+const AppShell: React.FC<{ registry: UiPluginRegistry }> = ({ registry }) => {
+  const capability = useCapabilityInventory();
+  const runtime = useAppRuntime();
   React.useEffect(() => {
     let cancelled = false;
     getActiveProject()
       .then((project) => {
-        if (cancelled) return;
-        if (project) {
-          setActiveProject(project);
-          setAppView('ide');
-        }
+        if (!cancelled) runtime.bootstrapResolved(project);
       })
-      .finally(() => {
-        if (!cancelled) setBootstrapping(false);
+      .catch(() => {
+        if (!cancelled) runtime.bootstrapResolved(null);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [runtime.bootstrapResolved]);
 
-  const renderMain = (): React.ReactNode => {
-    switch (activeNav) {
-      case 'exp':
-        return <BucketContainer bucket="experiment" title="实验" icon={FlaskConical} onOpenSettings={() => setIsSettingsOpen(true)} onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)} />;
-      case 'pap':
-        return <BucketContainer bucket="literature" title="文献" icon={FileText} onOpenSettings={() => setIsSettingsOpen(true)} onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)} />;
-      case 'data':
-        return <BucketContainer bucket="dataset" title="数据集" icon={Database} onOpenSettings={() => setIsSettingsOpen(true)} onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)} />;
-      case 'idea':
-        return <BucketContainer bucket="idea" title="灵感" icon={Lightbulb} onOpenSettings={() => setIsSettingsOpen(true)} onNavigateToWorkbench={() => injectComposerPrompt(CLASSIFY_WORKSPACE_PROMPT)} />;
-      case 'bench':
-        return activeProject ? <WorkbenchTab activeProject={activeProject} /> : null;
-      case 'skill':
-        return <SkillsTab compact={false} />;
-      case 'hist':
-        return <HistoryTab compact={false} />;
-      case 'mcp':
-        return <McpTab />;
-      case 'library':
-        return <LibraryTab />;
-      case 'drafts':
-        return <DraftsTab />;
-    }
-  };
+  if (runtime.state.bootstrap === 'loading') return <StartupMessage text="加载中…" />;
+  if (runtime.state.location.kind === 'home') {
+    return <HomeScreen onProjectActivated={runtime.activateProject} />;
+  }
 
-  if (bootstrapping) return <div className="flex h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">加载中…</div>;
-  if (appView === 'home' || !activeProject) return <HomeScreen onProjectActivated={(project) => { setActiveProject(project); setAppView('ide'); }} />;
+  const location = runtime.state.location;
+  const primary = location.primary;
+  const activeTab = primary.kind === 'contextual-tab'
+    ? runtime.state.contextualTabs.find((tab) => tab.id === primary.tabId) ?? null
+    : null;
+  const resolvedViewKey = primary.kind === 'plugin-view'
+    ? primary.viewKey
+    : activeTab?.returnViewKey ?? null;
+  const activeView = registry.views.find((view) => view.key === resolvedViewKey) ?? null;
+  const renderView = () => activeView?.render({
+    activeProject: location.project,
+    openSettings: runtime.openSettings,
+    openWorkbench: runtime.openWorkbench,
+  }) ?? <StartupMessage text="未启用 UI view" />;
 
   return (
-    <div className="ds-scope" style={{ height: '100vh', overflow: 'hidden' }}>
+    <div key={location.project.id} className="ds-scope" style={{ height: '100vh', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <TopBar project={activeProject} onBackToHome={() => { setAppView('home'); setActiveProject(null); }} onOpenSettings={() => setIsSettingsOpen(true)} />
+        <TopBar
+          project={location.project}
+          onBackToHome={runtime.backHome}
+          onOpenSettings={runtime.openSettings}
+        />
+        {runtime.commandError && <div role="alert" className="flex justify-between gap-3 bg-rose-50 px-4 py-2 text-sm text-rose-700"><span>{runtime.commandError}</span><button type="button" onClick={runtime.clearCommandError}>关闭</button></div>}
+        {capability.status === 'stale' ? (
+          <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+            <span>Capability 刷新失败，继续使用上次成功配置。{capability.error}</span>
+            <button type="button" onClick={() => void capability.refresh()} className="rounded border border-amber-300 bg-white px-2 py-1">重试</button>
+          </div>
+        ) : null}
         <div className="rb-app" style={{ flex: 1, minHeight: 0 }}>
-          <MambaSidebar active={activeNav} onNav={(id) => id === 'set' ? setIsSettingsOpen(true) : setActiveNav(id)} />
+          <MambaSidebar
+            active={resolvedViewKey}
+            navGroups={registry.navGroups}
+            onNav={runtime.selectView}
+            onOpenSettings={runtime.openSettings}
+          />
           <main style={{ minWidth: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <ContextualTabBar />
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              {activeContextualTab ? <ContextualTabFrame /> : renderMain()}
+              {activeTab ? <ContextualTabFrame /> : renderView()}
             </div>
           </main>
         </div>
       </div>
-      {isSettingsOpen ? <SettingsModal uiPreferences={uiPreferences} onUiPreferencesChange={setUiPreferences} onProjectActivated={(project) => { setActiveProject(project); setAppView('ide'); }} onClose={() => setIsSettingsOpen(false)} /> : null}
+      {location.overlay?.kind === 'settings' ? (
+        <SettingsModal
+          settings={registry.settings}
+          activeKey={location.overlay.sectionKey}
+          onSelect={runtime.selectSettings}
+          onProjectActivated={runtime.activateProject}
+          onClose={runtime.closeSettings}
+        />
+      ) : null}
     </div>
   );
 };
 
+const AppContent: React.FC = () => {
+  const capability = useCapabilityInventory();
+  const registryResult = React.useMemo(() => {
+    if (!capability.inventory) return null;
+    try {
+      return { registry: createUiPluginRegistry(COMPILED_UI_PLUGINS, capability.inventory), error: null };
+    } catch (error) {
+      return { registry: null, error: String(error) };
+    }
+  }, [capability.inventory]);
+
+  if (capability.status === 'failed') {
+    return <StartupMessage text={`Capability inventory 加载失败：${capability.error}`} onRetry={capability.refresh} />;
+  }
+  if (!capability.inventory || !registryResult) return <StartupMessage text="正在加载 capability inventory…" />;
+  if (registryResult.error || !registryResult.registry) {
+    return <StartupMessage text={`UI plugin registry 启动失败：${registryResult.error}`} />;
+  }
+  return (
+    <AppRuntimeProvider registry={registryResult.registry}>
+      <AppShell registry={registryResult.registry} />
+    </AppRuntimeProvider>
+  );
+};
+
+const StartupMessage: React.FC<{ text: string; onRetry?: () => Promise<void> }> = ({ text, onRetry }) => (
+  <div className="flex h-screen flex-col items-center justify-center gap-3 bg-slate-50 text-sm text-slate-500">
+    <span>{text}</span>
+    {onRetry ? <button type="button" onClick={() => void onRetry()} className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700">重试</button> : null}
+  </div>
+);
+
 export default function App() {
-  return <AppProvider><ContextualTabsProvider><AppContent /></ContextualTabsProvider></AppProvider>;
+  return (
+    <CapabilityInventoryProvider>
+      <AppContent />
+    </CapabilityInventoryProvider>
+  );
 }

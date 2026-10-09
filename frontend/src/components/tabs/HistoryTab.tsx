@@ -12,7 +12,7 @@ import {
   Layers,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { listHistoryRuns, RunKind, RunRecord, RunStatus } from '../../api/conversations';
+import { listHistoryRuns, RunKind, RunRecord } from '../../api/conversations';
 
 interface Props {
   compact?: boolean;
@@ -30,12 +30,6 @@ const KIND_META: Record<
   brainstorming: { label: '思辨', icon: Lightbulb },
   data_exploration: { label: '数据探索', icon: Database },
   unknown: { label: '其他', icon: Layers },
-};
-
-const STATUS_META: Record<RunStatus, { label: string; color: string }> = {
-  completed: { label: '已完成', color: 'var(--ok-fg)' },
-  running: { label: '进行中', color: 'var(--warn-fg)' },
-  unknown: { label: '未知', color: 'var(--fg-3)' },
 };
 
 const KIND_FILTER_ORDER: RunKind[] = [
@@ -64,20 +58,19 @@ const formatTime = (ts: number): string => {
 };
 
 /**
- * HistoryTab —— 运行历史时间线。
+ * HistoryTab —— 已保存科研产物时间线。
  *
  * 数据源：``GET /api/history/runs``，扫 active project 下所有
  * ``outputs/<run_id>/``，对 Claude 与 Codex 产出无差别处理。
  *
- * 顶部过滤栏：kind chip 多选 + status select + 文本搜索；
- * 主体：按日期分组，每条 run 一张卡片含 kind/title/状态/产物列表/操作按钮。
+ * 顶部过滤栏：kind chip 多选 + 文本搜索；
+ * 主体：按日期分组，每条 run 展示 kind/title/产物列表。
  */
 export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
   const [runs, setRuns] = React.useState<RunRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [kindFilter, setKindFilter] = React.useState<Set<RunKind>>(new Set());
-  const [statusFilter, setStatusFilter] = React.useState<RunStatus | 'all'>('all');
   const [search, setSearch] = React.useState('');
 
   const refresh = React.useCallback(async () => {
@@ -101,13 +94,12 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
     const q = search.trim().toLowerCase();
     return runs.filter((r) => {
       if (kindFilter.size > 0 && !kindFilter.has(r.kind)) return false;
-      if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (q && !r.title.toLowerCase().includes(q) && !r.run_id.toLowerCase().includes(q)) {
         return false;
       }
       return true;
     });
-  }, [runs, kindFilter, statusFilter, search]);
+  }, [runs, kindFilter, search]);
 
   // 按日期分组（基于 started_at；为 null 的归到末尾）
   const grouped = React.useMemo(() => {
@@ -165,19 +157,10 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
                   letterSpacing: '-0.01em',
                 }}
               >
-                运行历史
+                研究记录
               </h2>
               <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--fg-3)' }}>
-                按命名约定扫 <code
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    padding: '1px 6px',
-                    borderRadius: 4,
-                    background: 'var(--bg-1)',
-                  }}
-                >outputs/&lt;run_id&gt;/</code>
-                {' '}子目录。Claude 与 Codex 触发的 SKILL 产物在此**统一**列出。
+                浏览已保存的科研产物。任务结果请查看工作台中的回传记录。
               </p>
             </div>
             <button
@@ -243,26 +226,6 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
           })}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>状态</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as RunStatus | 'all')}
-            style={{
-              padding: '4px 8px',
-              borderRadius: 6,
-              border: '1px solid var(--line-1)',
-              background: 'var(--bg-3)',
-              color: 'var(--fg-1)',
-              fontSize: 12,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            <option value="all">全部</option>
-            <option value="completed">已完成</option>
-            <option value="running">进行中</option>
-            <option value="unknown">未知</option>
-          </select>
           <input
             type="text"
             placeholder="搜索 title / run_id…"
@@ -308,9 +271,9 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
               lineHeight: 1.7,
             }}
           >
-            还没有跑过任何 pipeline。
+            暂无已保存的科研产物。
             <br />
-            在素材里聊一句 <code
+            在 Codex 当前聊天使用 <code
               style={{
                 fontFamily: 'var(--font-mono)',
                 fontSize: 12,
@@ -330,7 +293,7 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
               color: 'var(--fg-3)',
             }}
           >
-            没有匹配当前筛选条件的运行。
+            没有匹配当前筛选条件的研究记录。
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -360,7 +323,6 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
                 >
                   {items.map((r) => {
                     const meta = KIND_META[r.kind];
-                    const status = STATUS_META[r.status];
                     const Icon = meta.icon;
                     return (
                       <li
@@ -427,18 +389,6 @@ export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
                             title={r.title}
                           >
                             {r.title}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: status.color,
-                              padding: '2px 8px',
-                              borderRadius: 999,
-                              border: `1px solid ${status.color}`,
-                              opacity: 0.8,
-                            }}
-                          >
-                            {status.label}
                           </span>
                         </div>
                         <div

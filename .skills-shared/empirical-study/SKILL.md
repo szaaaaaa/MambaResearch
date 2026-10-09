@@ -5,6 +5,8 @@ description: 实证研究 / 复现 pipeline。用户说"做实验" / "复现某�
 
 # Empirical Study (Local Reproduction / Original Experiment)
 
+执行前读取[主 skill 的角色编排约定](../../plugins/mambaresearch/skills/mambaresearch/SKILL.md#角色编排)，按该节使用 Codex 原生子代理工具与文件交接；这里只读取约定，不额外打开工作台。
+
 设计 + 跑 + 分析一段本地 ML 实验。区别于 `experiment-iteration`：本 pipeline 关注**单次目标实证**（可能含 1-3 次小迭代），iteration 关注**大规模 sweep / 超参搜**。
 
 ## 触发场景
@@ -38,10 +40,9 @@ spawn experimenter(mode="execute", spec_path=outputs/<run_id>/experiments/exp_00
 ```
 
 experimenter 内部：
-- 写 `script.py`（含 `[[METRIC]]` 输出行）
-- 调 `experiment.run_local(script_path)` 拿 `experiment_run_id`（注意：这是 experiment.* MCP 内部 ID，不是本 pipeline 的 run_id）
-- 轮询 `experiment.status` 直到 done
-- 写 `result.json` 含 final metrics + total runtime
+- 写 `script.py`；将可机读的指标与配置保存到同目录 `result.json`
+- 使用 Codex 原生命令执行工具运行脚本；持续进程使用该工具实际返回的会话 ID 查询或停止
+- 核对退出码、日志与实际指标后完成 `result.json`，包含 final metrics + total runtime；日志保存在实验目录
 
 ### 4. (可选) experimenter (迭代) → `outputs/<run_id>/experiments/exp_002/...`
 
@@ -76,11 +77,11 @@ spawn writer(analysis_md=outputs/<run_id>/analysis.md, format="markdown")
 
 - script 崩溃 → experimenter 自己看 logs 修，不退回上一步
 - metric 远低于 threshold + 已迭代 ≥ 3 次 → 写 `lessons.md` 总结，让用户决定是否换方向
-- experiment.run_local 卡死（> 60min 无进度） → cancel，写 `lessons.md` 标"runtime issue"，让用户介入
+- 超过 spec 的资源或时长预算 → 使用 Codex 停止该会话，写 `lessons.md` 标明实际进度与停止原因，不继续超预算运行
 
 ## 完成态
 
-`outputs/<run_id>/report.md` 存在 + 至少一个 `experiments/exp_*/result.json` 含 final metrics。
+主聊天已读取并核对 spec、实际退出码、日志、result.json、analysis.md 和 report.md；报告中的配置与指标可追溯到实际成功运行。失败或超时记录不得作为成功实验，指标未达阈值应明确报告；没有成功运行时只能报告失败或受阻，不宣称实验完成。
 
 最终用户回复：
 ```

@@ -1,239 +1,149 @@
+# MambaResearch
 
-<div align="center">
+**直接在 Codex App 中使用的科研工作台。** 通过 `$mambaresearch` 打开界面，在同一个 Codex 聊天中完成文件整理、文献研究、实验、分析与报告写作，研究产物留在自己的项目中。
 
+当前插件版本：**0.1.7**。独立运行包适用于 **Windows x64**，需要支持 MCP Apps 的 Codex App。包内包含 Python、依赖、前端界面、科研流程与角色指令，安装后不需要开发仓库、系统 Python 或 Node.js。
 
-# 🧬 MambaResearch
+## 可以做什么
 
-### 一个当前运行在 Codex CLI 之上的研究向 IDE 壳
+- **管理科研项目**：按项目组织实验、文献、数据集和灵感，保留草稿及研究记录。
+- **按内容分类文件**：由 Codex 阅读内容、判断实际科研用途，再写入分类索引；工程代码和研究无关文件不强行归类，原始文件不移动或删除。
+- **阅读与批注文献**：在工作台打开 PDF、翻页、保存中文批注，并把分析任务发送到当前 Codex 聊天。
+- **开展科研流程**：检索文献、整理证据、设计及执行实验、分析数据、比较方法、评审研究产物。
+- **保存可追溯产物**：来源、证据、实验规格、脚本、真实结果、分析和报告写入项目的 `outputs/<run_id>/`，研究记录展示已有产物。
+- **确认任务结果**：面板发起的任务完成后由 Codex 显式回传，界面显示摘要和产物路径；投递成功不代表研究完成。
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![React 19](https://img.shields.io/badge/React-19-61dafb?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+| 科研任务 | 流程 |
+| --- | --- |
+| 整理项目文件 | `classify-workspace` |
+| 结构化文献综述 | `structured-lit-review` |
+| 实验设计、复现与验证 | `empirical-study` |
+| 已有实验迭代与调参 | `experiment-iteration` |
+| 文献方法对比 | `method-comparison` |
+| 数据集初探 | `data-exploration` |
+| 想法探讨与反例分析 | `idea-brainstorming` |
+| 单份科研产物评审 | `artifact-review` |
 
-**当前生产 LLM 出口只走订阅版 Codex CLI；MambaResearch 自身零 LLM 路由、零 agent runtime、零自建 skill 注册表。**
+## 安装
 
-[快速开始](#-快速开始) · [架构](#-三层架构) · [Sub-agent + Pipeline](#-sub-agent--pipeline-skill) · [配置](#-配置)
+### 从源码构建
 
----
+仓库保存源码；运行时、依赖和前端构建文件由构建脚本生成，不直接提交到 Git。构建需要 Windows x64、Python 3.10+ 和 Node.js 20+，首次构建需要网络下载依赖。
 
-</div>
+在 PowerShell 中运行：
 
-## 这是什么
-
-MambaResearch v3 当前是 Codex CLI 之上的一层 IDE 壳；Backend Registry 为未来 backend 保留
-同一接入契约，但当前不实现 Claude：
-
-- 侧栏 4 bucket（实验/文献/数据集/灵感）+ 草稿箱 + 能力视图（技能、MCP 工具、工作台、Zotero 库）+ 运行历史/设置；右侧按需开情境性 tab
-- **多对话并行**：每条 conversation 绑定一个 backend；当前唯一可新建和 resume 的 backend 是 Codex
-- 跨对话引用通过 `mamba_history` MCP tool 按需取（backend 主动调，懒拉不预 push）
-- LLM 智能完全交给已订阅的 Codex CLI
-- 自定义研究流程通过 **8 个 sub-agent**（`.claude/agents/*.md`）+ **7 个 pipeline SKILL.md**（`.claude/skills/`）沉淀
-- 自定义工具通过 **MCP servers** 接入（`workspace` / `mamba_history` / `zotero` / `colab` / `experiment` / `paper_search`）
-
-> 上一代版本拥有自建 `dynamic_os` 多 agent runtime（21 builtin skill + 7 role + planner + executor + policy + tool gateway），v3.0 完全删除——细节见 [v3.0 release note](docs/archive/releases/v3.0-mamba-as-claude-code-shell.md)。
-
-## 🏗 三层架构
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ MambaResearch UI（薄壳，本仓库写的）                         │
-│   - sidebar 视图 + 右侧情境性 tab                            │
-│   - 项目注册表 + 会话编排薄表                                │
-│   - 文件分类索引 (.mambaresearch/classification.db)          │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ 调
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│ Codex CLI（当前唯一生产订阅引擎和 LLM 出口）                │
-│   - Session 存储（CLI JSONL）                                │
-│   - Sub-agent 自动发现（.claude/agents/ ↔ .codex/agents/）   │
-│   - Pipeline SKILL.md 自动发现（.claude/skills/）            │
-│   - MCP 集成 / Slash 命令 / 权限提示 / Bash·Read·Write·Edit  │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ 调
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│ MCP Servers（统一扩展机制）                                  │
-│   - workspace.* / zotero.* / colab.* / experiment.*          │
-│   - paper_search.*（6 source）                               │
-│   - 用户自配的任何标准 MCP server                            │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## 🎭 8 个 Sub-agent + 7 个 Pipeline SKILL
-
-### Sub-agent（`.claude/agents/*.md`，由 `scripts/sync_subagents.py` 同步到 `.codex/agents/*.toml`）
-
-| Sub-agent | 职责 | 模型档位 |
-|---|---|---|
-| paper-searcher | arXiv / Semantic Scholar / Google Scholar 多源检索 + 去重 | haiku |
-| evidence-extractor | 给定论文集 → 抽取定量结果 / 论据段落 / 图表注记 | haiku |
-| analyzer | 比对、归纳、找冲突；可跑实验脚本验证假设 | sonnet |
-| writer | 把 analyzer 的结构化发现 + 证据组合成连贯技术文档 | sonnet |
-| critic | 关键节点重度评审：找漏洞 / 挑逻辑跳跃 / 判断结论可信度 | opus |
-| **conductor** | 接 user request → 拆任务 → 决定调用顺序 + 分配 sub-agent | sonnet |
-| **experimenter** | 设计实验 + 调 `experiment.*` MCP 跑本地脚本 + 报告 metric | sonnet |
-| **reviewer** | 审 artifact（report / sources / experiment 结果），返 verdict | sonnet |
-
-### Pipeline SKILL.md（`.claude/skills/`，主 agent 看到关键词时自动触发）
-
-| Pipeline | 何时用 | sub-agent 链 |
-|---|---|---|
-| structured-lit-review | "做综述" | paper-searcher → evidence-extractor → analyzer → writer → critic |
-| empirical-study | "做实验" / "复现某方法" | conductor → experimenter (× N iter) → analyzer → writer |
-| method-comparison | "对比 A 与 B 方法" | paper-searcher → evidence-extractor → analyzer → writer |
-| experiment-iteration | "调优 / 跑 sweep" | experimenter sweep → analyzer → reviewer |
-| artifact-review | "审 report / 审 sources" | reviewer → critic |
-| idea-brainstorming | "我有个 idea，帮我探讨" | conductor → analyzer → critic |
-| data-exploration | "看看这份数据" | conductor → analyzer → writer |
-
-所有 sub-agent 通过 `outputs/<run_id>/` 下的标准文件互通：`plan.md` / `sources.json` / `evidence.json` / `analysis.md` / `report.md` / `review.md` / `critique.md` / `experiments/exp_<NNN>/result.json`。完整命名约定写在 `CLAUDE.md` + `AGENTS.md`。
-
-## 🚀 快速开始
-
-### 前置条件
-
-- Python 3.10+ / Node.js 20+
-- 安装 `codex` CLI（ChatGPT Plus/Pro 订阅）
-- 完成 Codex OAuth 登录
-
-### 本地开发
-
-```bash
-git clone https://github.com/szaaaaaa/MambaResearch.git
+```powershell
+git clone --branch main https://github.com/szaaaaaa/MambaResearch.git
 cd MambaResearch
-
-pip install -e .
-cd frontend && npm ci && cd ..
-
-# 一次性建好 .claude/skills 与 .codex/skills 的 NTFS junction → .skills-shared/
-pwsh scripts/skills_mirror.ps1 -Scope project
-
-# 启动
-python app.py              # 后端 → http://127.0.0.1:8000
-cd frontend && npm run dev  # 前端 → http://localhost:3000
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+npm ci --prefix frontend
+.\.venv\Scripts\python.exe scripts/build_plugin.py
 ```
 
-启动后流程：Home（项目选择）→ 选 / 建 project → 进入 IDE。
+构建输出位于 `dist/`：
 
-### Codex sub-agent 同步
-
-修改 `.claude/agents/*.md` 后跑：
-
-```bash
-python scripts/sync_subagents.py
+```text
+mambaresearch-0.1.7-windows-x64.zip
+mambaresearch-0.1.7-windows-x64.zip.sha256
 ```
 
-会把 8 个 .md 同步成 `.codex/agents/*.toml`，让 Codex CLI 也能 spawn 同一组 sub-agent。
+ZIP 只包含程序、依赖和科研流程资源，不包含账号凭据、研究数据库或用户文件。
 
-## 📦 视图布局
+### 安装到 Codex
 
-| 视图 | 做什么 |
-|---|---|
-| 4 bucket（实验/文献/数据集/灵感） | 项目文件按 LLM 增量分类的 4 个虚拟视图，分类期间统计实时刷新 |
-| 草稿箱 | 未素材化（未挂到 bucket）的 conversation 收纳处 |
-| 技能 | 列出 `.claude/skills/` 下所有 pipeline SKILL.md |
-| MCP 工具 | 5 子视图：servers / tools / 调用历史 / sandbox 试调 / 配置编辑 |
-| 工作台（Workbench） | Codex 会话主界面，含 slash 命令和 HITL |
-| Zotero 库 | 内嵌 Zotero 浏览器 + 选中 PDF 一键拉到 workspace |
-| 运行历史 | 跨 conversation 的运行时间轴 |
-| 设置 | provider / MCP env / credentials / 项目级 lazy 配置 |
-| 情境性 tab（右侧） | VSCode 风格 ephemeral：开 PDF 开文献 tab，跑实验开执行 tab，关掉消失 |
+将 ZIP 解压到一个固定目录。在 Codex 中将**解压根目录**添加为本地插件市场，安装 `mambaresearch@mambaresearch-local`。市场文件位于解压目录的 `.agents/plugins/marketplace.json`，实际插件位于其下的 `mambaresearch/`。
 
-## 🔌 内置 MCP Servers
+也可使用 Codex 的原生插件管理命令，将下面路径替换为实际解压根目录：
 
-六个内建 server 的 command/args 由各自的 `src/server/integrations/*/mcp_server.py` 或
-`src/server/workspace/mcp_server.py` 构造，并由 `src/server/plugins/research.py` 中的
-Research plugin 独占注册到 Kernel `McpRegistry`。Codex 会话在每次启动时从该 Registry
-取得快照，按项目 `enabled_mcp_servers` 生成运行时 `-c mcp_servers.<id>=...` 配置。
-
-- **workspace.\*** — 文件分类索引读写
-- **mamba_history.\*** — 跨 conversation 历史检索（`search_conversations` / `get_conversation_messages`），backend 按需懒拉
-- **zotero.\*** — Zotero Web API 客户端 + PDF 直接落到 workspace bucket
-- **colab.\*** — Drive Desktop 元数据 → Colab URL
-- **experiment.\*** — 本地 Python 子进程 + metric 流（`outputs/<run_id>/experiments/<exp_id>/result.json`）
-- **paper_search.\*** — 6 source（arXiv / Semantic Scholar / OpenAlex / Crossref / DOAJ / IEEE 部分）
-
-## 🧰 项目结构
-
-```
-MambaResearch/
-├── app.py                          # FastAPI 入口
-├── configs/
-│   ├── claude_code/providers.json  # Claude Code provider 注册表
-│   ├── mcp/env_overrides.json      # MCP 子进程 user 层 env override
-│   └── codex/auth.json             # Codex OAuth profile 绑定
-├── .skills-shared/                 # pipeline SKILL.md 真相源（7 pipeline + classify-workspace）
-├── .claude/
-│   ├── agents/                     # 8 个 sub-agent 真相源（.md，git tracked）
-│   └── skills/                     # NTFS junction → .skills-shared/（gitignore）
-├── .codex/
-│   ├── agents/                     # 8 个 .toml（sync_subagents.py 生成，gitignore）
-│   └── skills/                     # NTFS junction → .skills-shared/（gitignore）
-├── src/
-│   ├── server/
-│   │   ├── projects/               # 项目注册表 + active project env
-│   │   ├── workspace/              # 分类索引 + workspace MCP
-│   │   ├── kernel/                 # Profile、typed registries、lifecycle
-│   │   ├── plugins/                # backend.codex + Research plugin wiring
-│   │   ├── terminal/               # Codex PTY 桥（pywinpty）+ ANSI strip + turn tee
-│   │   ├── integrations/           # zotero / colab / experiment MCP servers
-│   │   ├── mcp/                    # MCP server registry
-│   │   └── routes/                 # FastAPI 路由
-│   └── common/                     # 共享 utils
-├── frontend/src/                   # React 19 + Tailwind + Zustand
-└── scripts/
-    ├── sync_subagents.py           # .claude/agents/*.md → .codex/agents/*.toml
-    └── skills_mirror.ps1           # 建/补 .claude/skills 与 .codex/skills 的 junction
+```powershell
+codex plugin marketplace add "C:\Tools\MambaResearch"
+codex plugin add mambaresearch@mambaresearch-local
 ```
 
-## ⚙ 配置
+安装或升级后刷新 MambaResearch MCP 连接，使当前聊天加载新配置。
 
-枢转后全局 yaml 物理删除，配置按职责拆为 4 个 json 注册表：
+## 开始使用
 
-| 文件 | 职责 | 编辑入口 |
-|---|---|---|
-| `configs/claude_code/providers.json` | Claude Code provider（`name → {base_url, api_key_env, default_model}`） | 前端 CLI 视图 / `PATCH /api/cli-providers` |
-| `configs/mcp/env_overrides.json` | MCP 子进程 user 层 env override | 前端 MCP 视图 / `PATCH /api/mcp/servers/{name}/env` |
-| `configs/codex/auth.json` | Codex OAuth profile 绑定 | 自动维护，需要时手编 |
-| `<project>/.mambaresearch/config.json` | 项目级 lazy 配置（当前仅 `{enabled_mcp_servers}`） | 前端项目视图 / `PATCH /api/project-config` |
+在 Codex 聊天中输入：
 
-MCP server 命令行（`command` / `args`）由所属 server 的 `default_mcp_config()` 构造，并由对应
-Research plugin 注册到 Kernel `McpRegistry`；UI 只能改 env override，不可改命令行。
+```text
+$mambaresearch
+```
 
-API key（含 `ZOTERO_USER_ID` / `ZOTERO_API_KEY` 等）通过设置面板的 **credentials editor** 段落写入 `.env`，保存后清空输入框；后端读取时按需热加载。
+工作台打开后，创建或选择科研项目，再从界面发起任务，也可以在聊天中描述研究需求。例如：
 
-## 🔁 自动化开发流程（/pipeline）
+```text
+整理这个项目，只将确实属于科研的文件归入实验、文献、数据集或灵感。
+阅读这篇论文，提取实验设计，并指出复现所缺的信息。
+比较逻辑回归和随机森林，使用相同的数据划分，保存脚本、结果、图表和报告。
+```
 
-用户级 Claude Code skill `/pipeline` 把规划阶段决策集中、执行阶段无人介入地跑完一个多任务 plan。配合升级过的 `/plan` template（新增 Decision points / External preconditions / Failure policy / Subtask split policy 四段），一次规划定案后，`/dev → /review → /fix` 自动循环跑每个 task，失败立即 STOP 暴露根因（不兜底）。
+界面任务绑定发起时的项目；随后切换页面或项目不会改变任务目标。科研流程使用 Codex 原生子代理协作，每份产物由一个角色负责，主聊天核对实际结果后回传。直接从聊天发起、没有面板任务 ID 的请求不会伪造任务回传。
 
-详见 [docs/pipeline-usage.md](docs/archive/pipeline-usage.md)。
+## 能力分工
 
-## 📚 版本演进
+| Codex 原生能力 | MambaResearch 科研能力 |
+| --- | --- |
+| 模型、认证、聊天、推理 | 科研项目、资产分类索引与任务结果 |
+| 搜索、浏览、文件读写和通用预览 | 文献阅读、批注和科研产物展示 |
+| 命令执行、进程会话和停止 | 实验规格、结果文件及已有实验记录的只读展示 |
+| Skills/Agents、MCP 配置和权限 | 科研流程指令、项目研究记录和产物时间轴 |
 
-- [v3.0 — MambaResearch as Claude Code / Codex shell](docs/archive/releases/v3.0-mamba-as-claude-code-shell.md)
-- [v2.x — multi-subscription（双订阅工作流）](docs/archive/releases/v2.x-multi-subscription.md)
-- [v2.x — multi-model（多 provider Workbench）](docs/archive/releases/v2.x-multi-model.md)
-- 历史里程碑：v0.1 LangGraph → v0.5 3-agent → v0.9 6-agent → v1.0 dynamic-os（已删除）
+插件提供五个 MCP 服务：
 
-## 技术栈
+| 服务 | 职责 |
+| --- | --- |
+| `mamba_workbench` | 工作台界面、固定项目任务及显式结果回传 |
+| `mamba_workspace` | 科研文件分类索引 |
+| `mamba_history` | 项目研究记录 |
+| `mamba_zotero` | Zotero 资料库访问 |
+| `mamba_colab` | Colab notebook 资源定位 |
 
-| 层 | 技术 |
-|----|------|
-| 后端 | Python 3.10+ / FastAPI / uvicorn / SSE |
-| 前端 | React 19 / TypeScript / Vite / Tailwind CSS |
-| LLM 出口 | Codex CLI（ChatGPT 订阅） |
-| MCP servers | workspace / mamba_history / zotero / colab / experiment / paper_search |
-| 持久化 | `~/.mambaresearch/mamba.db` + `<project>/.mambaresearch/*.db` |
-| 项目记忆 | `<project>/.mambaresearch/memory/*.md` + `@import` 双侧暴露给 CLAUDE.md / AGENTS.md |
+模型调用、论文检索、脚本执行和 LaTeX 编译直接使用 Codex 原生能力。工作台不保留另一套模型 API、凭据管理页、聊天输入、通用 MCP 控制台、检索/嵌入系统或实验执行器。
 
-## 许可证
+Zotero 为可选功能，使用 `ZOTERO_USER_ID`、`ZOTERO_API_KEY` 环境变量或用户 `~/.mambaresearch/.env`，参见 [.env.example](.env.example)。Colab 工具只定位 notebook，不表示上传或远程执行成功。这两项实际账号业务尚未验收，不是核心科研流程的安装前置条件。
+
+## 验证范围
+
+- 已完成真实工作台的分类、文献阅读与中文批注，以及“界面任务 → 当前聊天 → 科研产物 → 显式回传 → 界面结果”的闭环验收。
+- 已运行七条科研流程的限定用例，并用真实 WDBC 公开数据完成逻辑回归与随机森林对比：569 个样本、30 个特征、固定分层五折；保留脚本、逐样本预测、图表和报告，独立复算结果。
+- 中文 LaTeX 报告已通过原生编译、字体嵌入、Unicode 映射、双引擎文本提取和逐页视觉检查，App 原生编辑器/PDF 预览显示正常。未缓存的 LaTeX 资源仍需按 writer 指令预先准备。
+- 独立包和实际安装缓存的五个 MCP 均通过真实启动验证；中文/空格安装路径和无系统 Python 的运行已验证。
+- 当前自动化回归：后端 **33 项**、前端 **13 项**通过，类型检查和生产构建通过。
+
+目前仅验收 Windows x64；Zotero/Colab 实际账号业务与其他平台未验证。演示实验用于科研方法展示，不作临床用途或性能普适性结论。
+
+## 开发
+
+```text
+frontend/                     工作台前端和宿主交互
+src/server/                   科研项目、领域服务、MCP 和任务结果
+plugins/mambaresearch/         Codex 插件清单、主 skill 和 PDF 检查脚本
+.skills-shared/                分类及七条科研流程的唯一源码
+.claude/agents/               科研角色职责正文
+scripts/build_plugin.py       独立 Windows 插件构建入口
+tests/                        后端及真实 stdio 合同测试
+docs/live/                    当前实现规范、设计和验收记录
+```
+
+构建器从唯一源码生成包内应用和流程资源，不分别维护副本。工作台界面以单个内联 HTML MCP 资源提供，科研 API 经进程内 ASGI 调用，无额外 UI 端口。`python app.py` 仅用于 API 开发，普通浏览器没有 Codex 宿主桥。
+
+完成上述安装与构建后，执行回归检查：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pytest httpx pypdf
+.\.venv\Scripts\python.exe -X utf8 -m pytest -q tests -p no:cacheprovider
+npm test --prefix frontend
+npm run lint --prefix frontend
+npm run build --prefix frontend
+git diff --check
+```
+
+用户研究记录保存在 `~/.mambaresearch/mamba.db`，项目元数据保存在项目目录。已有数据库、文献、脚本、数据和索引保持；新研究产物写入项目 `outputs/<run_id>/`。
+
+实现合同与验收证据见[实施索引](docs/live/技术实施文档/00-实施文档索引.md)和[迁移记录](docs/live/技术实施文档/07-Codex-App-科研工作台迁移.md)。
+
+## License
 
 MIT License
-
----
-
-<div align="center">
-<sub>Built as a thin shell on top of Codex CLI</sub>
-</div>

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mamba_host_probe": {
+      "command": "python",
+      "args": ["-u", "server.py"],
+      "cwd": "."
+    }
+  }
+}

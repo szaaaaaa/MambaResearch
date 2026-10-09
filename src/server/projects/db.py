@@ -1,7 +1,6 @@
 """``mamba.db`` SQLite 连接 + schema migrations。
 
-这张库是项目级"会话编排薄表"：仅记录会话头与 segment 序列，**不**存消息内容
-（消息内容由 Claude/Codex CLI 自身的 JSONL 持有）。
+保存项目研究记录、历史消息归档、工具调用及显式任务结果。Codex App 拥有原生聊天。
 
 DB 路径
 ~~~~~~~
@@ -10,7 +9,7 @@ DB 路径
 
 并发模型
 ~~~~~~~~
-SQLite 内置串行；Python 侧用 ``threading.Lock`` 保护连接对象，避免在多线程下
+SQLite 内置串行；Python 侧用 ``threading.RLock`` 保护连接对象，避免在多线程下
 同一连接被并发使用（SQLite 默认 ``check_same_thread=True``，但本项目里
 ``connect()`` 时显式关闭以便 FastAPI 多线程共享）。
 
@@ -311,6 +310,43 @@ MIGRATIONS: list[str] = [
     """,
 ]
 
+MIGRATIONS.append("""
+BEGIN IMMEDIATE;
+ALTER TABLE conversation_segments RENAME TO conversation_session_archive;
+ALTER TABLE conversation_session_archive RENAME COLUMN cli_session_id TO session_ref;
+ALTER TABLE mcp_calls ADD COLUMN project_id TEXT;
+UPDATE mcp_calls SET project_id = (SELECT project_id FROM conversations WHERE id=mcp_calls.conversation_id);
+CREATE INDEX idx_mcp_calls_project ON mcp_calls(project_id,started_at DESC);
+CREATE TABLE workbench_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('waiting','completed','error')),
+    summary TEXT,
+    artifacts_json TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    finished_at INTEGER
+);
+CREATE INDEX idx_workbench_tasks_project ON workbench_tasks(project_id,created_at DESC);
+COMMIT;
+""")
+
+MIGRATIONS.append("""
+ALTER TABLE experiment_runs ADD COLUMN log_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE experiment_runs ADD COLUMN metric_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE experiment_runs ADD COLUMN last_metric_json TEXT;
+CREATE TABLE experiment_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('log','metric')),
+    payload TEXT NOT NULL
+);
+CREATE INDEX idx_experiment_events_run ON experiment_events(run_id,kind,sequence);
+""")
+
 
 class MambaDb:
     """``mamba.db`` 的连接持有者。进程内单例，多线程共享一个连接。"""
@@ -318,7 +354,7 @@ class MambaDb:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = Path(db_path) if db_path else _DEFAULT_DB_PATH
         self._conn: sqlite3.Connection | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @property
     def path(self) -> Path:
@@ -332,13 +368,17 @@ class MambaDb:
                 self._conn = sqlite3.connect(
                     str(self._path),
                     check_same_thread=False,  # FastAPI 多线程共享
-                    isolation_level=None,  # autocommit；显式用 cursor.executescript 控事务
+                    isolation_level=None,  # 所有写入由显式事务控制
                 )
                 self._conn.row_factory = sqlite3.Row
-                # 启用 FK 与 WAL（更高并发读）
+                # 保留既有 journal mode，多个 MCP 进程不能并发切换模式。
                 self._conn.execute("PRAGMA foreign_keys = ON")
-                self._conn.execute("PRAGMA journal_mode = WAL")
-                self._init_schema(self._conn)
+                try:
+                    self._init_schema(self._conn)
+                except Exception:
+                    self._conn.close()
+                    self._conn = None
+                    raise
             return self._conn
 
     def close(self) -> None:
@@ -349,26 +389,43 @@ class MambaDb:
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
         """读 user_version，跑所有未执行的 migration。"""
-        current = conn.execute("PRAGMA user_version").fetchone()[0]
-        for idx, sql in enumerate(MIGRATIONS, start=1):
-            if idx <= current:
-                continue
-            conn.executescript(sql)
-            conn.execute(f"PRAGMA user_version = {idx}")
-
-    @contextmanager
-    def cursor(self) -> Iterator[sqlite3.Cursor]:
-        """便捷上下文管理器：拿 cursor，并在退出时 commit/rollback。"""
-        conn = self.connect()
-        cur = conn.cursor()
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            yield cur
+            current = conn.execute("PRAGMA user_version").fetchone()[0]
+            for idx, sql in enumerate(MIGRATIONS, start=1):
+                if idx <= current:
+                    continue
+                statement = ""
+                for line in sql.splitlines(keepends=True):
+                    statement += line
+                    if not sqlite3.complete_statement(statement):
+                        continue
+                    if statement.strip().upper() not in {"BEGIN IMMEDIATE;", "COMMIT;"}:
+                        conn.execute(statement)
+                    statement = ""
+                if statement.strip():
+                    raise ValueError(f"incomplete migration {idx}")
+                conn.execute(f"PRAGMA user_version = {idx}")
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-        finally:
-            cur.close()
+
+    @contextmanager
+    def cursor(self) -> Iterator[sqlite3.Cursor]:
+        """便捷上下文管理器：拿 cursor，并在退出时 commit/rollback。"""
+        with self._lock:
+            conn = self.connect()
+            cur = conn.cursor()
+            conn.execute("BEGIN")
+            try:
+                yield cur
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                cur.close()
 
 
 _DB_INSTANCE: MambaDb | None = None

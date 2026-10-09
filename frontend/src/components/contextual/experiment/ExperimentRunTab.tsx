@@ -1,114 +1,38 @@
 import React from 'react';
-import { Activity, X, Square } from 'lucide-react';
-import { sandboxCall } from '../../../api/mcp';
+import { Activity } from 'lucide-react';
+import { getExperimentSnapshot, type MetricSample, type RunStatus } from '../../../api/experiments';
 
-const POLL_INTERVAL_MS = 1500;
-const SERVER = 'mamba_experiment';
 const COLORS = ['#0284c7', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0d9488'];
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 export interface ExperimentRunTabProps {
-  /** experiment.* MCP run_id */
+  /** 已保存的科研实验记录 ID */
   runId: string;
   scriptPath?: string;
 }
 
-interface MetricSample {
-  step: number;
-  name: string;
-  value: number;
-  timestamp: number;
-}
-
-interface RunStatus {
-  run_id: string;
-  status: string;
-  exit_code: number | null;
-  pid: number | null;
-  script_path: string;
-  started_at: number;
-  ended_at: number | null;
-  elapsed_s: number;
-  log_lines: number;
-  metrics_count: number;
-  last_metric: MetricSample | null;
-}
-
-/**
- * Stage 4 Task 6 — 实验执行情境 tab。
- *
- * 数据通道复用 Stage 3 MCP sandbox 直调（不另开 REST 端点）。
- * 每 1.5s 轮询 ``experiment.status`` + ``experiment.logs(tail=200)`` +
- * ``experiment.metrics``。``status !== running`` 时自动停轮询。
- *
- * 视觉
- * ~~~~
- * - 顶 metric cards（按 metric.name 分组取最新值 + 计数）
- * - 中 SVG 多曲线（自实装，避免引入 recharts；多 metric 不同色）
- * - 底 log 流（``<pre>`` 滚动）
- * - 顶 action：停止（调 cancel）/ 关闭 tab（contextual store 自管）
- */
 export const ExperimentRunTab: React.FC<ExperimentRunTabProps> = ({ runId, scriptPath }) => {
   const [status, setStatus] = React.useState<RunStatus | null>(null);
   const [metrics, setMetrics] = React.useState<MetricSample[]>([]);
   const [logs, setLogs] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
-  const [cancelling, setCancelling] = React.useState(false);
-  const stopRef = React.useRef(false);
 
-  // 轮询循环
   React.useEffect(() => {
-    let cancelled = false;
-    stopRef.current = false;
-    async function poll() {
-      while (!cancelled) {
-        try {
-          const [s, l, m] = await Promise.all([
-            sandboxCall(SERVER, 'status', { run_id: runId }),
-            sandboxCall(SERVER, 'logs', { run_id: runId, tail: 200 }),
-            sandboxCall(SERVER, 'metrics', { run_id: runId }),
-          ]);
-          if (cancelled) return;
-          if (s.is_error) {
-            setError(s.error || '查询 status 失败');
-            return;
-          }
-          const sBody = (isPlainObject(s.output) ? s.output : {}) as Partial<RunStatus>;
-          const lBody = (isPlainObject(l.output) ? l.output : {}) as { lines?: string[] };
-          const mBody = (isPlainObject(m.output) ? m.output : {}) as { metrics?: MetricSample[] };
-          setStatus(sBody as RunStatus);
-          setLogs(lBody.lines ?? []);
-          setMetrics(mBody.metrics ?? []);
-          setError(null);
-          if (sBody.status && sBody.status !== 'running') {
-            return; // 退出轮询
-          }
-        } catch (err) {
-          if (!cancelled) setError(String((err as Error)?.message ?? err));
-        }
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    let disposed = false;
+    const load = async () => {
+      try {
+        const result = await getExperimentSnapshot(runId);
+        if (disposed) return;
+        setStatus(result.status);
+        setLogs(result.logs);
+        setMetrics(result.metrics);
+        setError(null);
+      } catch (reason) {
+        if (disposed) return;
+        setError(String(reason));
       }
-    }
-    poll();
-    return () => {
-      cancelled = true;
-      stopRef.current = true;
     };
-  }, [runId]);
-
-  const handleCancel = React.useCallback(async () => {
-    setCancelling(true);
-    try {
-      const resp = await sandboxCall(SERVER, 'cancel', { run_id: runId });
-      if (resp.is_error) setError(resp.error || 'cancel 失败');
-    } catch (err) {
-      setError(String((err as Error)?.message ?? err));
-    } finally {
-      setCancelling(false);
-    }
+    void load();
+    return () => { disposed = true; };
   }, [runId]);
 
   // 按 metric name 分组拿最新值（顶部 cards）
@@ -121,7 +45,6 @@ export const ExperimentRunTab: React.FC<ExperimentRunTabProps> = ({ runId, scrip
     return map;
   }, [metrics]);
 
-  const isRunning = status?.status === 'running';
   const filename = (scriptPath ?? status?.script_path ?? '').split(/[\\/]/).pop() ?? '';
 
   return (
@@ -147,18 +70,10 @@ export const ExperimentRunTab: React.FC<ExperimentRunTabProps> = ({ runId, scrip
                     : 'bg-sky-50 text-sky-700'
             }`}
           >
-            {status?.status ?? '加载中…'}
+            保存的状态：{status?.status ?? '加载中…'}
             {typeof status?.exit_code === 'number' ? ` · exit=${status.exit_code}` : ''}
           </span>
-          <button
-            type="button"
-            disabled={!isRunning || cancelling}
-            onClick={handleCancel}
-            className="flex items-center gap-1 rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
-            title="终止子进程组"
-          >
-            <Square size={12} /> 停止
-          </button>
+
         </div>
       </div>
 
@@ -170,7 +85,7 @@ export const ExperimentRunTab: React.FC<ExperimentRunTabProps> = ({ runId, scrip
 
       {/* metric cards */}
       <div className="flex flex-wrap gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <MetricCard label="elapsed" value={status ? `${status.elapsed_s.toFixed(1)} s` : '—'} />
+        <MetricCard label="elapsed" value={status?.elapsed_s != null ? `${status.elapsed_s.toFixed(1)} s` : '—'} />
         <MetricCard label="metrics" value={String(metrics.length)} />
         <MetricCard label="log lines" value={status ? String(status.log_lines) : '—'} />
         {Object.values(latestByName).map((m) => (

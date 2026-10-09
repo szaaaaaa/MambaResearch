@@ -5,6 +5,8 @@ description: 实验迭代 / sweep / 调优 pipeline。用户说"调优 X" / "跑
 
 # Experiment Iteration / Sweep
 
+执行前读取[主 skill 的角色编排约定](../../plugins/mambaresearch/skills/mambaresearch/SKILL.md#角色编排)，按该节使用 Codex 原生子代理工具与文件交接；这里只读取约定，不额外打开工作台。
+
 对一个已有 spec 做受限 hyperparameter sweep / 多 seed 重复 / 渐进式调优。
 
 ## 触发场景
@@ -31,21 +33,21 @@ spawn experimenter(mode="design_sweep", base_spec=<base_spec_path>, sweep_dim=<l
 
 **约束**：max_runs ≤ 10。超出让用户拆成多次 iteration（避免单次 pipeline 跑爆 quota）。
 
-### 2. experimenter (并行 / 串行执行) → `outputs/<run_id>/experiments/sweep_<NNN>/...`
+### 2. experimenter (并行 / 串行执行) → `outputs/<run_id>/experiments/exp_<NNN>/...`
 
 ```
 对 sweep_plan.md 中每行：
-  spawn experimenter(mode="execute", spec_path=<生成的 spec_NNN.md>)
+  spawn experimenter(mode="execute", spec_path=outputs/<run_id>/experiments/exp_<NNN>/spec.md)
 ```
 
-每行得到独立 `experiments/sweep_<NNN>/{spec.md, script.py, result.json}`。
+每行得到独立 `experiments/exp_<NNN>/{spec.md, script.py, result.json}`。从 baseline 生成本次 spec，保留原始 spec 和脚本。使用 Codex 原生命令执行工具，核对真实退出码、日志和指标后写入 result.json。
 
 **串行 / 并行选择**：experimenter 默认串行（单 GPU 假设）；用户明示"并行" + 多 GPU 可用时改并行。
 
 ### 3. analyzer (聚合) → `outputs/<run_id>/sweep_analysis.md`
 
 ```
-spawn analyzer(sweep_results=outputs/<run_id>/experiments/sweep_*/result.json, sweep_dim=<dim>)
+spawn analyzer(sweep_results=outputs/<run_id>/experiments/exp_*/result.json, sweep_dim=<dim>)
 ```
 
 期望产物：`sweep_analysis.md` 含：
@@ -68,14 +70,14 @@ reviewer 5 维评分聚焦于：
 ## Artifact 命名约定
 
 - `outputs/<run_id>/sweep_plan.md`
-- `outputs/<run_id>/experiments/sweep_<NNN>/{spec.md, script.py, result.json}` (per sweep cell)
+- `outputs/<run_id>/experiments/exp_<NNN>/{spec.md, script.py, result.json}` (per sweep cell)
 - `outputs/<run_id>/sweep_analysis.md`
 - `outputs/<run_id>/review.md`
 
 ## 失败 / 重启策略
 
 - 某个 sweep cell 崩 → 标 `failed` 继续跑剩余的；分析时排除该 cell
-- 全部 cell 都崩（超 50% 失败） → STOP pipeline 让用户介入 base spec
+- 失败数超过计划 cell 总数的一半 → STOP pipeline 让用户介入 base spec
 - compute budget 超 → 提前停 sweep，分析已完成的 cell
 
 ## 完成态

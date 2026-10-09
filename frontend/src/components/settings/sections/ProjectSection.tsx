@@ -1,32 +1,19 @@
 import React from 'react';
 import { Folder, FolderOpen, RefreshCw } from 'lucide-react';
-import { Button, Card, Input } from '../../ui';
+import { Button, Card } from '../../ui';
 import {
   ApiError,
   Project,
-  ProjectConfig,
   activateProject,
-  getProjectConfig,
   listProjects,
-  patchProjectConfig,
 } from '../../../api/projects';
 
-/**
- * 项目视图——列出已注册的项目，切换 active project，编辑 active 项目的 lazy config
- * （``<project>/.mambaresearch/config.json``）。
- *
- * 当前 schema 最小集：``{enabled_mcp_servers}``。
- * patch-merge 写入；如 config.json 不存在，PATCH 时才创建。
- */
 export const ProjectSection: React.FC<{
   onProjectActivated?: (project: Project) => void;
 }> = ({ onProjectActivated }) => {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
-  const [config, setConfig] = React.useState<ProjectConfig>({});
-  const [draftEnabledServers, setDraftEnabledServers] = React.useState<string>('');
   const [loading, setLoading] = React.useState<boolean>(true);
-  const [saving, setSaving] = React.useState<boolean>(false);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -34,17 +21,9 @@ export const ProjectSection: React.FC<{
     setLoading(true);
     setError(null);
     try {
-      const [{ projects: rows, active_project_id }, projectConfig] = await Promise.all([
-        listProjects(),
-        getProjectConfig(),
-      ]);
+      const { projects: rows, active_project_id } = await listProjects();
       setProjects(rows);
       setActiveProjectId(active_project_id);
-      setConfig(projectConfig);
-      const enabled = Array.isArray(projectConfig.enabled_mcp_servers)
-        ? projectConfig.enabled_mcp_servers.join(',')
-        : '';
-      setDraftEnabledServers(enabled);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : String(err));
     } finally {
@@ -70,37 +49,13 @@ export const ProjectSection: React.FC<{
     }
   };
 
-  const onSaveConfig = async () => {
-    setSaving(true);
-    setError(null);
-    setInfo(null);
-    try {
-      const enabledList = draftEnabledServers
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
-      const updates: Partial<ProjectConfig> = {};
-      updates.enabled_mcp_servers = enabledList;
-      const merged = await patchProjectConfig(updates);
-      setConfig(merged);
-      setDraftEnabledServers(
-        Array.isArray(merged.enabled_mcp_servers) ? merged.enabled_mcp_servers.join(',') : '',
-      );
-      setInfo('项目配置已保存');
-    } catch (err) {
-      setError(err instanceof ApiError ? err.detail : String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
 
   return (
     <div className="space-y-5">
       <Card
         title="项目列表"
-        description="切换 active project 后，本面板下方的项目级配置会跟随切换。"
+        description="选择本次科研任务所属的项目。"
       >
         <div className="flex items-center justify-between">
           <p className="text-sm text-slate-500">
@@ -150,26 +105,8 @@ export const ProjectSection: React.FC<{
         </div>
       </Card>
 
-      <Card
-        title="项目级配置"
-        description="存于当前 active project 的 .mambaresearch/config.json；首次保存才会创建文件。"
-      >
-        <Input
-          label="启用的 MCP servers"
-          description="逗号分隔的 server name 列表。空列表表示沿用全局所有 server。"
-          value={draftEnabledServers}
-          onChange={(event) => setDraftEnabledServers(event.target.value)}
-          placeholder="paper_search, mamba_history"
-          disabled={!activeProject || saving}
-        />
-        <div className="flex items-center justify-end gap-3">
-          {info ? <span className="text-xs text-emerald-600">{info}</span> : null}
-          {error ? <span className="text-xs text-rose-500">{String(error)}</span> : null}
-          <Button onClick={() => void onSaveConfig()} disabled={!activeProject || saving}>
-            {saving ? '保存中…' : '保存'}
-          </Button>
-        </div>
-      </Card>
+      {info ? <p className="text-xs text-emerald-600">{info}</p> : null}
+      {error ? <p role="alert" className="text-xs text-rose-500">{error}</p> : null}
     </div>
   );
 };

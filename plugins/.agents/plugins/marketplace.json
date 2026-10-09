@@ -1,0 +1,18 @@
+{
+  "name": "mambaresearch-local",
+  "interface": {"displayName": "MambaResearch 开发验收"},
+  "plugins": [
+    {
+      "name": "mambaresearch",
+      "source": {"source": "local", "path": "./mambaresearch"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Research"
+    },
+    {
+      "name": "mamba-host-probe",
+      "source": {"source": "local", "path": "./mamba-host-probe"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Developer Tools"
+    }
+  ]
+}

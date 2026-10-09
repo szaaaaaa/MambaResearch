@@ -62,10 +62,7 @@ frontend/dist/
 !.skills-shared/
 !.skills-shared/**
 
-# .claude-mount/ — runtime-generated 投递目录给 PTY claude 的 --add-dir。
-# 由 src/server/terminal/claude_mount.py 在 PTY spawn 时幂等创建：
-# .claude-mount/.claude/skills/<name> 是同卷 NTFS junction 指向 .skills-shared/<name>。
-# 物理结构每次 spawn 自重建，不入库。
+# 保留的历史本地运行目录可能包含用户数据，不纳入版本控制。
 .claude-mount/
 
 # Self-improvement — project-local Claude learnings, personal dev memory
@@ -78,3 +75,8 @@ frontend/dist/
 # directory registered as an active project. The 主仓库 itself is occasionally
 # used as a project (debugging / dev-mode), so ignore the dir at repo root too.
 .mambaresearch/
+
+# Generated standalone plugin resources; rebuilt from the unique source files.
+plugins/mambaresearch/app/
+plugins/mambaresearch/runtime/
+plugins/mambaresearch/skills/mambaresearch/references/

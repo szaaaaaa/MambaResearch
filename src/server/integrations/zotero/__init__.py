@@ -2,5 +2,5 @@
 
 凭据来源（解析顺序）：
 1. 进程 ``os.environ`` 中的 ``ZOTERO_USER_ID`` / ``ZOTERO_API_KEY``
-2. 仓库根 ``.env`` 文件中同名 key（与 ``CREDENTIAL_KEYS`` 现有机制对齐）
+2. 用户 ``~/.mambaresearch/.env`` 文件中同名 key
 """

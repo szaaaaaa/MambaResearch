@@ -1,1 +1,1 @@
-"""MCP registry, probes, sandbox execution, and call history."""
+"""Codex App transport for project-scoped research tools."""

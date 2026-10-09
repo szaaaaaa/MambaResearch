@@ -1,0 +1,50 @@
+{
+  "mcpServers": {
+    "mamba_workbench": {
+      "command": "cmd.exe",
+      "args": [
+        "/d", "/c", "runtime\\python.exe", "-u", "-m",
+        "src.server.workbench.mcp_server"
+      ],
+      "cwd": ".",
+      "env_vars": ["ZOTERO_USER_ID", "ZOTERO_API_KEY"]
+    },
+    "mamba_workspace": {
+      "command": "cmd.exe",
+      "args": [
+        "/d", "/c", "runtime\\python.exe", "-u", "-m",
+        "src.server.mcp.native_server",
+        "mamba_workspace"
+      ],
+      "cwd": "."
+    },
+    "mamba_zotero": {
+      "command": "cmd.exe",
+      "args": [
+        "/d", "/c", "runtime\\python.exe", "-u", "-m",
+        "src.server.mcp.native_server",
+        "mamba_zotero"
+      ],
+      "cwd": ".",
+      "env_vars": ["ZOTERO_USER_ID", "ZOTERO_API_KEY"]
+    },
+    "mamba_colab": {
+      "command": "cmd.exe",
+      "args": [
+        "/d", "/c", "runtime\\python.exe", "-u", "-m",
+        "src.server.mcp.native_server",
+        "mamba_colab"
+      ],
+      "cwd": "."
+    },
+    "mamba_history": {
+      "command": "cmd.exe",
+      "args": [
+        "/d", "/c", "runtime\\python.exe", "-u", "-m",
+        "src.server.mcp.native_server",
+        "mamba_history"
+      ],
+      "cwd": "."
+    }
+  }
+}

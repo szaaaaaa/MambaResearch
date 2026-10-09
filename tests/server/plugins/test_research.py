@@ -16,8 +16,6 @@ from src.server.plugins.research import builtin_research_plugins
     [
         ("research.workspace", "mamba_workspace", "research.workspace"),
         ("research.zotero", "mamba_zotero", "research.zotero"),
-        ("research.experiment", "mamba_experiment", None),
-        ("research.paper_search", "paper_search", None),
         ("research.colab", "mamba_colab", None),
         ("research.mamba_history", "mamba_history", None),
     ],

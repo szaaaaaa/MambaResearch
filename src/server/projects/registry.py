@@ -11,21 +11,6 @@
 文件不存在时 ``load`` 自动初始化空状态而不抛错；首次写入会在 ``mkdir`` 时
 创建 ``~/.mambaresearch/`` 目录。
 
-Env 注入
-~~~~~~~~
-``activate_project`` / ``delete_project`` 会同步更新进程级 env
-``MAMBA_ACTIVE_PROJECT_PATH``——这个 env 通过子进程继承传递给后续启动的
-MCP server 进程，让它们读到当前 active project 路径。
-
-Per-project 配置（D+E 重构 task 3）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``active_project_config()`` 读 ``<project>/.mambaresearch/config.json``，
-``write_active_project_config(updates)`` patch-merge 写。lazy 语义：
-
-- 文件不存在 → 读返回空 dict，**不主动创建**
-- 写时若文件不存在才创建；空 updates 不触发写
-- 切到没绑定 active project 时读返回空 dict（不抛）；写抛 ``ProjectError``
 """
 
 from __future__ import annotations
@@ -35,23 +20,31 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Collection
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from src.server.projects.models import Project, ProjectsState
 
 
-# 进程级 env 名——MCP server 子进程读它定位 active project
-ACTIVE_PROJECT_ENV_VAR = "MAMBA_ACTIVE_PROJECT_PATH"
+_REQUEST_PROJECT: ContextVar[str | None] = ContextVar("research_project", default=None)
+
+
+@contextmanager
+def request_project(project_id: str | None):
+    token = _REQUEST_PROJECT.set(project_id)
+    try:
+        yield
+    finally:
+        _REQUEST_PROJECT.reset(token)
+
 
 # 项目本地元数据目录与 per-project 配置文件名
 PROJECT_META_DIR = ".mambaresearch"
-PROJECT_CONFIG_FILE = "config.json"
+
 
 # Per-project config 允许的字段——schema 最小集（D+E task 3）。新增字段开新 plan
-ALLOWED_PROJECT_CONFIG_KEYS: frozenset[str] = frozenset({
-    "enabled_mcp_servers",
-})
+
 
 
 class ProjectError(Exception):
@@ -135,6 +128,9 @@ class ProjectRegistry:
 
     def get_active(self) -> Project | None:
         state = self.load()
+        project_id = _REQUEST_PROJECT.get()
+        if project_id is not None:
+            return self.get_project(project_id)
         if state.active_project_id is None:
             return None
         for project in state.projects:
@@ -150,9 +146,7 @@ class ProjectRegistry:
 
         **允许同路径重复注册**：同一物理目录可承载多条独立研究线（譬如
         G:\\ 上想跑两条不同主题的研究），各自的项目元数据 / conversations
-        / classification.db 在 mambaresearch 侧独立编号，不冲突。物理文件
-        自然共享。``ProjectAlreadyExistsError`` 类型保留作 API 兼容，但
-        本方法不再抛它。
+        按项目 ID 隔离；物理文件、classification.db 和目录内工具配置共享。
         """
         normalized_path = self._normalize_path(path)
         with self._lock:
@@ -171,7 +165,7 @@ class ProjectRegistry:
             return project
 
     def delete_project(self, project_id: str) -> None:
-        """从注册表删除项目；若是 active 则 active 清空 + env 清空。
+        """从注册表删除项目；若是 active 则 active 清空。
 
         **不删除物理目录** —— 仅从注册表移除。
         """
@@ -185,11 +179,9 @@ class ProjectRegistry:
             if cleared_active:
                 state.active_project_id = None
             self._save(state)
-            if cleared_active:
-                _apply_active_project_env(None)
 
     def activate_project(self, project_id: str) -> Project:
-        """将项目设为 active，刷新 last_active_at，更新进程 env。"""
+        """将项目设为 active，刷新 last_active_at。"""
         with self._lock:
             state = self.load()
             target: Project | None = None
@@ -202,7 +194,6 @@ class ProjectRegistry:
             target.last_active_at = int(time.time())
             state.active_project_id = project_id
             self._save(state)
-            _apply_active_project_env(target.path)
             return target
 
     # ---------- helpers ----------
@@ -239,141 +230,6 @@ class ProjectRegistry:
             )
 
 
-def _apply_active_project_env(path: str | None) -> None:
-    """更新进程级 ``MAMBA_ACTIVE_PROJECT_PATH``。``None`` → 删除该 env。
-
-    MCP server 子进程从父进程继承 env，所以这一步会在后续启动的子进程里生效。
-    已运行的子进程感知不到——这是预期行为：active project 切换时通常也要重启
-    会话才生效。
-    """
-    if path is None or not str(path).strip():
-        os.environ.pop(ACTIVE_PROJECT_ENV_VAR, None)
-        return
-
-    os.environ[ACTIVE_PROJECT_ENV_VAR] = str(path)
-
-
-def sync_active_project_env() -> None:
-    """启动钩子：从当前注册表读 active 并把 env 同步好。"""
-    project = get_registry().get_active()
-    _apply_active_project_env(project.path if project else None)
-
-
-# ---------------------------------------------------------------------------
-# Per-project config 层（D+E 重构 task 3，lazy 写入）
-# ---------------------------------------------------------------------------
-
-
-def _project_config_path(project_path: str | Path) -> Path:
-    return Path(project_path) / PROJECT_META_DIR / PROJECT_CONFIG_FILE
-
-
-def project_config(project_path: str | Path) -> dict:
-    """读指定项目的 ``.mambaresearch/config.json``。"""
-    config_path = _project_config_path(project_path)
-    if not config_path.exists():
-        return {}
-    try:
-        with config_path.open("r", encoding="utf-8") as fp:
-            payload = json.load(fp)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ProjectError(f"invalid project config {config_path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ProjectError(f"project config {config_path} must be a JSON object")
-    return {k: v for k, v in payload.items() if k in ALLOWED_PROJECT_CONFIG_KEYS}
-
-
-def active_project_config() -> dict:
-    """读 active project 的 ``.mambaresearch/config.json``。
-
-    无 active project / 文件不存在 / JSON 损坏 → 返回空 dict。**不创建文件**——
-    settings UI GET 端点应永远只返回这个函数的输出而不触发文件写。
-    """
-    project = get_registry().get_active()
-    if project is None:
-        return {}
-    try:
-        return project_config(project.path)
-    except ProjectError:
-        return {}
-
-
-def validate_enabled_mcp_servers(
-    value: object,
-    available_server_ids: Collection[str],
-) -> None:
-    """校验项目配置只能选择当前 profile 启用的 MCP server。"""
-    if not isinstance(value, list):
-        raise ValueError("enabled_mcp_servers must be a list")
-    seen: set[str] = set()
-    available = set(available_server_ids)
-    for server_id in value:
-        if not isinstance(server_id, str) or not server_id.strip():
-            raise ValueError("enabled_mcp_servers entries must be non-empty strings")
-        if server_id in seen:
-            raise ValueError(f"enabled_mcp_servers contains duplicate ID: {server_id}")
-        if server_id not in available:
-            raise ValueError(f"enabled_mcp_servers references unavailable ID: {server_id}")
-        seen.add(server_id)
-
-
-def write_active_project_config(
-    updates: dict,
-    *,
-    available_mcp_server_ids: Collection[str],
-) -> dict:
-    """patch-merge 写 active project config，返回写入后的完整字典。
-
-    Parameters
-    ----------
-    updates : dict
-        要写入的字段子集。键必须在 ``ALLOWED_PROJECT_CONFIG_KEYS`` 内，
-        不在的字段抛 ``ValueError``——避免 settings UI 误传扩展字段（schema
-        扩展走新 plan 流程）。
-
-    Returns
-    -------
-    dict
-        merge 后写入文件的完整 config（仅含 allowlist 字段）。
-
-    Raises
-    ------
-    ProjectError
-        无 active project（无处可写）。
-    ValueError
-        ``updates`` 含未授权字段。
-    """
-    if not isinstance(updates, dict):
-        raise ValueError("updates must be a dict")
-    unknown = set(updates.keys()) - ALLOWED_PROJECT_CONFIG_KEYS
-    if unknown:
-        raise ValueError(
-            f"unknown per-project config keys: {sorted(unknown)}; "
-            f"allowed: {sorted(ALLOWED_PROJECT_CONFIG_KEYS)}"
-        )
-
-    project = get_registry().get_active()
-    if project is None:
-        raise ProjectError("no active project — cannot write per-project config")
-
-    existing = project_config(project.path)
-    merged = {**existing, **updates}
-    if "enabled_mcp_servers" in merged:
-        validate_enabled_mcp_servers(
-            merged["enabled_mcp_servers"],
-            available_mcp_server_ids,
-        )
-    config_path = _project_config_path(project.path)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = config_path.with_suffix(config_path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(merged, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    os.replace(tmp, config_path)
-    return merged
-
-
 _REGISTRY_INSTANCE: ProjectRegistry | None = None
 
 
@@ -389,6 +245,3 @@ def set_registry_for_tests(registry: ProjectRegistry | None) -> None:
     """测试 helper：注入或重置注册表单例。生产代码不应调用。"""
     global _REGISTRY_INSTANCE
     _REGISTRY_INSTANCE = registry
-    # 测试切换注册表时同步 env，避免测试间状态泄漏
-    if registry is None:
-        _apply_active_project_env(None)

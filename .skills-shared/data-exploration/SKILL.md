@@ -5,6 +5,8 @@ description: 数据集初探 pipeline。用户说"看看这份数据" / "describ
 
 # Data Exploration
 
+执行前读取[主 skill 的角色编排约定](../../plugins/mambaresearch/skills/mambaresearch/SKILL.md#角色编排)，按该节使用 Codex 原生子代理工具与文件交接；这里只读取约定，不额外打开工作台。
+
 对一份新数据集（CSV / Parquet / NPZ / JSONL / 图片目录 / 文本语料）做结构化初探，让用户在投入时间建模前知道"这份数据是什么"。
 
 ## 触发场景
@@ -21,7 +23,7 @@ description: 数据集初探 pipeline。用户说"看看这份数据" / "describ
 
 ## 步骤
 
-### 1. conductor → `outputs/<run_id>/explore_plan.md`（可选）
+### 1. conductor → `outputs/<run_id>/plan.md`（可选）
 
 如果用户提供多份数据 / 探索目标含糊：
 
@@ -29,17 +31,17 @@ description: 数据集初探 pipeline。用户说"看看这份数据" / "describ
 spawn conductor(data_paths=[...], user_question=<可选>, mode="data_plan")
 ```
 
-期望产物：`explore_plan.md` 含每份数据要回答的问题清单。
+期望产物：`plan.md` 含每份数据要回答的问题清单。
 
 单份数据 + 目标清晰时跳过本步。
 
-### 2. analyzer (探索) → `outputs/<run_id>/data_summary.md`
+### 2. analyzer (探索与 pattern) → `outputs/<run_id>/analysis.md`
 
 ```
 spawn analyzer(data_path=<path>, mode="data_exploration")
 ```
 
-analyzer 内部用 Bash + Python 跑探索代码（不依赖 experiment.* MCP，因为只是 read 操作）：
+analyzer 内部用 Codex 原生命令工具 + Python 跑探索代码，原始数据只读：
 
 - **Schema**：
   - CSV / Parquet → 列名 + dtype + null 比例
@@ -51,23 +53,15 @@ analyzer 内部用 Bash + Python 跑探索代码（不依赖 experiment.* MCP，
 - **数据质量**：缺失 / 重复 / 异常值 / 编码问题 / 标签不平衡
 - **采样**：前 N 行 / 前 N 个 sample 实例
 
-期望产物：`data_summary.md` 含上述五段 + 内嵌代码块展示关键查询命令。
-
-### 3. analyzer (pattern) → `outputs/<run_id>/patterns.md`
-
-```
-spawn analyzer(data_summary=outputs/<run_id>/data_summary.md, mode="pattern_hunt")
-```
-
-期望产物：`patterns.md` 含：
+同一 analyzer 将统计、数据质量、关键查询命令和以下 pattern 分析写入 `analysis.md`：
 - **Suspicious patterns**：可疑相关性 / 数据泄漏 hint / label-feature 直连可疑
 - **Distribution shifts**：train/test 切分若有，对比；时间序列若有，看分布漂移
 - **Sample bias**：地理 / 时间 / 用户子群覆盖偏差
 
-### 4. writer → `outputs/<run_id>/report.md`
+### 3. writer → `outputs/<run_id>/report.md`
 
 ```
-spawn writer(data_summary=outputs/<run_id>/data_summary.md, patterns=outputs/<run_id>/patterns.md, format="markdown")
+spawn writer(analysis_md=outputs/<run_id>/analysis.md, format="markdown")
 ```
 
 期望产物：`report.md` 是一段连贯叙述，含：
@@ -78,9 +72,8 @@ spawn writer(data_summary=outputs/<run_id>/data_summary.md, patterns=outputs/<ru
 
 ## Artifact 命名约定
 
-- `outputs/<run_id>/explore_plan.md`（可选）
-- `outputs/<run_id>/data_summary.md`
-- `outputs/<run_id>/patterns.md`
+- `outputs/<run_id>/plan.md`（可选）
+- `outputs/<run_id>/analysis.md`
 - `outputs/<run_id>/report.md`
 
 ## 失败 / 重启策略
@@ -91,7 +84,7 @@ spawn writer(data_summary=outputs/<run_id>/data_summary.md, patterns=outputs/<ru
 
 ## 完成态
 
-`data_summary.md` + `report.md` 存在；patterns.md 与 explore_plan.md 视情况。
+核对 `analysis.md` 的实际统计、采样范围及证据，`report.md` 与分析一致；`plan.md` 按任务需要生成。
 
 最终用户回复：
 ```
@@ -99,7 +92,7 @@ spawn writer(data_summary=outputs/<run_id>/data_summary.md, patterns=outputs/<ru
 
 - 数据：<path> (<size>)
 - Schema：N 列 / N 维 / N 类
-- 关键发现：<一句话 from patterns.md>
+- 关键发现：<一句话 from analysis.md>
 - 建议下一步：<from report.md>
 ```
 

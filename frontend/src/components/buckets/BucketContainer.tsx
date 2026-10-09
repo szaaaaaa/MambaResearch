@@ -20,7 +20,7 @@ import {
   ConversationSummary,
   listConversations,
 } from '../../api/conversations';
-import { useContextualTabs } from '../../store/contextual';
+import { useContextualTabs } from '../../runtime/appRuntime';
 import { FileItemRow } from './FileItemRow';
 import { BucketEmptyState, BucketEmptyTier } from './BucketEmptyState';
 
@@ -144,7 +144,7 @@ export const BucketContainer: React.FC<Props> = ({
     refresh();
   }, [refresh]);
 
-  // classify-workspace 跑在 Claude PTY 子进程里直写 classification.db，FastAPI
+  // classify-workspace 经科研 MCP 写 classification.db，FastAPI
   // 不知情。本地单用户场景 5s 轮询胜过 push 协议（push 引入的重连/丢事件/MCP↔
   // FastAPI 鉴权复杂度在 localhost 拿不到对应收益）。仅在 unknown > 0 + tab
   // 可见时跑；分类清零或 tab 切走立停。
@@ -270,7 +270,7 @@ export const BucketContainer: React.FC<Props> = ({
   }
 
   // 单击素材卡：替换当前 active asset tab；Cmd/Ctrl/中键：新 tab 打开
-  // props 含 activeProject —— AssetWorkspace → WorkbenchTab 必备（PTY cwd / project_id）
+  // props 含 activeProject —— AssetWorkspace → WorkbenchTab 必备（研究记录 / project_id）
   const openAssetTab = (
     conv: ConversationSummary,
     mode: 'replace' | 'new',
@@ -349,8 +349,7 @@ export const BucketContainer: React.FC<Props> = ({
         >
           {assets.map((conv) => {
             const cardTitle = conv.asset_label || conv.title || conv.id.slice(0, 8);
-            const backendDot =
-              conv.backend === 'codex' ? 'var(--role-writer-fg)' : 'var(--ok-dot)';
+            const backendLabel = conv.backend;
             return (
               <button
                 key={conv.id}
@@ -423,10 +422,10 @@ export const BucketContainer: React.FC<Props> = ({
                       width: 6,
                       height: 6,
                       borderRadius: 999,
-                      background: backendDot,
+                      background: 'var(--fg-3)',
                     }}
                   />
-                  <span>{conv.backend === 'codex' ? 'Codex' : 'Claude'}</span>
+                  <span>{backendLabel}</span>
                   <span>·</span>
                   <span>{formatRelative(conv.last_active_at)}</span>
                 </div>
@@ -507,7 +506,7 @@ export const BucketContainer: React.FC<Props> = ({
               <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>
                 {stats.total === 0
                   ? '未扫描'
-                  : `已分类 ${stats.total - (stats.by_bucket?.unknown ?? 0)} / 待分类 ${
+                  : `科研文件 ${stats.total - (stats.by_bucket?.unknown ?? 0)} / 未归入科研栏目 ${
                       stats.by_bucket?.unknown ?? 0
                     }`}
               </span>

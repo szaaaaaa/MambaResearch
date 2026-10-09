@@ -6,11 +6,10 @@ schema 没声明 ``ON DELETE CASCADE``（v1 写时 SQLite 还允许无 FK 表关
 所以删 project 时孤儿数据不会自动清。本模块给一个**显式**清理入口，按
 依赖顺序删表，单事务保证原子性：
 
-    messages → mcp_calls → conversation_segments → conversations → experiment_runs
+    messages → mcp_calls → conversation_session_archive → conversations → experiment_runs
 
 物理目录 + workspace ``.mambaresearch/`` 不动 —— 仍按 plan 决定保留。
-backend 自己的 JSONL（``~/.claude/projects/...`` / ``~/.codex/sessions/...``）
-也不动。
+Codex App 原生聊天由 App 管理，此清理只处理工作台元数据。
 """
 
 from __future__ import annotations
@@ -25,18 +24,20 @@ class CleanupSummary:
     """清理执行统计——返给 caller / API 客户端做透明度展示。"""
 
     conversations: int
-    conversation_segments: int
+    conversation_session_archive: int
     messages: int
     mcp_calls: int
     experiment_runs: int
+    workbench_tasks: int
 
     def to_dict(self) -> dict[str, int]:
         return {
             "conversations": self.conversations,
-            "conversation_segments": self.conversation_segments,
+            "conversation_session_archive": self.conversation_session_archive,
             "messages": self.messages,
             "mcp_calls": self.mcp_calls,
             "experiment_runs": self.experiment_runs,
+            "workbench_tasks": self.workbench_tasks,
         }
 
 
@@ -64,7 +65,7 @@ def cleanup_project_data(project_id: str) -> CleanupSummary:
         if conv_ids:
             placeholders = ",".join("?" for _ in conv_ids)
 
-            # 2. messages —— v3.3 mirror，删了不影响 backend JSONL
+            # 2. 保存的研究记录和旧历史
             cur.execute(
                 f"DELETE FROM messages WHERE conversation_id IN ({placeholders})",
                 conv_ids,
@@ -78,12 +79,17 @@ def cleanup_project_data(project_id: str) -> CleanupSummary:
             )
             mcp_deleted = cur.rowcount or 0
 
-            # 4. conversation_segments —— backend ↔ conversation 关联
+            # 4. conversation_session_archive —— backend ↔ conversation 关联
             cur.execute(
-                f"DELETE FROM conversation_segments WHERE conversation_id IN ({placeholders})",
+                f"DELETE FROM conversation_session_archive WHERE conversation_id IN ({placeholders})",
                 conv_ids,
             )
             segs_deleted = cur.rowcount or 0
+
+        cur.execute("DELETE FROM mcp_calls WHERE project_id = ?", (project_id,))
+        mcp_deleted += cur.rowcount or 0
+        cur.execute("DELETE FROM workbench_tasks WHERE project_id = ?", (project_id,))
+        tasks_deleted = cur.rowcount or 0
 
         # 5. conversations 本身
         cur.execute("DELETE FROM conversations WHERE project_id = ?", (project_id,))
@@ -97,8 +103,9 @@ def cleanup_project_data(project_id: str) -> CleanupSummary:
 
     return CleanupSummary(
         conversations=convs_deleted,
-        conversation_segments=segs_deleted,
+        conversation_session_archive=segs_deleted,
         messages=msgs_deleted,
         mcp_calls=mcp_deleted,
         experiment_runs=runs_deleted,
+        workbench_tasks=tasks_deleted,
     )

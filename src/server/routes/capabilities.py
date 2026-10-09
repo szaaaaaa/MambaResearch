@@ -13,15 +13,7 @@ def get_capabilities(request: Request) -> dict:
     kernel = request.app.state.kernel
     snapshot = kernel.snapshot()
     return {
-        "api_version": snapshot.api_version,
+        "api_version": 2,
         "enabled_plugins": list(snapshot.enabled_plugins),
-        "backends": [
-            {
-                "id": backend.descriptor.id,
-                "label": backend.descriptor.label,
-                "supports_resume": backend.descriptor.supports_resume,
-                "supports_provider_selection": backend.descriptor.supports_provider_selection,
-            }
-            for backend in kernel.context.capabilities.backends.list()
-        ],
+        "execution_host": "codex_app",
     }

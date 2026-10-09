@@ -47,9 +47,7 @@ export const AssetDrawer: React.FC<Props> = ({ conversation }) => {
   const kindLabel = kind ? KIND_LABELS[kind] : '草稿';
   const title =
     conversation.asset_label || conversation.title || conversation.id.slice(0, 8);
-  const backendDot =
-    conversation.backend === 'codex' ? 'var(--role-writer-fg)' : 'var(--ok-dot)';
-  const backendLabel = conversation.backend === 'codex' ? 'Codex' : 'Claude';
+  const backendLabel = conversation.backend;
 
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -136,7 +134,7 @@ export const AssetDrawer: React.FC<Props> = ({ conversation }) => {
                     width: 6,
                     height: 6,
                     borderRadius: 999,
-                    background: backendDot,
+                    background: 'var(--fg-3)',
                   }}
                 />
                 {backendLabel}

@@ -1,11 +1,10 @@
 import React from 'react';
-import { X, FileText, Activity, Brain, Layers } from 'lucide-react';
-import { useContextualTabs, ContextualTabType } from '../../store/contextual';
+import { X, FileText, Activity, Layers } from 'lucide-react';
+import { useContextualTabs, type ContextualTabType } from '../../runtime/appRuntime';
 
 const TYPE_ICONS: Record<ContextualTabType, React.ComponentType<{ size?: number }>> = {
   literature: FileText,
   experiment_run: Activity,
-  thinking: Brain,
   asset: Layers,
 };
 

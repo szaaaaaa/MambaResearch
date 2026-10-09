@@ -1,13 +1,23 @@
 {
   "profile": "default",
   "plugins": [
-    {"id": "core.http"},
-    {"id": "backend.codex"},
-    {"id": "research.workspace"},
-    {"id": "research.zotero"},
-    {"id": "research.experiment"},
-    {"id": "research.paper_search"},
-    {"id": "research.colab"},
-    {"id": "research.mamba_history"}
+    {
+      "id": "core.http"
+    },
+    {
+      "id": "core.workbench"
+    },
+    {
+      "id": "research.workspace"
+    },
+    {
+      "id": "research.zotero"
+    },
+    {
+      "id": "research.colab"
+    },
+    {
+      "id": "research.mamba_history"
+    }
   ]
 }

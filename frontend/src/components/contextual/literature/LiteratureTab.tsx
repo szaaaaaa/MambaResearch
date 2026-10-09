@@ -1,12 +1,12 @@
+import { apiFetch } from '../../../api/workbench';
 import React from 'react';
 import { Send, FlaskConical, FileText as FileIcon } from 'lucide-react';
-import { API_BASE } from '../../../store';
-import { useContextualTabs } from '../../../store/contextual';
+import { useContextualTabs } from '../../../runtime/appRuntime';
+import { PdfPreview } from './PdfPreview';
 
 const SUMMARY_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
 export interface LiteratureTabProps {
-  /** 本地 PDF 绝对路径（已确认在 classification.db 里） */
   path: string;
 }
 
@@ -20,40 +20,23 @@ interface SummaryData {
   mtime: number;
 }
 
-/**
- * Stage 4 Task 5 — 文献阅读情境 tab。
- *
- * 布局
- * ~~~~
- * - 顶部：文件名 + 3 个 action 按钮（推送 Zotero / 提取实验设计 / 写综述段落）
- *   action 按钮在 Task 5 阶段是 disabled 占位——Task 8 file action bar
- *   实装统一的"prompt → workbench composer"注入机制后再启用
- * - 主区：左 PDF（``<embed type="application/pdf">``，浏览器原生 viewer，
- *   不引入 pdfjs-dist 避免 bundle 膨胀）；右 上 = LLM 摘要 + tags，
- *   右 下 = 标注 textarea，blur 时 PUT 到后端
- * - 数据：
- *   - GET /api/literature/summary?path=...  → 摘要 + 元信息
- *   - GET /api/literature/annotation?path=  → 标注 markdown
- *   - PUT /api/literature/annotation?path=  → 保存
- *   - 引用 /api/literature/file?path=       → ``<embed src=...>`` 直接拉
- */
+/** PDF 页图、摘要和项目标注；动作投递到 Codex App。 */
 export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
   const [summary, setSummary] = React.useState<SummaryData | null>(null);
   const [annotation, setAnnotation] = React.useState<string>('');
   const [savedAnnotation, setSavedAnnotation] = React.useState<string>('');
   const [error, setError] = React.useState<string | null>(null);
   const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const { injectComposerPrompt } = useContextualTabs();
-  const fileUrl = `${API_BASE}/api/literature/file?path=${encodeURIComponent(path)}`;
+  const { openWorkbench } = useContextualTabs();
 
   React.useEffect(() => {
     let cancelled = false;
     setError(null);
     Promise.all([
-      fetch(`${API_BASE}/api/literature/summary?path=${encodeURIComponent(path)}`).then((r) =>
+      apiFetch(`/api/literature/summary?path=${encodeURIComponent(path)}`).then((r) =>
         r.ok ? r.json() : Promise.reject(new Error(`summary HTTP ${r.status}`)),
       ),
-      fetch(`${API_BASE}/api/literature/annotation?path=${encodeURIComponent(path)}`).then((r) =>
+      apiFetch(`/api/literature/annotation?path=${encodeURIComponent(path)}`).then((r) =>
         r.ok ? r.text() : Promise.reject(new Error(`annotation HTTP ${r.status}`)),
       ),
     ])
@@ -75,7 +58,7 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
     if (annotation === savedAnnotation) return;
     setSaveState('saving');
     try {
-      const resp = await fetch(`${API_BASE}/api/literature/annotation?path=${encodeURIComponent(path)}`, {
+      const resp = await apiFetch(`/api/literature/annotation?path=${encodeURIComponent(path)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
         body: annotation,
@@ -106,11 +89,11 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
           <button
             type="button"
             onClick={() =>
-              injectComposerPrompt(
+              openWorkbench(
                 `把 ${path} 推到 Zotero（用 mcp__mamba_zotero__upload_pdf，title 用文件名）。`,
               )
             }
-            title="发 prompt 到工作台让 Claude 调 zotero.upload_pdf"
+            title="发 prompt 到工作台让 Codex 调 zotero.upload_pdf"
             className="flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
           >
             <Send size={12} /> 推送到 Zotero
@@ -118,7 +101,7 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
           <button
             type="button"
             onClick={() =>
-              injectComposerPrompt(
+              openWorkbench(
                 `读这篇论文 ${path}，按 (背景 / 实验设计 / 数据集 / 评测 / 主要结论) 五段提取实验设计。`,
               )
             }
@@ -129,7 +112,7 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
           <button
             type="button"
             onClick={() =>
-              injectComposerPrompt(`基于 ${path}，写一段 200-400 字的综述段落，引用关键结论。`)
+              openWorkbench(`基于 ${path}，写一段 200-400 字的综述段落，引用关键结论。`)
             }
             className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
           >
@@ -147,9 +130,9 @@ export const LiteratureTab: React.FC<LiteratureTabProps> = ({ path }) => {
 
       {/* 主区域 */}
       <div className="flex min-h-0 flex-1">
-        {/* 左：PDF embed */}
+        {/* 左：PDF 页图 */}
         <div className="flex-1 border-r border-slate-200 bg-slate-100">
-          <embed src={fileUrl} type="application/pdf" className="h-full w-full" />
+          <PdfPreview key={path} path={path} />
         </div>
 
         {/* 右：摘要 + 标注 */}

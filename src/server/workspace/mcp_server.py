@@ -6,15 +6,12 @@
 
 设计要点
 ~~~~~~~~
-* **standalone**：只依赖 ``classification.py`` + ``scanner.py``——不引 dynamic_os
-  也不依赖任何后端 web 进程，可被 Claude Code SDK 与 Codex CLI 任一启动
-* **per-request 读 active project**：每次 ``tools/call`` 都重新读
-  ``MAMBA_ACTIVE_PROJECT_PATH`` env var——这样用户在同一个 shell 里激活了
-  不同 project 后，长生命 MCP 子进程会自动跟上；env 缺失就返 clean error，
-  让前端能区分"环境问题"vs"工具失败"
+* **standalone**：只依赖 ``classification.py`` + ``scanner.py``
+  也不依赖任何后端 web 进程，由科研 MCP transport 调用
+* **显式项目上下文**：每次 ``tools/call`` 必须传入绝对目录 ``project_path``。
+  同一个长生命 MCP 进程可交错访问不同项目，不依赖父进程启动时继承的 active-project 环境。
 * **NDJSON 协议**：每条消息一行 JSON、``\n`` 结尾，与 Claude Code SDK /
-  Codex CLI 的 stdio MCP transport 一致；不要用 LSP 的 Content-Length 帧
-  （那是 dynamic_os 内部 tool backend 协议）
+  标准 stdio MCP transport 一致；不要用 LSP 的 Content-Length 帧
 
 工具暴露
 ~~~~~~~~
@@ -30,7 +27,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -48,9 +44,8 @@ from src.server.workspace.classification import (  # noqa: E402
 from src.server.workspace.scanner import scan_source_dir  # noqa: E402
 
 
-ACTIVE_PROJECT_ENV_VAR = "MAMBA_ACTIVE_PROJECT_PATH"
 SERVER_NAME = "mamba-workspace"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "2.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +87,7 @@ def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
 def _tool_text_result(structured: Any) -> dict[str, Any]:
     """统一打包：``structuredContent`` + 文本镜像。
 
-    Claude Code SDK 与 Codex CLI 都接受 ``content: [{type: text}]`` 形式；
+    MCP client 接受 ``content: [{type: text}]`` 形式；
     ``structuredContent`` 给客户端可解析对象（Claude SDK 会自动反序列化）。
     """
     text = json.dumps(structured, ensure_ascii=False)
@@ -117,31 +112,20 @@ def _tool_error_result(message: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Active project 解析
+# 请求项目解析
 # ---------------------------------------------------------------------------
 
 
-def _resolve_active_project() -> tuple[Path | None, str | None]:
-    """读取并校验 ``MAMBA_ACTIVE_PROJECT_PATH``。
-
-    Returns
-    -------
-    (path, error_message)
-        ``path`` 解析成功；否则 ``error_message`` 是面向 LLM 的清晰提示。
-    """
-    raw = os.environ.get(ACTIVE_PROJECT_ENV_VAR, "").strip()
-    if not raw:
-        return None, (
-            f"{ACTIVE_PROJECT_ENV_VAR} 未设置——无法定位 active project。"
-            "请先在 MambaResearch 选/建一个 project。"
-        )
-    path = Path(raw)
+def _resolve_project(arguments: dict[str, Any]) -> tuple[Path | None, str | None]:
+    raw = arguments.get("project_path")
+    if not isinstance(raw, str) or not raw.strip():
+        return None, "project_path 必填，须为本次任务所属项目的绝对目录"
+    path = Path(raw.strip())
+    if not path.is_absolute():
+        return None, "project_path 必须是绝对目录"
     if not path.is_dir():
-        return None, (
-            f"{ACTIVE_PROJECT_ENV_VAR}={raw} 指向的目录不存在或不是目录。"
-            "请重新激活 project 或检查路径。"
-        )
-    return path, None
+        return None, "project_path 指向的目录不存在或不是目录"
+    return path.resolve(), None
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +136,11 @@ def _resolve_active_project() -> tuple[Path | None, str | None]:
 def _tool_descriptors() -> list[dict[str, Any]]:
     """返回 tools/list 给客户端看的工具元信息。"""
     bucket_enum = sorted(PRIMARY_BUCKETS)
-    return [
+    tools = [
         {
             "name": "scan",
             "description": (
-                "扫描 active project 的 source_dirs（或指定 source_dir），"
+                "扫描 project_path 项目的 source_dirs（或指定 source_dir），"
                 "把发现的新/改动文件入库为 primary_bucket=unknown。"
                 "不读文件全文、不分类——分类需要后续调 classify_one。"
             ),
@@ -277,6 +261,14 @@ def _tool_descriptors() -> list[dict[str, Any]]:
             },
         },
     ]
+    for tool in tools:
+        schema = tool["inputSchema"]
+        schema["properties"]["project_path"] = {
+            "type": "string", "minLength": 1,
+            "description": "本次任务所属项目的绝对目录；每次调用显式传入，不使用全局 active project",
+        }
+        schema.setdefault("required", []).append("project_path")
+    return tools
 
 
 # ---------------------------------------------------------------------------
@@ -503,9 +495,9 @@ def _handle_tools_call(msg_id: Any, params: dict[str, Any]) -> dict[str, Any]:
             _tool_error_result(f"未知工具：{name}（可用：{sorted(_TOOL_DISPATCH)}）"),
         )
 
-    project_path, err = _resolve_active_project()
+    project_path, err = _resolve_project(arguments)
     if project_path is None:
-        return _result(msg_id, _tool_error_result(err or "active project 解析失败"))
+        return _result(msg_id, _tool_error_result(err or "project_path 解析失败"))
 
     try:
         result = handler(arguments, project_path)

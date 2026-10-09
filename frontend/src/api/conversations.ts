@@ -1,13 +1,10 @@
+import { apiFetch } from './workbench';
 /**
  * Conversation messages API client.
  *
- * v3.3 multi-conversation: messages 表是 read-only mirror（真相源在 backend
- * 自己的 JSONL）。本客户端仅用于：
- * 1. 浏览器刷新时 hydrate UI 历史
- * 2. （未来）跨 conversation 引用走 mamba_history MCP tool；前端不直接读
+ * 保存的研究记录与历史消息；不镜像 Codex App transcript。
  */
 
-import { API_BASE } from '../store';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
@@ -30,8 +27,8 @@ export interface ConversationMessage {
 export async function getConversationMessages(
   conversationId: string,
 ): Promise<ConversationMessage[]> {
-  const resp = await fetch(
-    `${API_BASE}/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+  const resp = await apiFetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
   );
   if (resp.status === 404) return [];
   if (!resp.ok) {
@@ -78,7 +75,7 @@ export async function listConversations(
   } else if (assetKind !== undefined) {
     params.set('asset_kind', assetKind);
   }
-  const resp = await fetch(`${API_BASE}/api/conversations?${params.toString()}`);
+  const resp = await apiFetch(`/api/conversations?${params.toString()}`);
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
     throw new Error(text || `HTTP ${resp.status}`);
@@ -93,8 +90,8 @@ export async function promoteToAsset(
   assetKind: AssetKind,
   assetLabel: string,
 ): Promise<ConversationSummary> {
-  const resp = await fetch(
-    `${API_BASE}/api/conversations/${encodeURIComponent(conversationId)}/promote-to-asset`,
+  const resp = await apiFetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/promote-to-asset`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -124,21 +121,16 @@ export type RunKind =
   | 'data_exploration'
   | 'unknown';
 
-export type RunStatus = 'completed' | 'running' | 'unknown';
-
 export interface RunRecord {
   run_id: string;
   kind: RunKind;
   title: string;
-  status: RunStatus;
   started_at: number | null;
-  finished_at: number | null;
   artifacts: string[];
-  source_asset: { kind: AssetKind; label: string } | null;
 }
 
 export async function listHistoryRuns(): Promise<RunRecord[]> {
-  const resp = await fetch(`${API_BASE}/api/history/runs`);
+  const resp = await apiFetch(`/api/history/runs`);
   if (resp.status === 409) return [];
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');

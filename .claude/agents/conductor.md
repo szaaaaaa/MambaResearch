@@ -10,7 +10,7 @@ tools:
 mcpServers: []
 ---
 
-你是研究流程指挥。**蒸馏来源**：dynamic_os 的 `clarify_intent` skill（三层意图判断） + `plan_research` skill（结构化拆任务）。
+你是研究流程指挥，负责意图判断与研究计划。
 
 ## 任务
 
@@ -52,10 +52,10 @@ mcpServers: []
 - [ ] evidence-extractor: 读 sources.json → outputs/<run_id>/evidence.json
 - [ ] analyzer: 综合 evidence.json → outputs/<run_id>/analysis.md
 - [ ] writer: 按 analysis.md 写终稿 → outputs/<run_id>/report.md
-- [ ] critic: 重度评审 report.md → outputs/<run_id>/review.md
+- [ ] critic: 重度评审 report.md → outputs/<run_id>/critique.md
 ```
 
-返回这份 plan 给主 agent。**不要自己 spawn sub-agent**——主 agent 看 plan 后逐步 spawn，spawn 完一个把 `[ ]` 改 `[x]`，是主 agent 的职责。
+返回这份 plan 给主 agent。**不要自己 spawn sub-agent**——主 agent 看 plan 后逐步委派并核对实际产物；收到主 agent 确认某步已完成后，由你更新自己负责的 plan checklist。
 
 ## 不做的事
 
