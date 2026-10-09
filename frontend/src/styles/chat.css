@@ -1,0 +1,30 @@
+/* MambaResearch 工作台布局与导航
+   作用域：仅 .ds-scope 下生效，不污染全局
+*/
+
+.ds-scope .rb-app, .ds-scope .rb-app * { box-sizing: border-box; }
+.ds-scope .rb-app {
+  display: grid; grid-template-columns: auto 1fr; height: 100%; min-height: 0;
+  background: var(--bg-0); color: var(--fg-1);
+  font-family: var(--ds-font-sans);
+  font-size: 13.5px; line-height: 1.55;
+}
+
+/* ============== SIDEBAR ============== */
+.ds-scope .rb-sb { background: var(--bg-1); border-right: 1px solid var(--line-1); display: flex; flex-direction: column; min-height: 0; width: var(--sidebar-w); }
+.ds-scope .rb-sb-head { display:flex; align-items:center; justify-content:space-between; padding: 14px 14px 10px; }
+.ds-scope .rb-brand { display:flex; align-items:center; gap:10px; }
+.ds-scope .rb-mark { width:36px; height:36px; border-radius:10px; background: var(--clay-900); color: var(--clay-100); display:flex; align-items:center; justify-content:center; font-family: var(--ds-font-serif); font-weight:700; font-size:18px; letter-spacing:-.02em; }
+.ds-scope .rb-eyebrow { font-size:10px; letter-spacing:.18em; text-transform:uppercase; color: var(--fg-3); font-weight:600; }
+.ds-scope .rb-brand-name { font-family: var(--ds-font-serif); font-size:16px; font-weight:600; color: var(--fg-1); letter-spacing:-.01em; margin-top:2px; }
+.ds-scope .rb-icon-btn { width:30px; height:30px; border-radius:8px; background: var(--bg-2); border:1px solid var(--line-1); color: var(--fg-2); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.ds-scope .rb-icon-btn:hover { background: var(--bg-3); color: var(--fg-1); }
+.ds-scope .rb-nav { padding: 4px 10px 12px; flex:1; overflow:auto; }
+.ds-scope .rb-group { margin-bottom: 14px; }
+.ds-scope .rb-group-h { font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color: var(--fg-3); padding: 6px 10px; font-weight:600; }
+.ds-scope .rb-nav-item { width:100%; display:flex; align-items:center; gap:10px; padding: 7px 10px; border-radius:10px; background:transparent; border:0; cursor:pointer; color: var(--fg-2); text-align:left; font-size: 13px; font-family:inherit; transition: background 120ms; }
+.ds-scope .rb-nav-item:hover { background: var(--bg-2); color: var(--fg-1); }
+.ds-scope .rb-nav-item.on { background: var(--bg-2); color: var(--fg-1); box-shadow: var(--shadow-hairline); }
+.ds-scope .rb-nav-item.on .rb-nav-ico { color: var(--accent); }
+.ds-scope .rb-nav-ico { width:20px; height:20px; display:flex; align-items:center; justify-content:center; color: var(--fg-3); }
+.ds-scope .rb-nav-lbl { flex:1; }

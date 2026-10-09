@@ -1,503 +1,434 @@
 import React from 'react';
-import { ArrowLeft, ChevronRight, Download, LoaderCircle, X } from 'lucide-react';
-import { API_BASE } from '../../store';
-import { NodeStatusMap, RoutePlan, RoutePlanNode, RouteEdge, RunArtifact, RunEvent } from '../../types';
-import { Button } from '../ui';
-import { RouteGraph } from '../RouteGraph';
-import { BehaviorTimeline } from '../BehaviorTimeline';
-import { artifactLabel, roleLabel, formatTimestamp } from '../../labels';
+import {
+  History,
+  RefreshCw,
+  FileText,
+  FlaskConical,
+  GitCompare,
+  Repeat,
+  ClipboardCheck,
+  Lightbulb,
+  Database,
+  Layers,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { listHistoryRuns, RunKind, RunRecord } from '../../api/conversations';
 
-interface HistoryRunSummary {
-  run_id: string;
-  timestamp: string;
-  topic: string;
-  status: string;
-  artifact_count: number;
+interface Props {
+  compact?: boolean;
 }
 
-interface HistoryRunDetail {
-  run_id: string;
-  status: string;
-  route_plan: Record<string, unknown> | null;
-  node_status: NodeStatusMap;
-  artifacts: RunArtifact[];
-  report_text: string;
-}
+const KIND_META: Record<
+  RunKind,
+  { label: string; icon: LucideIcon }
+> = {
+  literature_review: { label: '综述', icon: FileText },
+  experiment: { label: '实验', icon: FlaskConical },
+  method_comparison: { label: '对比', icon: GitCompare },
+  experiment_iteration: { label: '调优', icon: Repeat },
+  review: { label: '评审', icon: ClipboardCheck },
+  brainstorming: { label: '思辨', icon: Lightbulb },
+  data_exploration: { label: '数据探索', icon: Database },
+  unknown: { label: '其他', icon: Layers },
+};
 
-function formatHistoryTimestamp(value: string): string {
-  if (!value) return '';
-  try {
-    return new Intl.DateTimeFormat('zh-CN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
-}
+const KIND_FILTER_ORDER: RunKind[] = [
+  'literature_review',
+  'experiment',
+  'method_comparison',
+  'experiment_iteration',
+  'review',
+  'brainstorming',
+  'data_exploration',
+  'unknown',
+];
 
-function statusBadgeClass(status: string): string {
-  if (status === 'completed') return 'bg-emerald-100 text-emerald-700';
-  if (status === 'failed') return 'bg-rose-100 text-rose-700';
-  if (status === 'stopped') return 'bg-slate-200 text-slate-600';
-  return 'bg-slate-100 text-slate-600';
-}
+const formatDateGroup = (ts: number): string => {
+  const d = new Date(ts * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+  return `${yyyy}-${mm}-${dd} 周${week}`;
+};
 
-function statusLabel(status: string): string {
-  if (status === 'completed') return '已完成';
-  if (status === 'failed') return '失败';
-  if (status === 'stopped') return '已停止';
-  return status || '未知';
-}
+const formatTime = (ts: number): string => {
+  const d = new Date(ts * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function normalizeRoutePlan(value: unknown): RoutePlan | null {
-  if (!isRecord(value)) return null;
-  const nodes: RoutePlanNode[] = Array.isArray(value.nodes)
-    ? (value.nodes as unknown[])
-        .filter(isRecord)
-        .map((item) => ({
-          node_id: String(item.node_id || ''),
-          role: String(item.role || ''),
-          goal: String(item.goal || ''),
-          inputs: Array.isArray(item.inputs) ? (item.inputs as unknown[]).map(String) : [],
-          allowed_skills: Array.isArray(item.allowed_skills) ? (item.allowed_skills as unknown[]).map(String) : [],
-          success_criteria: Array.isArray(item.success_criteria) ? (item.success_criteria as unknown[]).map(String) : [],
-          failure_policy: String(item.failure_policy || ''),
-          expected_outputs: Array.isArray(item.expected_outputs) ? (item.expected_outputs as unknown[]).map(String) : [],
-          needs_review: Boolean(item.needs_review),
-        }))
-        .filter((n) => n.node_id && n.role)
-    : [];
-  const edges: RouteEdge[] = Array.isArray(value.edges)
-    ? (value.edges as unknown[])
-        .filter(isRecord)
-        .map((item) => ({
-          source: String(item.source || ''),
-          target: String(item.target || ''),
-          condition: String(item.condition || ''),
-        }))
-        .filter((e) => e.source && e.target)
-    : [];
-  return {
-    run_id: String(value.run_id || ''),
-    planning_iteration: Number(value.planning_iteration || 0),
-    horizon: Number(value.horizon || nodes.length),
-    nodes,
-    edges,
-    planner_notes: Array.isArray(value.planner_notes) ? (value.planner_notes as unknown[]).map(String) : [],
-    terminate: Boolean(value.terminate),
-  };
-}
-
-function normalizeRunEvents(rawEvents: unknown[]): RunEvent[] {
-  const events: RunEvent[] = [];
-  for (const raw of rawEvents) {
-    if (!isRecord(raw)) continue;
-    const type = String(raw.type || raw.event || '').trim();
-    if (!type) continue;
-    const observation = isRecord(raw.observation) ? raw.observation : null;
-    const iterationRaw = raw.planning_iteration ?? raw.iteration;
-    const iteration =
-      typeof iterationRaw === 'number'
-        ? iterationRaw
-        : iterationRaw == null || iterationRaw === ''
-          ? null
-          : Number(iterationRaw);
-    let detail = String(raw.detail || '');
-    if (!detail && type === 'plan_update' && isRecord(raw.plan) && Array.isArray((raw.plan as Record<string, unknown>).nodes)) {
-      detail = `已规划 ${((raw.plan as Record<string, unknown>).nodes as unknown[]).length} 个节点`;
-    }
-    if (!detail && type === 'observation' && isRecord(raw.observation)) {
-      detail = String((raw.observation as Record<string, unknown>).what_happened || '');
-    }
-    if (!detail && type === 'replan') detail = String(raw.reason || '');
-    if (!detail && type === 'artifact_created') {
-      detail = `${String(raw.artifact_type || '')} ${String(raw.artifact_id || '')}`.trim();
-    }
-    if (!detail && type === 'policy_block') detail = String(raw.reason || '');
-    events.push({
-      id: String(raw.id || `${type}-${String(raw.ts || new Date().toISOString())}`),
-      ts: String(raw.ts || new Date().toISOString()),
-      type,
-      runId: String(raw.run_id || raw.runId || ''),
-      nodeId: String(raw.node_id || raw.nodeId || observation?.node_id || ''),
-      role: String(raw.role || observation?.role || ''),
-      skillId: String(raw.skill_id || raw.skillId || ''),
-      toolId: String(raw.tool_id || raw.toolId || ''),
-      phase: String(raw.phase || ''),
-      status: String(raw.status || observation?.status || ''),
-      reason: String(raw.reason || observation?.what_happened || ''),
-      blockedAction: String(raw.blocked_action || raw.blockedAction || ''),
-      artifactId: String(raw.artifact_id || raw.artifactId || ''),
-      artifactType: String(raw.artifact_type || raw.artifactType || ''),
-      producerRole: String(raw.producer_role || raw.producerRole || ''),
-      producerSkill: String(raw.producer_skill || raw.producerSkill || ''),
-      iteration: Number.isFinite(iteration) ? iteration : null,
-      detail,
-    });
-  }
-  return events;
-}
-
-function renderArtifactPayload(payload: Record<string, unknown>): React.ReactNode {
-  const keys = Object.keys(payload);
-  if (keys.length === 0) {
-    return <p className="text-sm text-slate-400">（无内容）</p>;
-  }
-  return (
-    <div className="space-y-4">
-      {keys.map((key) => {
-        const value = payload[key];
-        const isLongText = typeof value === 'string' && value.length > 120;
-        return (
-          <div key={key}>
-            <p className="mb-1 text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{key}</p>
-            {isLongText ? (
-              <p className="whitespace-pre-wrap rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-700">{value}</p>
-            ) : typeof value === 'object' && value !== null ? (
-              <pre className="overflow-x-auto rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-700">
-                {JSON.stringify(value, null, 2)}
-              </pre>
-            ) : (
-              <p className="text-sm leading-6 text-slate-700">{String(value)}</p>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-interface ArtifactDetailState {
-  runId: string;
-  artifactId: string;
-  artifactType: string;
-}
-
-function ArtifactDetailModal({ detail, onClose }: { detail: ArtifactDetailState; onClose: () => void }) {
-  const [payload, setPayload] = React.useState<Record<string, unknown> | null>(null);
+/**
+ * HistoryTab —— 已保存科研产物时间线。
+ *
+ * 数据源：``GET /api/history/runs``，扫 active project 下所有
+ * ``outputs/<run_id>/``，对 Claude 与 Codex 产出无差别处理。
+ *
+ * 顶部过滤栏：kind chip 多选 + 文本搜索；
+ * 主体：按日期分组，每条 run 展示 kind/title/产物列表。
+ */
+export const HistoryTab: React.FC<Props> = ({ compact = false }) => {
+  const [runs, setRuns] = React.useState<RunRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+  const [kindFilter, setKindFilter] = React.useState<Set<RunKind>>(new Set());
+  const [search, setSearch] = React.useState('');
+
+  const refresh = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await listHistoryRuns();
+      setRuns(list);
+    } catch (err: any) {
+      setError(err?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   React.useEffect(() => {
-    setLoading(true);
-    setError('');
-    fetch(`${API_BASE}/api/runs/${detail.runId}/artifacts/${detail.artifactId}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ payload: Record<string, unknown> }>;
-      })
-      .then((data) => {
-        setPayload(data.payload ?? {});
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      });
-  }, [detail.runId, detail.artifactId]);
+    refresh();
+  }, [refresh]);
+
+  const filtered = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return runs.filter((r) => {
+      if (kindFilter.size > 0 && !kindFilter.has(r.kind)) return false;
+      if (q && !r.title.toLowerCase().includes(q) && !r.run_id.toLowerCase().includes(q)) {
+        return false;
+      }
+      return true;
+    });
+  }, [runs, kindFilter, search]);
+
+  // 按日期分组（基于 started_at；为 null 的归到末尾）
+  const grouped = React.useMemo(() => {
+    const map = new Map<string, RunRecord[]>();
+    const undated: RunRecord[] = [];
+    for (const r of filtered) {
+      if (r.started_at === null) {
+        undated.push(r);
+        continue;
+      }
+      const key = formatDateGroup(r.started_at);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+    const groups = Array.from(map.entries());
+    if (undated.length > 0) groups.push(['未知日期', undated]);
+    return groups;
+  }, [filtered]);
+
+  const toggleKindFilter = (k: RunKind) => {
+    setKindFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/35 px-4 py-8 backdrop-blur-sm"
-      onClick={onClose}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        background: 'var(--bg-2)',
+      }}
     >
-      <div
-        className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[var(--shadow-modal)]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-5 flex items-start justify-between gap-3">
-          <div>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-              {artifactLabel(detail.artifactType)}
-            </span>
-            <p className="mt-2 font-mono text-xs text-slate-500">{detail.artifactId}</p>
+      {!compact ? (
+        <header
+          style={{
+            padding: '20px 28px 14px',
+            borderBottom: '1px solid var(--line-1)',
+            background: 'var(--bg-3)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <History size={22} color="var(--fg-2)" />
+            <div>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 600,
+                  color: 'var(--fg-1)',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                研究记录
+              </h2>
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--fg-3)' }}>
+                浏览已保存的科研产物。任务结果请查看工作台中的回传记录。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading}
+              title="刷新"
+              style={{
+                marginLeft: 'auto',
+                padding: 8,
+                borderRadius: 8,
+                border: 0,
+                background: 'transparent',
+                color: 'var(--fg-2)',
+                cursor: loading ? 'wait' : 'pointer',
+              }}
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            </button>
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        {loading ? (
-          <div className="flex items-center justify-center py-10">
-            <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" />
-          </div>
-        ) : error ? (
-          <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>
-        ) : payload !== null ? (
-          renderArtifactPayload(payload)
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function RunDetailView({
-  detail,
-  events,
-  onBack,
-}: {
-  detail: HistoryRunDetail;
-  events: RunEvent[];
-  onBack: () => void;
-}) {
-  const [artifactDetail, setArtifactDetail] = React.useState<ArtifactDetailState | null>(null);
-  const routePlan = normalizeRoutePlan(detail.route_plan);
-
-  return (
-    <div className="flex min-h-screen flex-col">
-      {artifactDetail ? (
-        <ArtifactDetailModal detail={artifactDetail} onClose={() => setArtifactDetail(null)} />
+        </header>
       ) : null}
 
-      <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
-        <div className="mx-auto flex w-full max-w-4xl items-center gap-4">
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+      {/* 过滤栏 */}
+      <div
+        style={{
+          padding: '12px 28px',
+          borderBottom: '1px solid var(--line-1)',
+          background: 'var(--bg-2)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--fg-3)', marginRight: 4 }}>类型</span>
+          {KIND_FILTER_ORDER.map((k) => {
+            const meta = KIND_META[k];
+            const active = kindFilter.has(k);
+            const Icon = meta.icon;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => toggleKindFilter(k)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 10px',
+                  borderRadius: 999,
+                  border: active ? '1px solid var(--accent)' : '1px solid var(--line-1)',
+                  background: active ? 'var(--accent-soft)' : 'var(--bg-3)',
+                  color: active ? 'var(--accent-soft-fg)' : 'var(--fg-2)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                <Icon size={11} />
+                {meta.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            type="text"
+            placeholder="搜索 title / run_id…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: '1px solid var(--line-1)',
+              background: 'var(--bg-3)',
+              color: 'var(--fg-1)',
+              fontSize: 12,
+              outline: 'none',
+              fontFamily: 'inherit',
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 28px' }}>
+        {loading ? (
+          <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>加载中…</div>
+        ) : error ? (
+          <div
+            style={{
+              padding: '12px 16px',
+              borderRadius: 10,
+              background: 'var(--danger-bg)',
+              color: 'var(--danger-fg)',
+              fontSize: 13,
+            }}
           >
-            <ArrowLeft className="h-4 w-4" />
-            返回
-          </button>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">历史运行</p>
-            <h2 className="mt-1 truncate text-xl font-semibold tracking-tight text-slate-900">{detail.run_id}</h2>
+            {error}
           </div>
-          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${statusBadgeClass(detail.status)}`}>
-            {statusLabel(detail.status)}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-4 pb-16 pt-8 sm:px-6">
-        <div className="mx-auto w-full max-w-4xl space-y-6">
-          {routePlan?.nodes.length ? (
-            <RouteGraph routePlan={routePlan} nodeStatus={detail.node_status} />
-          ) : null}
-
-          {detail.artifacts.length > 0 ? (
-            <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">产物</p>
-                  <h3 className="mt-2 text-base font-semibold text-slate-900">产出面板</h3>
-                </div>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                  {detail.artifacts.length} 项
-                </span>
-              </div>
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
-                {detail.artifacts.map((artifact) => (
-                  <button
-                    key={`${artifact.artifact_type}-${artifact.artifact_id}`}
-                    type="button"
-                    onClick={() =>
-                      setArtifactDetail({ runId: detail.run_id, artifactId: artifact.artifact_id, artifactType: artifact.artifact_type })
-                    }
-                    className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-                          {artifactLabel(artifact.artifact_type)}
-                        </span>
-                        <span className="font-mono text-xs text-slate-500">{artifact.artifact_id}</span>
-                      </div>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                    </div>
-                    <p className="mt-2 text-sm text-slate-600">
-                      {roleLabel(artifact.producer_role)} · {artifact.producer_skill}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          {events.length > 0 ? <BehaviorTimeline events={events} /> : null}
-
-          {detail.report_text ? (
-            <section className="rounded-[var(--radius-xl)] border border-slate-200 bg-white p-[var(--space-card)] shadow-[var(--shadow-card)]">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-400">研究报告</p>
-                <div className="flex gap-2">
-                  <a
-                    href={`${API_BASE}/api/runs/${detail.run_id}/report.pdf`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    PDF
-                  </a>
-                  <a
-                    href={`${API_BASE}/api/runs/${detail.run_id}/latex.zip`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    LaTeX
-                  </a>
-                </div>
-              </div>
-              <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{detail.report_text}</div>
-            </section>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export const HistoryTab: React.FC = () => {
-  const [runs, setRuns] = React.useState<HistoryRunSummary[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState('');
-  const [selectedRunId, setSelectedRunId] = React.useState<string | null>(null);
-  const [detailLoading, setDetailLoading] = React.useState(false);
-  const [detailError, setDetailError] = React.useState('');
-  const [runDetail, setRunDetail] = React.useState<HistoryRunDetail | null>(null);
-  const [runEvents, setRunEvents] = React.useState<RunEvent[]>([]);
-
-  React.useEffect(() => {
-    setLoading(true);
-    setError('');
-    fetch(`${API_BASE}/api/runs`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<HistoryRunSummary[]>;
-      })
-      .then((data) => {
-        setRuns(data);
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      });
-  }, []);
-
-  const selectRun = (runId: string) => {
-    setSelectedRunId(runId);
-    setDetailLoading(true);
-    setDetailError('');
-    setRunDetail(null);
-    setRunEvents([]);
-    Promise.all([
-      fetch(`${API_BASE}/api/runs/${runId}/state`).then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<HistoryRunDetail>;
-      }),
-      fetch(`${API_BASE}/api/runs/${runId}/events`).then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<unknown[]>;
-      }),
-    ])
-      .then(([state, rawEvents]) => {
-        setRunDetail(state);
-        setRunEvents(normalizeRunEvents(rawEvents));
-        setDetailLoading(false);
-      })
-      .catch((err: unknown) => {
-        setDetailError(err instanceof Error ? err.message : String(err));
-        setDetailLoading(false);
-      });
-  };
-
-  const handleBack = () => {
-    setSelectedRunId(null);
-    setRunDetail(null);
-    setRunEvents([]);
-    setDetailError('');
-  };
-
-  if (selectedRunId) {
-    if (detailLoading) {
-      return (
-        <div className="flex min-h-screen items-center justify-center">
-          <LoaderCircle className="h-6 w-6 animate-spin text-slate-400" />
-        </div>
-      );
-    }
-    if (detailError) {
-      return (
-        <div className="flex min-h-screen flex-col items-center justify-center px-4">
-          <p className="rounded-2xl bg-rose-50 px-6 py-4 text-sm text-rose-600">{detailError}</p>
-          <Button variant="secondary" className="mt-4" onClick={handleBack}>
-            <ArrowLeft className="h-4 w-4" />
-            返回
-          </Button>
-        </div>
-      );
-    }
-    if (runDetail) {
-      return <RunDetailView detail={runDetail} events={runEvents} onBack={handleBack} />;
-    }
-  }
-
-  return (
-    <div className="flex min-h-screen flex-col">
-      <div className="border-b border-slate-200 bg-[var(--app-bg)]/92 px-4 py-5 backdrop-blur-xl sm:px-6">
-        <div className="mx-auto w-full max-w-4xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">动态研究操作系统</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">历史记录</h2>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-4 pb-16 pt-8 sm:px-6">
-        <div className="mx-auto w-full max-w-4xl">
-          {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <LoaderCircle className="h-6 w-6 animate-spin text-slate-400" />
-            </div>
-          ) : error ? (
-            <p className="rounded-2xl bg-rose-50 px-6 py-4 text-sm text-rose-600">{error}</p>
-          ) : runs.length === 0 ? (
-            <div className="flex min-h-[40vh] flex-col items-center justify-center text-center">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">暂无历史记录</p>
-              <p className="mt-3 text-base text-slate-500">完成至少一次研究运行后，历史记录将在此处显示。</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {runs.map((run) => (
-                <button
-                  key={run.run_id}
-                  type="button"
-                  onClick={() => selectRun(run.run_id)}
-                  className="w-full rounded-[28px] border border-slate-200 bg-white px-5 py-4 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md"
+        ) : runs.length === 0 ? (
+          <div
+            style={{
+              padding: '40px 0',
+              textAlign: 'center',
+              fontSize: 13,
+              color: 'var(--fg-3)',
+              lineHeight: 1.7,
+            }}
+          >
+            暂无已保存的科研产物。
+            <br />
+            在 Codex 当前聊天使用 <code
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: 'var(--bg-1)',
+              }}
+            >/structured-lit-review</code>{' '}
+            或其他 SKILL 即可开始。
+          </div>
+        ) : filtered.length === 0 ? (
+          <div
+            style={{
+              padding: '40px 0',
+              textAlign: 'center',
+              fontSize: 13,
+              color: 'var(--fg-3)',
+            }}
+          >
+            没有匹配当前筛选条件的研究记录。
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {grouped.map(([dateLabel, items]) => (
+              <section key={dateLabel}>
+                <header
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--fg-3)',
+                    marginBottom: 8,
+                  }}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${statusBadgeClass(run.status)}`}>
-                          {statusLabel(run.status)}
-                        </span>
-                        <span className="font-mono text-xs text-slate-400">{run.run_id}</span>
-                      </div>
-                      {run.topic ? (
-                        <p className="mt-2 truncate text-sm font-medium text-slate-800">{run.topic}</p>
-                      ) : null}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-xs text-slate-400">{formatHistoryTimestamp(run.timestamp)}</p>
-                      {run.artifact_count > 0 ? (
-                        <p className="mt-1 text-xs text-slate-500">{run.artifact_count} 个产物</p>
-                      ) : null}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+                  {dateLabel}
+                </header>
+                <ul
+                  style={{
+                    listStyle: 'none',
+                    margin: 0,
+                    padding: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  {items.map((r) => {
+                    const meta = KIND_META[r.kind];
+                    const Icon = meta.icon;
+                    return (
+                      <li
+                        key={r.run_id}
+                        style={{
+                          padding: 16,
+                          borderRadius: 14,
+                          border: '1px solid var(--line-1)',
+                          background: 'var(--bg-3)',
+                          boxShadow: 'var(--shadow-card)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                          }}
+                        >
+                          {r.started_at !== null ? (
+                            <span
+                              style={{
+                                fontFamily: 'var(--font-mono)',
+                                fontSize: 11,
+                                color: 'var(--fg-3)',
+                                width: 38,
+                              }}
+                            >
+                              {formatTime(r.started_at)}
+                            </span>
+                          ) : (
+                            <span
+                              style={{ fontSize: 11, color: 'var(--fg-3)', width: 38 }}
+                            >
+                              ?
+                            </span>
+                          )}
+                          <Icon size={15} color="var(--fg-2)" />
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: 'var(--fg-3)',
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              background: 'var(--bg-2)',
+                            }}
+                          >
+                            {meta.label}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 600,
+                              color: 'var(--fg-1)',
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                            title={r.title}
+                          >
+                            {r.title}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 6,
+                            paddingLeft: 48,
+                            fontSize: 11,
+                            color: 'var(--fg-3)',
+                          }}
+                        >
+                          <code
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              background: 'var(--bg-2)',
+                            }}
+                          >
+                            {r.run_id}
+                          </code>
+                          {r.artifacts.length > 0 ? (
+                            <>
+                              <span>·</span>
+                              <span>
+                                {r.artifacts.slice(0, 5).join(' / ')}
+                                {r.artifacts.length > 5 ? ` … (+${r.artifacts.length - 5})` : ''}
+                              </span>
+                            </>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

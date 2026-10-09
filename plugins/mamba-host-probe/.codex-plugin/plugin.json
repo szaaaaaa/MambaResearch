@@ -1,0 +1,13 @@
+{
+  "name": "mamba-host-probe",
+  "version": "0.1.2",
+  "description": "MambaResearch 开发验收：检查 Codex App 的 MCP UI、当前聊天消息与模型结果回传。",
+  "author": {"name": "MambaResearch"},
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "MambaResearch 接入验证",
+    "shortDescription": "验证科研工作台前端与 Codex App 的双向交互",
+    "category": "Developer Tools"
+  }
+}

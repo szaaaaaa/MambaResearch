@@ -28,6 +28,7 @@ data/
 outputs/
 logs/
 evolved_skills/
+/docs/archive/
 *.log
 .pytest_cache/
 .tmp/
@@ -37,11 +38,45 @@ tests/.tmp_*/
 tests/.tmp_*.sqlite
 .auth/
 frontend/dist/
+.playwright-mcp/
 
 # Local DB / index artifacts
 *.sqlite
 *.db
 *.bin
 
-# Claude Code — exclude entire .claude/ dir (worktrees, hooks, local state)
-.claude/
+# Claude Code — exclude .claude/ children (worktrees, hooks, local state).
+# .claude/skills/ is intentionally excluded: after running scripts/skills_mirror.ps1
+# it becomes a directory of NTFS junctions pointing into .skills-shared/, which
+# git cannot represent portably. The physical SKILL.md files live in .skills-shared/.
+.claude/*
+!.claude/agents/
+!.claude/agents/**
+
+# Codex — exclude .codex/ local state, history, cache and skill junctions.
+.codex/*
+
+# Skills mirror — physical source of truth for both Claude / Codex skill loaders.
+# .claude/skills/<name> and .codex/skills/<name> are NTFS junctions pointing here.
+# Tracked in git so team members get the same skills after running skills_mirror.ps1.
+!.skills-shared/
+!.skills-shared/**
+
+# 保留的历史本地运行目录可能包含用户数据，不纳入版本控制。
+.claude-mount/
+
+# Self-improvement — project-local Claude learnings, personal dev memory
+.learnings/
+
+# continues (cli-continues) cross-tool handoff file — regenerated per resume
+.continues-handoff.md
+
+# MambaResearch project meta — `<project>/.mambaresearch/` is created in any
+# directory registered as an active project. The 主仓库 itself is occasionally
+# used as a project (debugging / dev-mode), so ignore the dir at repo root too.
+.mambaresearch/
+
+# Generated standalone plugin resources; rebuilt from the unique source files.
+plugins/mambaresearch/app/
+plugins/mambaresearch/runtime/
+plugins/mambaresearch/skills/mambaresearch/references/

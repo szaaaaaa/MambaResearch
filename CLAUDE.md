@@ -1,176 +1,145 @@
-# Mandatory Skill Invocation
+# Skill Invocation
 
-Before ANY code-related response (writing, modifying, reviewing, proposing, or debugging code), you MUST invoke the following skills in order. This is non-negotiable. Do not write or propose code until all applicable skills have been invoked.
+These skills are mandatory when their description matches the current turn — do not skip them.
 
-1. **first-principles-thinking** — Invoke on EVERY user message. Understand the root problem before acting.
-2. **solution-standards** — Invoke before proposing any code change, architecture change, or fix.
-3. **implementation-discipline** — Invoke before writing or modifying code.
-4. **session-discipline** — Invoke when the conversation involves multiple code changes. Review all prior changes for scope creep and consistency before proceeding.
+1. **first-principles-thinking** — every user message
+2. **solution-standards** — before proposing any change
+3. **implementation-discipline** — before writing or fixing code
+4. **session-discipline** — in multi-turn coding sessions
 
-If a response involves code, all four skills apply. Invoke them via the Skill tool before generating any code or file edits.
+If you find yourself about to write code without having invoked the applicable ones, stop and invoke first.
 
-# 确认你真的读了CLAUDE.md
+# 身份与口吻
 
-每次输出回答时，都要加上我的名字，ziang。例如:
+- 每次回答开头加一句"好的ziang"确认读过本文件
+- 回复简洁，不说客套话
 
-我：帮我做一个xx事情
-claude（你）：好的ziang。（你的回答）
+# 必须遵守
 
-# 你必须遵守的规则
+- 优先简单方案，不过度工程
+- 不要加兜底/workaround 掩盖根因，直面问题解决它
+- 排查问题尽早暴露，不试图掩盖
+- 代码任务开始前，读 `.learnings/LEARNINGS.md` 和 `.learnings/ERRORS.md`（若存在），避免重复已知失误
 
-回复尽量简洁，不要加无关的客套话
-优先用简单方案，不要过度工程
+# 自主交付循环（2026-05-03 ziang 授权）
+
+权限 / 边界详见 `~/.claude/projects/D--ResearchAgent/memory/feedback_autonomous_dev_authorization.md`。要点：
+
+- ✅ 验证通过（pytest + tsc + npm run build + 浏览器主流程无 console 红错）后自主 commit + push 当前分支
+- ✅ 自己写 plan、选方向、起停 dev server / 子进程、装依赖（装到 ResearchAgent 自己的 npm/python 环境内）、改 CLAUDE.md / 构建配置
+- 🔒 force push / 改 main / amend 已 push commit / `--no-verify` / 删 tracked 文件 / 装系统级软件——永不或必问
+- 🔒 settings.json 必问，**唯一例外**：`env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 由我依 `autocompact_tuning.md` 规则自主调
+- 不可逆动作 ask 信号：以 `🛑 需要你确认：...` 开头
+- 上报暂停条件：blocking dep 缺、改动破坏既有契约、advisor 连续 3 次说停、同一处 pytest 2 次修不好
+
+当前迁移与验收范围见 `docs/live/前端改造计划/00-前端核心重构计划.md`。
 
 # 常用命令
 
-- 后端启动: `python app.py`
+- 后端: `python app.py`
 - 前端开发: `cd frontend && npm run dev`
 - 前端构建: `cd frontend && npm run build`
-- 运行测试: `pytest tests/`
-- Docker 启动: `docker-compose up`
+- 测试: `pytest tests/`
 
 # 代码修改边界
 
-修改代码前必须判断风险等级，按等级执行对应规则。
+按风险等级执行对应规则。
 
-## 🔴 禁区 — 改之前必须告知用户并获得同意
+## 🟠 高风险 — 改完必须跑测试
 
-这些文件被大量其他文件依赖，改动会引发全项目级联故障。
+被 routes / MCP / tests 共享的核心模块，改动可能影响上下游。
 
-- `src/dynamic_os/contracts/` 下所有文件（route_plan.py, artifact.py, skill_io.py, observation.py, events.py, policy.py, skill_spec.py, role_spec.py）
-- `src/dynamic_os/artifact_refs.py`
+- `src/server/projects/registry.py` — 项目注册表与请求上下文；改动会影响任务和科研 API 的项目隔离
+- `src/server/projects/db.py` — `mamba.db` schema migrations；改 schema 必须追加而非修改既有 migration
+- `src/server/workspace/classification.py` — 项目分类索引；schema 同样追加 only
+- `src/server/workbench/` — MCP UI、项目范围与任务结果；改完跑真实 stdio 集成测试
+- `src/server/mcp/native_server.py` — 原生科研领域 MCP transport；改动必须验证固定项目、路径与研究记录归属
 
-规则：
-1. 先说明要改什么、为什么改
-2. 列出会受影响的文件
-3. 等用户确认后再改
-4. 改完必须运行 `pytest tests/`
+规则：改完运行 `pytest tests/`；失败必须修复。
 
-## 🟠 高风险 — 改完必须跑测试验证
+## 🟡 中风险 — 配置注册表（手编请走 schema）
 
-这些是核心流程文件，改动可能影响上下游。
+配置遵守各自 schema；科研 server 的命令由唯一 provider 定义，界面只编辑支持的字段。
 
-- `src/dynamic_os/runtime.py`
-- `src/dynamic_os/executor/`
-- `src/dynamic_os/planner/`
-- `src/dynamic_os/policy/engine.py`
-- `src/dynamic_os/tools/gateway/`
-- `src/dynamic_os/tools/registry.py`
-- `src/dynamic_os/roles/registry.py`
+- `configs/plugins.json` — Kernel 插件 profile。
+- `plugins/mambaresearch/.mcp.json` — Codex 插件正式 MCP 入口。
 
-规则：
-1. 改完运行 `pytest tests/`
-2. 如果测试失败，必须修复后才能继续
+## 🟢 安全区 — 可直接修改
 
-## 🟢 安全区 — 可以直接修改
-
-- `src/dynamic_os/skills/builtins/` 下的单个技能
-- `src/dynamic_os/storage/` 存储实现
 - `frontend/src/` 前端代码
-- `configs/agent.yaml` 配置调整
-- `scripts/` 脚本工具
-- `docs/` 文档
+- `scripts/`、`docs/`
+- `.claude/agents/*.md`、`.skills-shared/*/SKILL.md`（pipeline / sub-agent 蒸馏文档；`.claude/skills/` 与 `.codex/skills/` 是指向 `.skills-shared/` 的 NTFS junction，不直接编辑）
 
 # 架构约定 — 新功能加在哪
 
-## 新技能（最常见）
-
-在 `src/dynamic_os/skills/builtins/` 下创建新目录，包含 3 个文件：
-- `skill.yaml` — 技能元数据（输入输出、允许的工具、超时等）
-- `skill.md` — 技能文档
-- `run.py` — 实现 `async def run(ctx: SkillContext) -> SkillOutput`
-
-系统自动发现，不需要额外注册。
-
-## 新 API 接口
-
-1. 在 `src/server/routes/` 下创建新文件，用 `router = APIRouter()`
-2. 在 `app.py` 中 `include_router()` 注册
-
-## 新前端组件
-
-在 `frontend/src/components/` 下创建 `.tsx` 文件，在父组件中引用。
-
-## 新角色（慎重）
-
-需要同时改两处：
-1. `src/dynamic_os/roles/roles.yaml` — 定义角色
-2. `src/dynamic_os/contracts/route_plan.py` — 在 RoleId 枚举中添加
-
-第 2 步涉及 🔴 禁区，必须先获得用户同意。
-
-## 新工具
-
-通过 MCP 配置声明，系统自动发现。工具 ID 格式：`mcp.{server_id}.{tool_name}`
+| 类型 | 位置 | 注册方式 |
+|------|------|----------|
+| 新 pipeline | `.skills-shared/<pipeline-name>/SKILL.md`（双向 mirror 到 `.claude/skills/` 与 `.codex/skills/`） | 跑 `pwsh scripts/skills_mirror.ps1 -Scope project` 建/补 junction |
+| 科研角色 | `.claude/agents/<role>.md` 的职责正文 | 主聊天按正式 skill 的角色编排约定使用 Codex 原生子代理工具；不生成模型或工具配置 |
+| 新 API | `src/server/routes/` 新文件 | 由能力 owner 的 plugin 注册到 Kernel `HttpRegistry` |
+| 新前端组件 | `frontend/src/components/*.tsx` | 父组件引用 |
+| 新 MCP server | `src/server/integrations/<name>/mcp_server.py` 写 `default_mcp_config()` | 对应 Research plugin 注册到 Kernel `McpRegistry` |
+| 科研任务入口 | `core.workbench` 注册工作台 MCP，任务 prepare/result 保存在研究 DB | 前端经 HostBridge 向当前 Codex 聊天投递；App 拥有模型交互 |
 
 # 测试原则
 
-核心理念：**只测"坏了看不见但后果严重"的东西。** 不要为了测试而测试，冗余测试用假数据制造"全绿"假象，反而掩盖真正的问题。
+**核心：只测"坏了看不见但后果严重"的东西。** 冗余测试用假数据制造"全绿"假象，反而掩盖问题。
 
-## 必须测的（致命问题）
+必须测：数据模型拒绝无效输入；权限/安全边界；存储读写一致性；核心执行流跑通+失败恢复。
 
-- 数据模型拒绝无效输入 — 坏数据进入系统后一路传播，发现时已晚
-- 权限/安全边界 — 权限被突破可能完全察觉不到
-- 存储读写一致性 — 数据存了读不出来或读错
-- 核心执行流能跑通 + 失败能恢复 — 断了系统直接废掉
-- HITL 暂停/恢复 — 卡死后用户以为在正常运行
+不要测：第三方 API 对接细节；LLM 输出纠错每种场景；显示层小逻辑；一次性验证。
 
-## 不要测的
-
-- 第三方 API 对接细节（OAuth 参数、URL 拼接、响应格式）— 用假数据测了也没用，真 API 变了测试照过
-- LLM 输出纠错的每种场景 — 假 LLM 犯的错和真 LLM 不一样，穷举没有意义
-- 显示层小逻辑（标题 fallback、格式化）— 一用就能看到对不对
-- 一次性验证（旧代码是否删干净）— 做完就没用了
-
-## 编写规则
-
-1. 测真实行为，不测假替身能不能配合。如果一个测试只有在 mock 和真实实现行为完全一致时才有意义，那这个测试就是脆弱的
-2. 一个功能点保留 1-2 个测试即可，不要为同一逻辑写 5 种变体
-3. 不强制新功能必须带测试。改了 🔴 禁区和 🟠 高风险代码时才必须确保现有测试通过
-4. 前端不写测试，TypeScript 编译 + 构建通过即可
+编写规则：测真实行为不测 mock 配合；同一逻辑 1-2 个测试即可；非平凡新逻辑保留最小行为测试；改 🟠 区保证完整有效测试通过；前端纯逻辑使用现有 node:test + tsx，并运行类型检查与构建。
 
 # 代码风格
 
-## 语言规范
-
 | 场景 | 语言 |
 |------|------|
-| 代码注释 | 中文 |
-| Docstring | 中文，numpy 风格 |
-| Git 提交信息 | 英文 |
-| 日志/错误信息 | 英文 |
-| 前端界面文字 | 中文 |
-| LLM 提示词 | 中文 |
-| README/用户文档 | 中文 |
+| 代码注释 / Docstring（numpy风格） | 中文 |
+| Git commit / 日志 / 错误信息 | 英文 |
+| 前端界面 / LLM 提示词 / README | 中文 |
 
-Docstring 示例：
+命名：模块/函数/变量 `snake_case`；类 `PascalCase`；私有成员 `_` 前缀。
 
-```python
-def search_papers(query: str, max_results: int = 10) -> list[dict]:
-    """根据查询检索候选论文。
+# Pipeline artifact 命名约定
 
-    参数
-    ----------
-    query : str
-        检索关键词。
-    max_results : int, optional
-        最大返回数量，默认 10。
+`.skills-shared/` 下的 7 个 pipeline SKILL 共用一套 workspace artifact 命名约定（Claude / Codex 通过 `.claude/skills/` `.codex/skills/` junction 都能加载到同一物理文件）。所有 sub-agent 之间通过这些文件传递 artifact，不依赖任何 in-memory artifact store。
 
-    返回
-    -------
-    list[dict]
-        论文元数据列表，每项包含 paper_id, title, abstract。
+## 路径前缀
 
-    异常
-    ------
-    PolicyViolationError
-        当网络访问被策略禁止时抛出。
-    """
-```
+`outputs/<run_id>/`（在 active project workspace 根下）
 
-## 命名规范
+`run_id` 由触发 pipeline 的 conductor 决定，格式约定：
+- `lit_review_<YYYYMMDD>_<HHMMSS>` — structured-lit-review
+- `exp_<YYYYMMDD>_<HHMMSS>` — empirical-study
+- `method_cmp_<YYYYMMDD>_<HHMMSS>` — method-comparison
+- `iter_<YYYYMMDD>_<HHMMSS>` — experiment-iteration
+- `review_<YYYYMMDD>_<HHMMSS>_<artifact_short_name>` — artifact-review
+- `brainstorm_<YYYYMMDD>_<HHMMSS>` — idea-brainstorming
+- `data_explore_<YYYYMMDD>_<HHMMSS>_<dataset_short_name>` — data-exploration
 
-- 模块/文件名：`snake_case`（如 `route_plan.py`）
-- 类名：`PascalCase`（如 `RoutePlan`）
-- 函数/变量：`snake_case`（如 `load_yaml()`）
-- 私有成员：`_` 前缀（如 `_REPO_ROOT`）
+## 标准文件名
+
+| 文件 | 产出方 | 内容 |
+|---|---|---|
+| `plan.md` | conductor | markdown checklist，pipeline 进度的可见表示 |
+| `sources.json` | paper-searcher | 候选论文清单 `[{title, authors, year, venue, abstract, url}]` |
+| `evidence.json` | evidence-extractor | 每篇 paper 的相关原文片段 + 反例 |
+| `analysis.md` | analyzer | findings / conflicts / open_questions 三段，每条带证据引用 |
+| `report.md` | writer | 终稿叙述（默认 markdown；用户要 LaTeX 时为 `report.tex` + `references.bib`） |
+| `review.md` | reviewer | 5 维评分 + standard issue 列表 + verdict |
+| `critique.md` | critic | 🔴/🟠/🟡 严重度分级 issue + 详细 reasoning |
+| `experiments/exp_<NNN>/` | experimenter | 单次实验子目录，含 `spec.md` + `script.py` + `result.json` + 可选 `lessons.md` |
+| `sweep_plan.md` | experimenter | sweep 矩阵 + spec_overrides + compute 估计 |
+| `sweep_analysis.md` | analyzer | sweep 聚合结果 + 最佳配置 + 趋势观察 |
+
+## 跨 pipeline 复用
+
+- 跑完 `structured-lit-review` 拿到 `sources.json` + `evidence.json` 后，可直接喂给 `method-comparison` / `idea-brainstorming` / `empirical-study` 作为 prior context（避免重复检索）
+- 跑完 `empirical-study` 的 `experiments/exp_001/result.json` 可作为 `experiment-iteration` 的 baseline 输入
+
+## 不变约束
+
+- **永不修改物理 workspace 文件**：所有 artifact 写入 `outputs/<run_id>/` 子目录；用户原始数据 / 论文 PDF / 已有脚本绝不动
+- **每 sub-agent 写自己负责的文件**：paper-searcher 只写 sources.json，analyzer 只写 analysis.md / sweep_analysis.md，等等
+- **主 agent 是编排者**：spawn sub-agent 后由主 agent 检查文件存在与否决定是否进入下一步，不让 sub-agent 之间直接通信

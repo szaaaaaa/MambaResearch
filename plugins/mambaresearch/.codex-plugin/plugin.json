@@ -1,0 +1,15 @@
+{
+  "name": "mambaresearch",
+  "version": "0.1.7",
+  "description": "在 Codex App 打开科研工作台，使用原生聊天和科研 MCP 完成研究任务。",
+  "author": {
+    "name": "MambaResearch"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "MambaResearch 科研工作台",
+    "shortDescription": "项目、文件、文献、实验和研究记录，直接在 Codex 使用",
+    "category": "Research"
+  }
+}

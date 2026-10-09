@@ -1,417 +1,149 @@
+# MambaResearch
 
-<div align="center">
+**直接在 Codex App 中使用的科研工作台。** 通过 `$mambaresearch` 打开界面，在同一个 Codex 聊天中完成文件整理、文献研究、实验、分析与报告写作，研究产物留在自己的项目中。
 
+当前插件版本：**0.1.7**。独立运行包适用于 **Windows x64**，需要支持 MCP Apps 的 Codex App。包内包含 Python、依赖、前端界面、科研流程与角色指令，安装后不需要开发仓库、系统 Python 或 Node.js。
 
-# 🧬 MambaResearch
+## 可以做什么
 
-### Autonomous Research Agent with Dynamic DAG Planning
+- **管理科研项目**：按项目组织实验、文献、数据集和灵感，保留草稿及研究记录。
+- **按内容分类文件**：由 Codex 阅读内容、判断实际科研用途，再写入分类索引；工程代码和研究无关文件不强行归类，原始文件不移动或删除。
+- **阅读与批注文献**：在工作台打开 PDF、翻页、保存中文批注，并把分析任务发送到当前 Codex 聊天。
+- **开展科研流程**：检索文献、整理证据、设计及执行实验、分析数据、比较方法、评审研究产物。
+- **保存可追溯产物**：来源、证据、实验规格、脚本、真实结果、分析和报告写入项目的 `outputs/<run_id>/`，研究记录展示已有产物。
+- **确认任务结果**：面板发起的任务完成后由 Codex 显式回传，界面显示摘要和产物路径；投递成功不代表研究完成。
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![React 19](https://img.shields.io/badge/React-19-61dafb?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+| 科研任务 | 流程 |
+| --- | --- |
+| 整理项目文件 | `classify-workspace` |
+| 结构化文献综述 | `structured-lit-review` |
+| 实验设计、复现与验证 | `empirical-study` |
+| 已有实验迭代与调参 | `experiment-iteration` |
+| 文献方法对比 | `method-comparison` |
+| 数据集初探 | `data-exploration` |
+| 想法探讨与反例分析 | `idea-brainstorming` |
+| 单份科研产物评审 | `artifact-review` |
 
-**输入一句话研究主题 → 自动搜索文献 → 设计并迭代实验 → 输出带实验结果的 LaTeX 论文**
+## 安装
 
-[快速开始](#-快速开始) · [系统架构](#-系统架构) · [技能系统](#-技能系统) · [API 文档](#-api-端点) · [配置指南](#-推荐配置)
+### 从源码构建
 
----
+仓库保存源码；运行时、依赖和前端构建文件由构建脚本生成，不直接提交到 Git。构建需要 Windows x64、Python 3.10+ 和 Node.js 20+，首次构建需要网络下载依赖。
 
-</div>
+在 PowerShell 中运行：
 
-## 这是什么
-
-一个端到端的自主学术研究系统。7 个 AI 角色协作完成从文献检索到论文输出的完整流程——包括真正可执行的实验。
-
-```
-"研究 Transformer 注意力机制的最新改进方案，设计实验对比不同 attention 变体的效率"
-                                        │
-                                        ▼
-            ┌──────────────────────────────────────────────────────┐
-            │  30 篇论文检索  →  证据图谱  →  实验设计  →  3 轮迭代  │
-            │  →  指标分析  →  图表生成  →  LaTeX 论文  →  审阅评分   │
-            └──────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-                research_report.pdf  +  references.bib  +  实验代码
-```
-
-## ✨ 核心能力
-
-<table>
-<tr>
-<td width="50%">
-
-### 🔬 端到端实验闭环
-自动设计实验 → 生成代码 → 沙箱执行 → 提取指标 → 迭代优化。支持早停、策略切换（refine/pivot）和最佳快照回滚。通用注册表模板让 LLM 可以为任何研究课题生成对应的实验代码。
-
-### 🧠 LLM 驱动的动态规划
-Planner 根据当前研究进度实时生成执行 DAG，而不是固定流水线。是否做实验、何时终止、指标方向——全部由 LLM 语义判断，硬编码只做安全护栏。
-
-### 📊 多维审稿循环
-5 维度评分（新颖性、可靠性、清晰度、重要性、完整性），不通过自动修订重写，直到达标或达到修订上限。
-
-</td>
-<td width="50%">
-
-### 🎭 7 角色协作
-conductor → researcher → experimenter → analyst → writer → reviewer → hitl，每个角色可独立配置 LLM 模型，按研究任务需要动态调度。
-
-### 🔧 可扩展技能系统
-19 个内置技能 + 用户自定义技能 + LLM 自动进化生成的技能。注册表机制，放入目录即可被发现。前端可视化管理。
-
-### 📄 学术级输出
-生成完整可编译的 LaTeX 论文，自动构建 BibTeX 引用，支持 PDF 下载和 Overleaf 导入。中英文双语支持。
-
-</td>
-</tr>
-</table>
-
-## 🏗 系统架构
-
-```
-                              ┌─────────────────────────────┐
-                              │        用户输入研究主题       │
-                              └──────────────┬──────────────┘
-                                             │
-                    ┌────────────────────────────────────────────────┐
-                    │               Planner (LLM 驱动)               │
-                    │                                                │
-                    │  ● 语义理解用户意图 → 生成 RoutePlan DAG       │
-                    │  ● 失败自动修复 → 确定性 Fallback 兜底         │
-                    │  ● 感知实验迭代状态 / 审稿结果 → 智能循环      │
-                    └───────────────���────────┬───────────────────────┘
-                                             │ RoutePlan
-                    ┌────────────────────────────────────────────────┐
-                    │              Executor (DAG 拓扑执行)            │
-                    │                                                │
-                    │  plan → execute → observe → replan (if needed) │
-                    └───────────────���────────┬───────────────────────┘
-                                             │
-              ┌──────────┬──────────┬────────┴────────┬──────────┬──────────┐
-              ▼          ▼          ▼                  ▼          ▼          ▼
-         ┌─────────┐┌─────────┐┌───────────┐   ┌──────────┐┌─────────┐┌─────────┐
-         │conductor││researcher││experimenter│   │ analyst  ││ writer  ││reviewer │
-         │ 规划    ││ 检索    ││  实验      │   │ 分析    ││ 写作   ││ 审阅   │
-         └────┬────┘└────┬────┘└─────┬─────┘   └────┬─────┘└────┬────┘└────┬────┘
-              │          │           │               │           │          │
-              ▼          ▼           ▼               ▼           ▼          ▼
-           Skills     Skills      Skills          Skills      Skills     Skills
-              │          │           │               │           │          │
-              ▼          ▼           ▼               ▼           ▼          ▼
-           Tools      Tools       Tools           Tools       Tools      Tools
-         (mcp.llm) (mcp.search) (mcp.exec)     (mcp.llm)  (mcp.llm)  (mcp.llm)
-```
-
-### 决策权分布
-
-| 决策 | 由谁决定 | 机制 |
-|------|---------|------|
-| 选择角色和技能 | **LLM** | Planner 语义分析用户请求 |
-| 是否做实验 | **LLM** | Planner 判断用户意图 |
-| 指标优化方向 | **LLM** | design_experiment 输出 metric_directions |
-| 论文结构 | **LLM** | draft_report 自由设计章节 |
-| 何时终止 | **LLM** | Planner 设置 terminate=true |
-| DAG 执行顺序 | 确定性 | 拓扑排序 |
-| 预算/超时控制 | 确定性 | PolicyEngine 阈值检查 |
-| 审稿通过阈值 | 配置 | weighted_score >= threshold |
-| 实验早停 | 配置 | patience + min_improvement |
-
-### 实验迭代闭环
-
-```
-design_experiment ──→ run_experiment ──→ optimize_experiment
-       ▲                                        │
-       │          should_continue=true           │
-       └────────────────────────────────────────┘
-                  should_continue=false
-                         │
-                         ▼
-              analyze_metrics / aggregate_results
-                         │
-                         ▼
-              generate_figures → draft_report → review_artifact
-                                                      │
-                                          verdict=needs_revision
-                                                      │
-                                                      ▼
-                                               draft_report (修订)
-```
-
-## 🔧 技能系统
-
-### 19 个内置技能
-
-| 角色 | 技能 | 输入 | 输出 |
-|------|------|------|------|
-| **conductor** | `plan_research` | — | TopicBrief, SearchPlan |
-| **researcher** | `search_papers` | SearchPlan | SourceSet |
-| | `fetch_fulltext` | SourceSet | SourceSet |
-| | `extract_notes` | SourceSet | PaperNotes |
-| | `build_evidence_map` | PaperNotes, SourceSet | EvidenceMap, GapMap |
-| | `analyze_trends` | PaperNotes, SourceSet | TrendAnalysis |
-| **experimenter** | `design_experiment` | — (可选: EvidenceMap) | ExperimentPlan |
-| | `run_experiment` | ExperimentPlan | ExperimentResults |
-| | `create_skill` | — | SkillCreation |
-| | `optimize_skill` | ReflectionReport | SkillPatch |
-| **analyst** | `analyze_metrics` | ExperimentResults | ExperimentAnalysis, PerformanceMetrics |
-| | `aggregate_results` | ExperimentResults | ExperimentAnalysis, PerformanceMetrics |
-| | `optimize_experiment` | ExperimentResults | ExperimentIteration |
-| | `compare_methods` | PaperNotes, EvidenceMap | MethodComparison |
-| | `generate_figures` | ExperimentResults, EvidenceMap | FigureSet |
-| | `reflect_on_failure` | — | ReflectionReport |
-| **writer** | `draft_report` | EvidenceMap, ExperimentAnalysis... | ResearchReport |
-| **reviewer** | `review_artifact` | ResearchReport | ReviewVerdict |
-
-### 技能生命周期
-
-```
-磁盘扫描 → 加载 skill.yaml + run.py → 注册到 SkillRegistry
-                                              │
-                    Planner 规划 DAG ──────────┘
-                                              │
-                    NodeRunner 执行技能 → 记录 utility_score
-                                              │
-                          失败? → reflect_on_failure → create_skill / optimize_skill
-                                              │
-                                    新技能写入 evolved_skills/ → Registry 自动刷新
-```
-
-**三个技能目录**：
-- `src/dynamic_os/skills/builtins/` — 系统内置（19 个）
-- `{workspace}/skills/` — 用户自定义
-- `{workspace}/evolved_skills/` — LLM 进化生成
-
-每个技能 = 一个目录：`skill.yaml`（契约）+ `run.py`（实现）+ `skill.md`（文档）
-
-### 通用实验模板（注册表架构）
-
-```
-generic/
-├── registry.py              ← 组件注册表核心
-├── configs/hparams.yaml     ← 指定 dataset / model / metrics 名称
-├── datasets/__init__.py     ← 数据集注册（LLM 可添加新数据集）
-├── models/__init__.py       ← 模型注册（LLM 可添加 Transformer 等）
-├── metrics/__init__.py      ← 指标注册（LLM 可添加 BLEU 等）
-├── train.py                 ← 通用训练循环（通过注册表查找组件）
-└── evaluate.py              ← 通用评估脚本
-```
-
-LLM 根据研究课题在注册表中添加组件，6 个文件全部可重写。
-
-## 🚀 快速开始
-
-### Docker（推荐）
-
-```bash
-git clone https://github.com/szaaaaaa/MambaResearch.git
+```powershell
+git clone --branch main https://github.com/szaaaaaa/MambaResearch.git
 cd MambaResearch
-
-cp .env.example .env
-# 编辑 .env 填入 API key
-
-docker compose up --build
-# → http://localhost:8000
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+npm ci --prefix frontend
+.\.venv\Scripts\python.exe scripts/build_plugin.py
 ```
 
-### 本地开发
+构建输出位于 `dist/`：
 
-```bash
-# 依赖：Python 3.10+ / Node.js 20+ / pdflatex（可选）
-
-git clone https://github.com/szaaaaaa/MambaResearch.git
-cd MambaResearch
-
-pip install -e .
-cd frontend && npm ci && cd ..
-
-cp .env.example .env
-# 编辑 .env 填入 API key
-
-# 启动
-python app.py              # 后端 → http://127.0.0.1:8000
-cd frontend && npm run dev  # 前端 → http://localhost:3000
+```text
+mambaresearch-0.1.7-windows-x64.zip
+mambaresearch-0.1.7-windows-x64.zip.sha256
 ```
 
-### API Key 获取
+ZIP 只包含程序、依赖和科研流程资源，不包含账号凭据、研究数据库或用户文件。
 
-| 供应商 | 获取地址 | 说明 |
-|--------|---------|------|
-| OpenRouter | https://openrouter.ai/keys | **推荐**，一个 key 访问所有主流模型 |
-| OpenAI | https://platform.openai.com/api-keys | GPT-4o / GPT-5.4 |
-| Google | https://aistudio.google.com/apikey | Gemini 系列 |
-| SerpAPI | https://serpapi.com/manage-api-key | 搜索增强（可选） |
+### 安装到 Codex
 
-## 📡 API 端点
+将 ZIP 解压到一个固定目录。在 Codex 中将**解压根目录**添加为本地插件市场，安装 `mambaresearch@mambaresearch-local`。市场文件位于解压目录的 `.agents/plugins/marketplace.json`，实际插件位于其下的 `mambaresearch/`。
 
-### 研究运行
+也可使用 Codex 的原生插件管理命令，将下面路径替换为实际解压根目录：
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/run` | 启动研究任务（SSE 流式返回） |
-| `POST` | `/api/run/stop` | 停止运行中的任务 |
-| `GET` | `/api/runs` | 历史运行列表 |
-| `GET` | `/api/runs/{id}/state` | 运行状态和产物 |
-| `GET` | `/api/runs/{id}/artifacts` | 产物列表 |
-| `GET` | `/api/runs/{id}/artifacts/{aid}` | 产物详情 |
-| `POST` | `/api/runs/{id}/hitl` | 提交人类指导 |
-
-### 输出下载
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/runs/{id}/report.pdf` | PDF 论文 |
-| `GET` | `/api/runs/{id}/report.tex` | LaTeX 源文件 |
-| `GET` | `/api/runs/{id}/references.bib` | BibTeX 引用 |
-| `GET` | `/api/runs/{id}/latex.zip` | LaTeX 压缩包 |
-
-### 技能管理
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/skills` | 全部已注册技能（含指标） |
-| `GET` | `/api/skills/{id}` | 技能详情（含文档） |
-| `GET` | `/api/skills/metrics` | 全部执行指标 |
-| `DELETE` | `/api/skills/{id}` | 删除进化生成的技能 |
-
-### 配置
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/config` | 获取配置 |
-| `POST` | `/api/config` | 保存配置 |
-| `GET` | `/api/credentials` | 凭证状态 |
-| `POST` | `/api/credentials` | 保存凭证 |
-
-## ⚙ 推荐配置
-
-### 角色模型差异化配置
-
-```yaml
-llm:
-  role_models:
-    conductor:    { provider: openrouter, model: google/gemini-2.0-flash-001 }    # 便宜即可
-    researcher:   { provider: openrouter, model: google/gemini-3-pro-preview }    # 需要准确提取
-    experimenter: { provider: openrouter, model: google/gemini-2.0-flash-001 }    # 代码生成
-    analyst:      { provider: openrouter, model: google/gemini-3-pro-preview }    # 数据分析
-    writer:       { provider: openrouter, model: openai/gpt-5.4 }                # 最强模型
-    reviewer:     { provider: openrouter, model: google/gemini-3-pro-preview }    # 批判性判断
+```powershell
+codex plugin marketplace add "C:\Tools\MambaResearch"
+codex plugin add mambaresearch@mambaresearch-local
 ```
 
-### 实验配置
+安装或升级后刷新 MambaResearch MCP 连接，使当前聊天加载新配置。
 
-```yaml
-agent:
-  max_iterations: 15              # planner 最大规划轮数
-  experiment_plan:
-    max_iterations: 6             # 单个实验最大迭代轮数
-    workspace:
-      template: generic           # 通用注册表模板
-    stopping:
-      patience: 3                 # 连续无改进 N 轮后早停
-      min_improvement: 0.001
+## 开始使用
+
+在 Codex 聊天中输入：
+
+```text
+$mambaresearch
 ```
 
-### 预算控制
+工作台打开后，创建或选择科研项目，再从界面发起任务，也可以在聊天中描述研究需求。例如：
 
-```yaml
-budget_guard:
-  max_tokens: 500000
-  max_api_calls: 1000
-  max_wall_time_sec: 3600
+```text
+整理这个项目，只将确实属于科研的文件归入实验、文献、数据集或灵感。
+阅读这篇论文，提取实验设计，并指出复现所缺的信息。
+比较逻辑回归和随机森林，使用相同的数据划分，保存脚本、结果、图表和报告。
 ```
 
-## 📁 项目结构
+界面任务绑定发起时的项目；随后切换页面或项目不会改变任务目标。科研流程使用 Codex 原生子代理协作，每份产物由一个角色负责，主聊天核对实际结果后回传。直接从聊天发起、没有面板任务 ID 的请求不会伪造任务回传。
 
+## 能力分工
+
+| Codex 原生能力 | MambaResearch 科研能力 |
+| --- | --- |
+| 模型、认证、聊天、推理 | 科研项目、资产分类索引与任务结果 |
+| 搜索、浏览、文件读写和通用预览 | 文献阅读、批注和科研产物展示 |
+| 命令执行、进程会话和停止 | 实验规格、结果文件及已有实验记录的只读展示 |
+| Skills/Agents、MCP 配置和权限 | 科研流程指令、项目研究记录和产物时间轴 |
+
+插件提供五个 MCP 服务：
+
+| 服务 | 职责 |
+| --- | --- |
+| `mamba_workbench` | 工作台界面、固定项目任务及显式结果回传 |
+| `mamba_workspace` | 科研文件分类索引 |
+| `mamba_history` | 项目研究记录 |
+| `mamba_zotero` | Zotero 资料库访问 |
+| `mamba_colab` | Colab notebook 资源定位 |
+
+模型调用、论文检索、脚本执行和 LaTeX 编译直接使用 Codex 原生能力。工作台不保留另一套模型 API、凭据管理页、聊天输入、通用 MCP 控制台、检索/嵌入系统或实验执行器。
+
+Zotero 为可选功能，使用 `ZOTERO_USER_ID`、`ZOTERO_API_KEY` 环境变量或用户 `~/.mambaresearch/.env`，参见 [.env.example](.env.example)。Colab 工具只定位 notebook，不表示上传或远程执行成功。这两项实际账号业务尚未验收，不是核心科研流程的安装前置条件。
+
+## 验证范围
+
+- 已完成真实工作台的分类、文献阅读与中文批注，以及“界面任务 → 当前聊天 → 科研产物 → 显式回传 → 界面结果”的闭环验收。
+- 已运行七条科研流程的限定用例，并用真实 WDBC 公开数据完成逻辑回归与随机森林对比：569 个样本、30 个特征、固定分层五折；保留脚本、逐样本预测、图表和报告，独立复算结果。
+- 中文 LaTeX 报告已通过原生编译、字体嵌入、Unicode 映射、双引擎文本提取和逐页视觉检查，App 原生编辑器/PDF 预览显示正常。未缓存的 LaTeX 资源仍需按 writer 指令预先准备。
+- 独立包和实际安装缓存的五个 MCP 均通过真实启动验证；中文/空格安装路径和无系统 Python 的运行已验证。
+- 当前自动化回归：后端 **33 项**、前端 **13 项**通过，类型检查和生产构建通过。
+
+目前仅验收 Windows x64；Zotero/Colab 实际账号业务与其他平台未验证。演示实验用于科研方法展示，不作临床用途或性能普适性结论。
+
+## 开发
+
+```text
+frontend/                     工作台前端和宿主交互
+src/server/                   科研项目、领域服务、MCP 和任务结果
+plugins/mambaresearch/         Codex 插件清单、主 skill 和 PDF 检查脚本
+.skills-shared/                分类及七条科研流程的唯一源码
+.claude/agents/               科研角色职责正文
+scripts/build_plugin.py       独立 Windows 插件构建入口
+tests/                        后端及真实 stdio 合同测试
+docs/live/                    当前实现规范、设计和验收记录
 ```
-MambaResearch/
-├── app.py                          # FastAPI 入口
-├── configs/agent.yaml              # 主配置
-├── src/
-│   ├── dynamic_os/
-│   │   ├── runtime.py              # 运行时入口
-│   │   ├── planner/                # DAG 规划器（LLM + Fallback + 修复）
-│   │   ├── executor/               # DAG 执行器 + NodeRunner
-│   │   ├── experiment/             # 实验工作区 + 通用模板
-│   │   ├── roles/                  # 7 个角色定义
-│   │   ├── skills/builtins/        # 19 个内置技能
-│   │   ├── tools/                  # MCP 工具网关
-│   │   ├── contracts/              # 类型契约
-│   │   ├── policy/                 # 预算 + 权限引擎
-│   │   └── storage/                # SQLite / 知识图谱 / 技能指标
-│   └── server/routes/              # API（runs / skills / config / models）
-├── frontend/src/
-│   ├── components/
-│   │   ├── tabs/RunTab.tsx         # 运行监控
-│   │   ├── tabs/HistoryTab.tsx     # 历史记录
-│   │   ├── tabs/SkillsTab.tsx      # 技能管理
-│   │   ├── ExperimentProgress.tsx  # 实验迭代面板
-│   │   ├── ReviewStatus.tsx        # 审稿评分面板
-│   │   ├── RouteGraph.tsx          # DAG 可视化
-│   │   └── BehaviorTimeline.tsx    # 事件时间线
-│   └── store.tsx                   # 全局状态
-├── scripts/                        # CLI + MCP 服务器
-├── data/outputs/                   # 运行产出（PDF / LaTeX / BibTeX）
-└── tests/                          # 测试套件
+
+构建器从唯一源码生成包内应用和流程资源，不分别维护副本。工作台界面以单个内联 HTML MCP 资源提供，科研 API 经进程内 ASGI 调用，无额外 UI 端口。`python app.py` 仅用于 API 开发，普通浏览器没有 Codex 宿主桥。
+
+完成上述安装与构建后，执行回归检查：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pytest httpx pypdf
+.\.venv\Scripts\python.exe -X utf8 -m pytest -q tests -p no:cacheprovider
+npm test --prefix frontend
+npm run lint --prefix frontend
+npm run build --prefix frontend
+git diff --check
 ```
 
-## 💡 常见问题
+用户研究记录保存在 `~/.mambaresearch/mamba.db`，项目元数据保存在项目目录。已有数据库、文献、脚本、数据和索引保持；新研究产物写入项目 `outputs/<run_id>/`。
 
-<details>
-<summary><b>搜索不到论文？</b></summary>
+实现合同与验收证据见[实施索引](docs/live/技术实施文档/00-实施文档索引.md)和[迁移记录](docs/live/技术实施文档/07-Codex-App-科研工作台迁移.md)。
 
-确认 `configs/agent.yaml` 中 `sources.arxiv.enabled: true` 和 `sources.semantic_scholar.enabled: true`。中文主题会自动翻译为英文搜索词。
-</details>
-
-<details>
-<summary><b>PDF 中引用显示为 <code>?</code>？</b></summary>
-
-需要安装 `pdflatex` 和 `bibtex`。系统会自动从 SourceSet 生成 `references.bib` 并编译三遍。
-</details>
-
-<details>
-<summary><b>实验迭代没改善就停了？</b></summary>
-
-早停机制生效。调大 `experiment_plan.stopping.patience`（默认 3）或 `experiment_plan.max_iterations`（默认 6）。
-</details>
-
-<details>
-<summary><b>如何自定义实验模板？</b></summary>
-
-在 `configs/agent.yaml` 中设置 `workspace.template: custom` 和 `workspace.custom_path: /你的模板路径`。模板需包含 `train.py` 和 `evaluate.py`，评估脚本输出 `METRIC name=value` 格式。
-</details>
-
-<details>
-<summary><b>如何添加自定义技能？</b></summary>
-
-在 `skills/` 目录下创建子目录，包含 `skill.yaml`（契约）、`run.py`（实现 `async def run(ctx) -> SkillOutput`）和 `skill.md`（文档）。系统启动时自动发现。
-</details>
-
-<details>
-<summary><b>如何在 Overleaf 编辑？</b></summary>
-
-下载 LaTeX 压缩包，上传到 Overleaf。可将 `\documentclass{article}` 替换为会议模板。
-</details>
-
-## 技术栈
-
-| 层 | 技术 |
-|----|------|
-| 后端 | Python 3.10+ / FastAPI / uvicorn / SSE |
-| 前端 | React 19 / TypeScript / Vite / Tailwind CSS |
-| LLM | OpenRouter / OpenAI / Gemini / SiliconFlow |
-| 检索 | arXiv / Semantic Scholar / ChromaDB / FAISS / BM25 + Reranking |
-| 工具通信 | MCP stdio（4 个内置服务器：llm / search / retrieval / exec） |
-| 实验 | 沙箱执行 / 注册表模板 / 快照回滚 |
-| 持久化 | SQLite / 知识图谱 / 跨 run 记忆 |
-| 输出 | LaTeX + BibTeX + pdflatex |
-
-## 许可证
+## License
 
 MIT License
-
----
-
-<div align="center">
-<sub>Built with Claude Code + Dynamic DAG Planning</sub>
-</div>

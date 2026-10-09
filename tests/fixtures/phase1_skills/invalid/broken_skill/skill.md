@@ -1,2 +1,0 @@
-Broken skill fixture.
-
