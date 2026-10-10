@@ -26,6 +26,15 @@
 
 ## 安装
 
+### 下载独立包（推荐）
+
+前往 [v0.1.7 Release](https://github.com/szaaaaaa/MambaResearch/releases/tag/v0.1.7)，下载：
+
+- [Windows x64 安装包](https://github.com/szaaaaaa/MambaResearch/releases/download/v0.1.7/mambaresearch-0.1.7-windows-x64.zip)
+- [SHA-256 校验文件](https://github.com/szaaaaaa/MambaResearch/releases/download/v0.1.7/mambaresearch-0.1.7-windows-x64.zip.sha256)
+
+下载后可用 `Get-FileHash .\mambaresearch-0.1.7-windows-x64.zip -Algorithm SHA256` 核对校验文件中的摘要，再按下方“安装到 Codex”解压、安装。该包已包含运行依赖，可以直接使用，无需源码构建。
+
 ### 从源码构建
 
 仓库保存源码；运行时、依赖和前端构建文件由构建脚本生成，不直接提交到 Git。构建需要 Windows x64、Python 3.10+ 和 Node.js 20+，首次构建需要网络下载依赖。
