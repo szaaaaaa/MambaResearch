@@ -29,7 +29,7 @@ from src.dynamic_os.contracts.events import (
 from src.dynamic_os.contracts.observation import ErrorType, NodeStatus, Observation
 from src.dynamic_os.contracts.route_plan import FailurePolicy, PlanNode
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
-from src.dynamic_os.policy.engine import PolicyEngine, PolicyViolationError
+from src.dynamic_os.policy.engine import BudgetExceededError, PolicyEngine, PolicyViolationError
 from src.dynamic_os.roles.registry import RoleRegistry
 from src.dynamic_os.skills.loader import LoadedSkill
 from src.dynamic_os.skills.registry import SkillRegistry
@@ -187,6 +187,11 @@ class NodeRunner:
             )
             artifacts = list(output.output_artifacts)
             for artifact in artifacts:
+                if artifact.artifact_type == "ResearchReport":
+                    reports = self._artifact_store.list_by_type("ResearchReport")
+                    artifact.payload["generation"] = max(
+                        (r.payload.get("generation", 1) for r in reports), default=0,
+                    ) + 1
                 self._artifact_store.save(artifact)
                 self._emit(
                     ArtifactEvent(
@@ -215,6 +220,18 @@ class NodeRunner:
                     phase="end" if output.success else "error",
                 )
             )
+        except BudgetExceededError as exc:
+            observation = Observation(
+                node_id=node.node_id, role=node.role, status=NodeStatus.failed,
+                error_type=ErrorType.policy_block, what_happened=str(exc),
+                what_was_tried=[f"skill:{skill_id}"], duration_ms=(time.perf_counter() - started_at) * 1000.0,
+            )
+            self._observation_store.save(observation)
+            self._record_metrics(skill_id, observation)
+            self._emit(SkillInvokeEvent(ts=_now_iso(), run_id=run_id, node_id=node.node_id, skill_id=skill_id, phase="error"))
+            self._emit(ObservationEvent(ts=_now_iso(), run_id=run_id, observation=observation.model_dump(mode="json")))
+            self._emit(NodeStatusEvent(ts=_now_iso(), run_id=run_id, node_id=node.node_id, role=node.role.value, status="failed"))
+            raise
         except PolicyViolationError as exc:
             observation = self._build_error_observation(
                 node=node,
@@ -360,6 +377,17 @@ class NodeRunner:
         skill_config = dict(self._config)
         if loaded_skill.spec.id == "draft_report":
             skill_config["_cite_keys_map"] = self._collect_cite_keys_map()
+            intents = self._artifact_store.list_by_type("ClarifiedIntent")
+            if intents:
+                fields = max(intents, key=lambda a: a.created_at).payload.get("inferred_fields", {})
+                skill_config["_report_format"] = fields.get("output_format", "markdown")
+        if loaded_skill.spec.id == "review_artifact":
+            evidence_types = {"SourceSet", "PaperNotes", "EvidenceMap", "ExperimentResults", "ExperimentAnalysis", "ClarifiedIntent", "ClarificationResponse", "ReviewVerdict"}
+            existing = {artifact.artifact_id for artifact in input_artifacts}
+            input_artifacts = [*input_artifacts, *[
+                artifact for artifact in self._artifact_store.list_all()
+                if artifact.artifact_type in evidence_types and artifact.artifact_id not in existing
+            ]]
         ctx = SkillContext(
             skill_id=loaded_skill.spec.id,
             role_id=node.role.value,

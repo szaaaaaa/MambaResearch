@@ -9,6 +9,10 @@ interface ReviewStatusProps {
 
 interface ReviewPayload {
   verdict: string;
+  target_artifact_id?: string;
+  target_payload_sha256?: string;
+  task_completed?: boolean;
+  claims_supported?: boolean;
   weighted_score: number;
   threshold: number;
   scores: Record<string, number>;
@@ -26,20 +30,35 @@ export const ReviewStatus: React.FC<ReviewStatusProps> = ({ runId, artifacts }) 
   const reviewArtifacts = artifacts.filter((a) => a.artifact_type === 'ReviewVerdict');
   const reportCount = artifacts.filter((a) => a.artifact_type === 'ResearchReport').length;
   const [payload, setPayload] = React.useState<ReviewPayload | null>(null);
+  const [isCurrent, setIsCurrent] = React.useState(false);
 
   const latestReview = reviewArtifacts[reviewArtifacts.length - 1];
+  const reports = artifacts.filter((a) => a.artifact_type === 'ResearchReport');
+  const latestReport = reports[reports.length - 1];
 
   React.useEffect(() => {
-    if (!latestReview) return;
-    fetch(`${API_BASE}/api/runs/${runId}/artifacts/${latestReview.artifact_id}`)
-      .then((res) => (res.ok ? (res.json() as Promise<{ payload: ReviewPayload }>) : null))
-      .then((data) => { if (data) setPayload(data.payload ?? null); })
+    let cancelled = false;
+    setPayload(null);
+    setIsCurrent(false);
+    if (!latestReview || !latestReport) return;
+    const read = (id: string) => fetch(`${API_BASE}/api/runs/${runId}/artifacts/${id}`)
+      .then((res) => res.ok ? res.json() : null);
+    Promise.all([read(latestReview.artifact_id), read(latestReport.artifact_id)])
+      .then(([review, report]) => {
+        if (cancelled) return;
+        setPayload(review?.payload ?? null);
+        setIsCurrent(Boolean(report?.payload_sha256
+          && review?.payload?.target_artifact_id === latestReport.artifact_id
+          && review?.payload?.target_payload_sha256 === report.payload_sha256));
+      })
       .catch(() => {});
-  }, [runId, latestReview?.artifact_id]);
+    return () => { cancelled = true; };
+  }, [runId, artifacts, latestReview, latestReport]);
 
   if (!reviewArtifacts.length || !payload) return null;
+  if (!isCurrent) return <p className="text-sm text-slate-500">当前报告版本尚无可核验的评审结论。</p>;
 
-  const isAccepted = payload.verdict === 'accept';
+  const isAccepted = payload.verdict === 'accept' && payload.task_completed === true && payload.claims_supported === true;
   const score = payload.weighted_score ?? 0;
   const threshold = payload.threshold ?? 6;
   const scores = payload.scores ?? {};
@@ -73,6 +92,11 @@ export const ReviewStatus: React.FC<ReviewStatusProps> = ({ runId, artifacts }) 
             · 第 {revisionCycle} 轮审阅 / 最多 {maxCycles + 1} 轮
             · 报告版本 {reportCount}
           </p>
+          {typeof payload.task_completed === 'boolean' && typeof payload.claims_supported === 'boolean' && (
+            <p className="mt-1 text-sm text-slate-600">
+              任务完成：{payload.task_completed ? '是' : '否'} · 证据支持：{payload.claims_supported ? '是' : '否'}
+            </p>
+          )}
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
           isAccepted

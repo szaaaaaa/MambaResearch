@@ -15,6 +15,11 @@ Token 用量、墙钟时间），并在资源超限时抛出异常以终止执�
 from __future__ import annotations
 
 import fnmatch
+import json
+import math
+from functools import lru_cache
+from contextlib import contextmanager
+from dataclasses import dataclass
 import re
 import time
 from pathlib import Path
@@ -22,6 +27,21 @@ from typing import Callable
 
 from src.dynamic_os.contracts.policy import BudgetPolicy, PermissionPolicy
 from src.dynamic_os.contracts.skill_spec import SkillPermissions
+
+
+@lru_cache(maxsize=1)
+def _tokenizer():
+    import tiktoken
+    return tiktoken.get_encoding("o200k_base")
+
+
+def estimate_input_tokens(messages, response_schema=None):
+    serialized = json.dumps([messages, response_schema], ensure_ascii=False)
+    try:
+        # shortcut: o200k is a proxy for providers without an exact counter, not a billing guarantee.
+        return math.ceil(len(_tokenizer().encode(serialized, disallowed_special=())) * 1.25) + 1024
+    except (ImportError, OSError, ValueError):
+        return len(serialized.encode("utf-8")) + 1024
 
 
 class PolicyViolationError(RuntimeError):
@@ -39,6 +59,13 @@ class BudgetExceededError(PolicyViolationError):
     包括规划迭代次数、节点执行次数、工具调用次数、Token 用量
     或墙钟时间超限。
     """
+
+
+
+@dataclass
+class LLMRequestBudget:
+    max_tokens: int
+    usage: dict | None = None
 
 
 class PolicyEngine:
@@ -82,6 +109,7 @@ class PolicyEngine:
         self._tool_invocations = 0
         # 累计 Token 消耗量
         self._tokens_used = 0
+        self._tokens_reserved = 0
 
     def snapshot(self) -> dict[str, float | int]:
         """获取当前资源消耗的快照。
@@ -97,6 +125,7 @@ class PolicyEngine:
             "node_executions": self._node_executions,
             "tool_invocations": self._tool_invocations,
             "tokens_used": self._tokens_used,
+            "tokens_reserved": self._tokens_reserved,
             "wall_time_sec": round(self._clock() - self._started_at, 3),
         }
 
@@ -145,6 +174,29 @@ class PolicyEngine:
         """
         self._tokens_used += max(0, int(count))
         self.check_budget()
+
+    @contextmanager
+    def llm_request(self, messages: list[dict], max_tokens: int, response_schema: dict | None = None):
+        self.check_budget()
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
+        input_bound = estimate_input_tokens(messages, response_schema)
+        available = self.budget_policy.max_tokens - self._tokens_used - self._tokens_reserved - input_bound
+        if available <= 0:
+            raise BudgetExceededError("Token budget cannot cover the next request")
+        request = LLMRequestBudget(max_tokens=min(max_tokens, available))
+        reserved = input_bound + request.max_tokens
+        self._tokens_reserved += reserved
+        try:
+            yield request
+        finally:
+            self._tokens_reserved -= reserved
+            # Unknown usage, including failed calls, consumes the reservation rather than becoming free.
+            usage = request.usage if isinstance(request.usage, dict) else {}
+            total = usage.get("total_tokens")
+            if type(total) is not int or total <= 0:
+                total = reserved
+            self.record_tokens(total)
 
     def check_budget(self) -> None:
         """检查所有预算指标是否超限。

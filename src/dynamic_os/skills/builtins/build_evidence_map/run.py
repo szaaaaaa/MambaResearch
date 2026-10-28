@@ -64,13 +64,6 @@ async def run(ctx: SkillContext) -> SkillOutput:
     )
 
 
-def _snippet(value: object, *, limit: int = 240) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
-
-
 def _evidence_items(ctx: SkillContext) -> list[dict]:
     items: list[dict] = []
     for artifact in ctx.input_artifacts:
@@ -87,13 +80,14 @@ def _evidence_items(ctx: SkillContext) -> list[dict]:
             "artifact_id": artifact.artifact_id,
             "artifact_type": artifact.artifact_type,
             "producer_skill": artifact.producer_skill,
-            "summary": _snippet(summary),
+            "summary": str(summary),
         }
         if artifact.artifact_type == "SourceSet":
             item["result_count"] = int(payload.get("result_count") or len(payload.get("sources", [])) or 0)
             item["warning_count"] = len(payload.get("warnings", []) or [])
         if artifact.artifact_type == "PaperNotes":
-            item["note_count"] = len(payload.get("notes", []) or [])
+            item["notes"] = payload.get("notes", [])
+            item["note_count"] = len(item["notes"])
         if artifact.artifact_type == "ExperimentResults":
             metrics = dict(payload.get("metrics", {})) if isinstance(payload.get("metrics"), dict) else {}
             item["metric_count"] = len(metrics)

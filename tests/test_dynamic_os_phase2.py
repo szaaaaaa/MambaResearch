@@ -34,7 +34,10 @@ def test_tool_registry_normalizes_mcp_tools() -> None:
     ]
     assert registry.resolve(ToolCapability.search, preferred="arxiv").tool_id == "mcp.search.arxiv"
 
-def test_dynamic_runtime_discovers_tools_from_configured_mcp_servers() -> None:
+def test_dynamic_runtime_discovers_tools_from_configured_mcp_servers(tmp_path: Path) -> None:
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs/agent.yaml").write_text("sources:\n  web:\n    enabled: true\n", encoding="utf-8")
+    server_script = str(Path.cwd() / "scripts/dynamic_os_mcp_server.py")
     async def run_case() -> None:
         runtime = await start_mcp_runtime(
             [
@@ -42,7 +45,7 @@ def test_dynamic_runtime_discovers_tools_from_configured_mcp_servers() -> None:
                     "server_id": "llm",
                     "command": [
                         "${python}",
-                        "${workspace_root}/scripts/dynamic_os_mcp_server.py",
+                        server_script,
                         "--root",
                         "${workspace_root}",
                         "--server-id",
@@ -53,7 +56,7 @@ def test_dynamic_runtime_discovers_tools_from_configured_mcp_servers() -> None:
                     "server_id": "search",
                     "command": [
                         "${python}",
-                        "${workspace_root}/scripts/dynamic_os_mcp_server.py",
+                        server_script,
                         "--root",
                         "${workspace_root}",
                         "--server-id",
@@ -64,7 +67,7 @@ def test_dynamic_runtime_discovers_tools_from_configured_mcp_servers() -> None:
                     "server_id": "retrieval",
                     "command": [
                         "${python}",
-                        "${workspace_root}/scripts/dynamic_os_mcp_server.py",
+                        server_script,
                         "--root",
                         "${workspace_root}",
                         "--server-id",
@@ -72,7 +75,7 @@ def test_dynamic_runtime_discovers_tools_from_configured_mcp_servers() -> None:
                     ],
                 },
             ],
-            root=Path.cwd(),
+            root=tmp_path,
         )
         try:
             assert [tool.tool_id for tool in runtime.registry.list()] == [

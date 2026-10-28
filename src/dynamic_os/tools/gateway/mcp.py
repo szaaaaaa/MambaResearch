@@ -66,18 +66,25 @@ class McpGateway:
         tool = self._registry.get(tool_id)
         # 记录一次工具调用
         self._policy.record_tool_invocation()
-        result = self._invoker(tool, payload)
-        # 兼容同步和异步 invoker
-        if inspect.isawaitable(result):
-            result = await result
-        if isinstance(result, dict):
-            # 提取 token 用量信息并记录到策略引擎
-            usage = result.get("usage")
-            if isinstance(usage, dict):
-                self._policy.record_tokens(int(usage.get("total_tokens") or 0))
-            # 如果返回结构包含 "content"，只返回内容部分
-            if "content" in result:
-                return result.get("content")
+        if tool.capability == ToolCapability.llm_chat:
+            with self._policy.llm_request(
+                list(payload.get("messages") or []),
+                int(payload.get("max_tokens") or 4096),
+                payload.get("response_format"),
+            ) as request:
+                result = self._invoker(tool, {**payload, "max_tokens": request.max_tokens})
+                if inspect.isawaitable(result):
+                    result = await result
+                if isinstance(result, dict):
+                    request.usage = result.get("usage")
+        else:
+            result = self._invoker(tool, payload)
+            if inspect.isawaitable(result):
+                result = await result
+            if isinstance(result, dict) and isinstance(result.get("usage"), dict):
+                self._policy.record_tokens(int(result["usage"].get("total_tokens") or 0))
+        if isinstance(result, dict) and "content" in result:
+            return result["content"]
         return result
 
     async def invoke_capability(

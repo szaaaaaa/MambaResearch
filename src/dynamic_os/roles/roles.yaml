@@ -113,6 +113,12 @@
     - SourceSet
     - ExperimentPlan
     - ResearchReport
+    - PaperNotes
+    - EvidenceMap
+    - ExperimentResults
+    - ExperimentAnalysis
+    - ClarifiedIntent
+    - ClarificationResponse
   output_artifact_types:
     - ReviewVerdict
   forbidden:

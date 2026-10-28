@@ -70,7 +70,7 @@ async def _run(args: argparse.Namespace) -> int:
         },
     )
     print(result.report_text, flush=True)
-    return 0
+    return 0 if result.status == "completed" else 1
 
 
 def main() -> None:

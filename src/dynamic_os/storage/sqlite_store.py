@@ -258,7 +258,7 @@ class SqliteArtifactStore:
     def list_by_type(self, artifact_type: str) -> list[ArtifactRecord]:
         """列出当前运行中指定类型的全部制品。"""
         rows = self._conn.execute(
-            "SELECT * FROM artifacts WHERE artifact_type = ? AND run_id = ?",
+            "SELECT * FROM artifacts WHERE artifact_type = ? AND run_id = ? ORDER BY rowid",
             (artifact_type, self._run_id),
         ).fetchall()
         return [_row_to_artifact(r) for r in rows]
@@ -266,7 +266,7 @@ class SqliteArtifactStore:
     def list_all(self) -> list[ArtifactRecord]:
         """列出当前运行的全部制品。"""
         rows = self._conn.execute(
-            "SELECT * FROM artifacts WHERE run_id = ?", (self._run_id,)
+            "SELECT * FROM artifacts WHERE run_id = ? ORDER BY rowid", (self._run_id,)
         ).fetchall()
         return [_row_to_artifact(r) for r in rows]
 

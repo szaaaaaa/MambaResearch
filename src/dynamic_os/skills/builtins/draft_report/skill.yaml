@@ -7,6 +7,9 @@ description: Draft the final research report from existing evidence and analysis
 input_contract:
   required: []
   optional:
+    - SourceSet
+    - PaperNotes
+    - ClarifiedIntent
     - EvidenceMap
     - ExperimentAnalysis
     - PerformanceMetrics

@@ -110,6 +110,7 @@ class InMemoryArtifactStore:
 
     def save(self, record: ArtifactRecord) -> None:
         """保存制品，若 ID 已存在则覆盖。"""
+        self._records.pop(record.artifact_id, None)
         self._records[record.artifact_id] = record
 
     def get(self, artifact_id: str) -> ArtifactRecord | None:
