@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from src.common.config_utils import get_by_dotted, load_yaml, resolve_path
 from src.common.openai_codex import ensure_openai_codex_auth
 from src.dynamic_os.runtime import DynamicResearchRuntime
+from src.dynamic_os.report_review import payload_digest
 from src.dynamic_os.tools.backends import _normalize_provider
 from src.server.settings import CONFIG_PATH, ROOT
 
@@ -550,14 +551,14 @@ async def get_run_artifact(run_id: str, artifact_id: str):
     if runtime is not None and runtime._artifact_store is not None:
         record = runtime._artifact_store.get(artifact_id)
         if record is not None:
-            return record.model_dump(mode="json")
+            return {**record.model_dump(mode="json"), "payload_sha256": payload_digest(record.payload)}
         raise HTTPException(status_code=404, detail=f"artifact {artifact_id!r} not found in active run {run_id!r}")
 
     disk_records = _load_artifacts_full_from_disk(run_id)
     if disk_records is not None:
         for record in disk_records:
             if record.get("artifact_id") == artifact_id:
-                return record
+                return {**record, "payload_sha256": payload_digest(record.get("payload", {}))}
         raise HTTPException(status_code=404, detail=f"artifact {artifact_id!r} not found in run {run_id!r}")
 
     raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")

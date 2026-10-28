@@ -35,6 +35,7 @@ from src.dynamic_os.contracts.route_plan import EdgeCondition, FailurePolicy, Pl
 from src.dynamic_os.executor.node_runner import NodeExecutionResult, NodeRunner
 from src.dynamic_os.planner.planner import Planner, PlannerOutputError
 from src.dynamic_os.policy.engine import BudgetExceededError, PolicyEngine
+from src.dynamic_os.report_review import report_stop_reason
 
 
 # 事件接收回调类型，用于将事件推送到前端（SSE）或日志系统
@@ -580,7 +581,10 @@ class Executor:
         planning_iterations: int,
     ) -> ExecutorRunResult:
         """终止运行，发布 RunTerminateEvent 并返回最终结果。"""
-        final_artifacts = [_artifact_ref(record) for record in self._artifact_store.list_all()]
+        records = self._artifact_store.list_all()
+        if reason in {"planner_terminated", "final_artifact_produced"}:
+            reason = report_stop_reason(records) or reason
+        final_artifacts = [_artifact_ref(record) for record in records]
         self._emit(
             RunTerminateEvent(
                 ts=_now_iso(),

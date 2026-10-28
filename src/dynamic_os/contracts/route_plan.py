@@ -91,7 +91,7 @@ class PlanNode(BaseModel):
     hitl_question: str = ""
     # 是否在该节点成功执行后自动触发 reviewer 审查
     # 当为 true 且节点产出 ResearchReport 时，runtime 会合成一个 autoreview
-    # 子节点调用 review_artifact 技能；失败不影响主节点状态，避免一票否决。
+    # 子节点调用 review_artifact 技能；失败保留草稿，但不满足最终报告的验收条件。
     needs_review: bool = False
 
 
@@ -140,10 +140,10 @@ class RoutePlan(BaseModel):
     run_id: str
     # 规划迭代次数（从 0 开始），每次 replan 递增
     planning_iteration: int = Field(..., ge=0)
-    # 计划范围（节点数量），最少 1 个，最多 8 个
-    horizon: int = Field(..., ge=1, le=8)
+    # 计划范围（节点数量），执行计划最少 1 个，纯终止计划可为 0，最多 8 个
+    horizon: int = Field(..., ge=0, le=8)
     # 计划中的节点列表
-    nodes: list[PlanNode] = Field(..., min_length=1, max_length=8)
+    nodes: list[PlanNode] = Field(..., max_length=8)
     # 节点间的有向边列表
     edges: list[PlanEdge] = Field(default_factory=list)
     # Planner 的规划备注，记录决策理由
@@ -163,6 +163,8 @@ class RoutePlan(BaseModel):
         """
         if self.horizon != len(self.nodes):
             raise ValueError("horizon must equal len(nodes)")
+        if not self.nodes and not self.terminate:
+            raise ValueError("only a terminating plan may have no nodes")
 
         node_ids = [node.node_id for node in self.nodes]
         if len(set(node_ids)) != len(node_ids):

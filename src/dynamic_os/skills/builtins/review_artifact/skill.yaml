@@ -3,7 +3,7 @@ name: Review Artifact
 version: 1.0.0
 applicable_roles:
   - reviewer
-description: Review an existing artifact and produce a structured review verdict.
+description: Check task completion and claims against original evidence before scoring the target artifact.
 input_contract:
   required: []
   optional:
@@ -11,6 +11,12 @@ input_contract:
     - ExperimentPlan
     - ResearchReport
     - ReviewVerdict
+    - PaperNotes
+    - EvidenceMap
+    - ExperimentResults
+    - ExperimentAnalysis
+    - ClarifiedIntent
+    - ClarificationResponse
 output_artifacts:
   - ReviewVerdict
 allowed_tools:

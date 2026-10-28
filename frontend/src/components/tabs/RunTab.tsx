@@ -838,6 +838,7 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                             ) : null}
                           </div>
                           {isLastAssistant && !message.streaming && message.content && activeConversation.runId && activeConversation.status !== 'Running' ? (
+                            message.content.trimStart().startsWith('\\documentclass') ? (
                             <div className="mt-2 flex gap-2">
                               <a
                                 href={`${API_BASE}/api/runs/${activeConversation.runId}/report.pdf`}
@@ -858,6 +859,16 @@ export const RunTab: React.FC<{ uiPreferences: UiPreferences }> = ({ uiPreferenc
                                 LaTeX
                               </a>
                             </div>
+                            ) : (
+                              <a
+                                href={`data:text/markdown;charset=utf-8,${encodeURIComponent(message.content)}`}
+                                download={`${activeConversation.runId}_report.md`}
+                                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                Markdown
+                              </a>
+                            )
                           ) : null}
                         </div>
                       </div>

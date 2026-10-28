@@ -5,6 +5,7 @@ import json
 from src.dynamic_os.artifact_refs import make_artifact, source_input_refs
 from src.dynamic_os.contracts.route_plan import RoleId
 from src.dynamic_os.contracts.skill_io import SkillContext, SkillOutput
+from src.dynamic_os.evidence import evidence_payloads
 
 
 _SURVEY_SYSTEM_PROMPT_EN = (
@@ -119,36 +120,27 @@ _SURVEY_REQUIREMENTS = (
 )
 
 
-def _serialize_artifact(artifact) -> str:
-    if artifact.artifact_type == "SourceSet":
-        sources = artifact.payload.get("sources", [])
-        paper_list = [
-            {
-                "title": s.get("title", ""),
-                "paper_id": s.get("paper_id", ""),
-                "authors": s.get("authors", []),
-                "year": s.get("year", ""),
-                "abstract": s.get("abstract", s.get("content", ""))[:300],
-            }
-            for s in sources
-        ]
-        return json.dumps({"paper_count": len(paper_list), "papers": paper_list}, ensure_ascii=False, indent=2)
-    return json.dumps(artifact.payload, ensure_ascii=False, indent=2)
-
-
 async def run(ctx: SkillContext) -> SkillOutput:
     language = str(ctx.config.get("agent", {}).get("language", "en")).strip().lower()
     is_zh = language in ("zh", "cn", "chinese")
 
-    if is_zh:
+    report_format = str(ctx.config.get("_report_format", "markdown")).lower().strip()
+    if report_format not in {"markdown", "latex", "pdf"}:
+        return SkillOutput(success=False, error=f"unsupported output_format: {report_format}")
+    if report_format == "markdown":
+        system_prompt = (
+            "Answer the user's research question in Markdown using only the supplied evidence. "
+            "Follow the requested scope, length, language and structure. Default to a concise direct answer. "
+            "Cite source IDs or URLs, distinguish evidence from inference, and state evidence gaps. "
+            "Do not output LaTeX documents or wrap the answer in a code fence. "
+            f"Default language: {'Chinese' if is_zh else 'English'}."
+        )
+    elif is_zh:
         system_prompt = _SURVEY_SYSTEM_PROMPT_ZH + _SURVEY_PREAMBLE + _SURVEY_TEMPLATE_ZH + _SURVEY_REQUIREMENTS
     else:
         system_prompt = _SURVEY_SYSTEM_PROMPT_EN + _SURVEY_PREAMBLE + _SURVEY_TEMPLATE_EN + _SURVEY_REQUIREMENTS
 
-    artifact_text = "\n\n".join(
-        f"{artifact.artifact_type}:\n{_serialize_artifact(artifact)}"
-        for artifact in ctx.input_artifacts
-    )
+    artifact_text = json.dumps(evidence_payloads(ctx.input_artifacts), ensure_ascii=False)
 
     review_feedback = ""
     for art in ctx.input_artifacts:
@@ -201,6 +193,12 @@ async def run(ctx: SkillContext) -> SkillOutput:
         keys = ctx.config["_cite_keys"]
         cite_keys_info = f"\n\nAvailable cite keys (use ONLY these exact keys, do NOT modify them): {', '.join(keys)}"
 
+    if report_format == "markdown":
+        cite_keys_info = "\n\nReference identifiers: " + json.dumps(ctx.config.get("_cite_keys_map", {}), ensure_ascii=False)
+        figure_info = "\n\nAvailable figures: " + json.dumps([
+            a.payload for a in ctx.input_artifacts if a.artifact_type == "FigureSet"
+        ], ensure_ascii=False)
+
     user_content = (
         f"Research topic: {ctx.user_request}\n\nArtifacts:\n{artifact_text}{cite_keys_info}"
         if artifact_text
@@ -223,6 +221,9 @@ async def run(ctx: SkillContext) -> SkillOutput:
         temperature=0.3,
         max_tokens=32768,
     )
+    is_latex = report_text.lstrip().startswith("\\documentclass")
+    if not report_text.strip() or is_latex != (report_format in {"latex", "pdf"}):
+        return SkillOutput(success=False, error=f"writer did not produce requested {report_format} output")
     artifact = make_artifact(
         node_id=ctx.node_id,
         artifact_type="ResearchReport",
@@ -230,6 +231,7 @@ async def run(ctx: SkillContext) -> SkillOutput:
         producer_skill=ctx.skill_id,
         payload={
             "report": report_text,
+            "output_format": report_format,
             "artifact_count": len(ctx.input_artifacts),
         },
         source_inputs=source_input_refs(ctx.input_artifacts),

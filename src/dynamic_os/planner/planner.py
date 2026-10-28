@@ -13,6 +13,8 @@ Planner 不直接执行任何研究任务，它只负责「规划下一步做什
 
 from __future__ import annotations
 
+from src.dynamic_os.report_review import latest_report, matching_review, report_stop_reason
+
 import inspect
 import json
 from copy import deepcopy
@@ -441,35 +443,30 @@ class Planner:
                 raise ValueError(f"role {node.role.value} is not registered")
 
     def _validate_post_report_progression(self, plan: RoutePlan) -> None:
-        """ReviewVerdict 分数不够时，只允许 writer/reviewer 重写。"""
+        """Only a review of the current report may control completion or revision."""
         all_records = self._artifact_store.list_all()
-        artifact_types = {record.artifact_type for record in all_records}
-
-        if "ReviewVerdict" not in artifact_types:
+        report = latest_report(all_records)
+        if report is None:
             return
-
-        review_records = [r for r in all_records if r.artifact_type == "ReviewVerdict"]
-        if not review_records:
+        review = matching_review(all_records, report)
+        if report_stop_reason(all_records) is None:
+            if not plan.terminate:
+                raise ValueError("Current report accepted; next plan must terminate")
             return
-
-        latest_review = review_records[-1]
-        weighted_score = float(latest_review.payload.get("weighted_score", 10.0))
-        threshold = float(latest_review.payload.get("threshold", 6.0))
-        max_cycles = int(latest_review.payload.get("max_rewrite_cycles", 2))
-        report_count = sum(1 for r in all_records if r.artifact_type == "ResearchReport")
-
-        if weighted_score < threshold and report_count <= max_cycles:
-            plan_roles = {node.role.value for node in plan.nodes if node.role != RoleId.hitl}
-            allowed_roles = {"writer", "reviewer"}
-            invalid = plan_roles - allowed_roles
-            if invalid:
-                raise ValueError(
-                    f"review score below threshold; only writer/reviewer/hitl nodes allowed, got: {', '.join(sorted(invalid))}"
-                )
+        max_cycles = int(review.payload.get("max_rewrite_cycles", 2)) if review else 2
+        reports = [r for r in all_records if r.artifact_type == "ResearchReport"]
+        report_count = max(len(reports), max(r.payload.get("generation", 1) for r in reports))
+        if review and report_count > max_cycles:
+            if not plan.terminate or plan.nodes:
+                raise ValueError("Revision limit reached; emit an empty terminating plan (report remains unaccepted)")
             return
-
-        if not plan.terminate:
-            raise ValueError("ReviewVerdict already exists and score passed; next plan must terminate")
+        if plan.terminate and not any(
+            {"ResearchReport", "ReviewVerdict"}.intersection(node.expected_outputs) for node in plan.nodes
+        ):
+            raise ValueError("Current report is not accepted; review it or revise with review before terminating")
+        invalid = {node.role.value for node in plan.nodes} - {"researcher", "analyst", "writer", "reviewer", "hitl"}
+        if invalid:
+            raise ValueError(f"review not accepted; recover evidence or review/revise, got: {', '.join(sorted(invalid))}")
 
     def _enriched_artifact_summary(self) -> list[dict[str, str]]:
         """为 artifact 摘要附加决策关键字段（ExperimentIteration / ReviewVerdict）。
@@ -480,6 +477,8 @@ class Planner:
         """
         summary = self._artifact_store.summary()
         records_by_id = {r.artifact_id: r for r in self._artifact_store.list_all()}
+        report = latest_report(list(records_by_id.values()))
+        active_review = matching_review(list(records_by_id.values()), report) if report else None
         for entry in summary:
             record = records_by_id.get(entry["artifact_id"])
             if record is None:
@@ -491,6 +490,9 @@ class Planner:
                     f"strategy={record.payload.get('strategy')}"
                 )
             elif record.artifact_type == "ReviewVerdict":
+                if report and record is not active_review:
+                    entry["hint"] = "This verdict does not verify the current report version."
+                    continue
                 entry["hint"] = (
                     f"verdict={record.payload.get('verdict')}, "
                     f"weighted_score={record.payload.get('weighted_score')}, "

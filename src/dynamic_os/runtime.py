@@ -38,6 +38,7 @@ from src.dynamic_os.storage.memory import InMemoryArtifactStore, InMemoryObserva
 from src.dynamic_os.tools.backends import ConfiguredLLMClient
 from src.dynamic_os.tools.discovery import StartedMcpRuntime, start_mcp_runtime
 from src.dynamic_os.tools.gateway import ToolGateway
+from src.dynamic_os.report_review import latest_report
 
 # 项目根目录、配置文件路径
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -295,19 +296,13 @@ def _report_text(
 ) -> str:
     """从运行结果中提取最终报告文本。
 
-    优先使用 ResearchReport 产物的内容，附加 ReviewVerdict（如有）。
+    只交付当前 ResearchReport 的原文；评审作为独立产物保留。
     如果没有生成报告，则输出产物摘要和最后一个失败节点的信息。
     """
-    report = next((item for item in reversed(artifacts) if item.artifact_type == "ResearchReport"), None)
-    review = next((item for item in reversed(artifacts) if item.artifact_type == "ReviewVerdict"), None)
+    report = latest_report(artifacts)
     sections: list[str] = []
     if report is not None:
         sections.append(str(report.payload.get("report") or "").strip())
-    if review is not None:
-        review_text = str(review.payload.get("review") or "").strip()
-        verdict = str(review.payload.get("verdict") or "").strip()
-        if review_text or verdict:
-            sections.append(f"Review Verdict: {verdict or 'n/a'}\n\n{review_text}".strip())
     if sections:
         return "\n\n".join(section for section in sections if section)
 
@@ -412,16 +407,17 @@ class ConfiguredPlannerModel:
             {"role": "system", "content": " ".join(reminder_lines)},
             *messages,
         ]
-        completion = await asyncio.to_thread(
-            self._llm_client.complete,
-            provider=provider,
-            model=model,
-            messages=prompt_messages,
-            temperature=temperature,
-            max_tokens=4096,
-            response_schema=response_schema,
-        )
-        self._policy.record_tokens(int(completion.usage.get("total_tokens") or 0))
+        with self._policy.llm_request(prompt_messages, 4096, response_schema) as request:
+            completion = await asyncio.to_thread(
+                self._llm_client.complete,
+                provider=provider,
+                model=model,
+                messages=prompt_messages,
+                temperature=temperature,
+                max_tokens=request.max_tokens,
+                response_schema=response_schema,
+            )
+            request.usage = completion.usage
         return completion.text
 
 
@@ -681,16 +677,17 @@ class DynamicResearchRuntime:
                 status = "failed"
         finally:
             self._active_executor = None
+            for node_id, node_state in list(node_status.items()):
+                if node_state == "running":
+                    role = next((e.get("role", "") for e in reversed(events)
+                                 if e.get("type") == "node_status" and e.get("node_id") == node_id), "")
+                    emit({"type": "node_status", "ts": _now_iso(), "node_id": node_id,
+                          "role": role, "status": "skipped" if status == "stopped" else "failed"})
             if knowledge_graph is not None:
                 knowledge_graph.close()
             await mcp_runtime.close()
 
             artifacts = artifact_store.list_all()
-            # 已经产出 ResearchReport（最终交付物）就算 completed，
-            # 即使 planner 在 review 之后又乱规划被校验拦下、或撞到其他非致命终止原因。
-            # 不在这里补救会让所有"实质完成 + 后续 planner 抽风"的 run 都被标 failed。
-            if status == "failed" and any(a.artifact_type == "ResearchReport" for a in artifacts):
-                status = "completed"
             observations = observation_store.list_latest(200)
             report_text = _report_text(artifacts=artifacts, observations=observations, status=status)
             route_plan = latest_plan or (plan_store.get_latest().model_dump(mode="json") if plan_store.get_latest() is not None else {})
@@ -712,9 +709,19 @@ class DynamicResearchRuntime:
                 "report_text": report_text,
                 "observations": [observation.model_dump(mode="json") for observation in observations[-20:]],
             }
-            (run_dir / "research_report.md").write_text(report_text, encoding="utf-8")
+            report = latest_report(artifacts)
+            output_format = report.payload.get("output_format", "markdown") if report else "markdown"
+            suffix = "tex" if output_format in {"latex", "pdf"} else "md"
+            (run_dir / f"research_report.{suffix}").write_text(report_text, encoding="utf-8")
             bib_content = _build_bib_from_artifacts(artifacts)
-            _compile_latex_report(report_text, run_dir, bib_content=bib_content)
+            if suffix == "tex":
+                (run_dir / "references.bib").write_text(bib_content, encoding="utf-8")
+            if output_format == "pdf" and status == "completed":
+                _compile_latex_report(report_text, run_dir, bib_content=bib_content)
+                if not (run_dir / "research_report.pdf").is_file():
+                    status = state_payload["status"] = "failed"
+                    emit({"type": "run_terminate", "ts": _now_iso(), "reason": "report_pdf_compilation_failed",
+                          "final_artifacts": [_artifact_ref(a) for a in artifacts]})
             (run_dir / "research_state.json").write_text(json.dumps(state_payload, ensure_ascii=False, indent=2), encoding="utf-8")
             (run_dir / "artifacts.json").write_text(json.dumps(artifact_summary, ensure_ascii=False, indent=2), encoding="utf-8")
             artifacts_full = [artifact.model_dump(mode="json") for artifact in artifacts]

@@ -12,10 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.common.config_utils import load_yaml
+from src.common.config_utils import load_yaml, read_env_file
 from src.dynamic_os.tools.backends import ConfiguredToolBackend
-from src.server.routes.config import _read_env_file
-from src.server.settings import CONFIG_PATH
 
 
 def _read_message() -> dict[str, Any] | None:
@@ -58,10 +56,11 @@ def main() -> None:
     parser.add_argument("--root", type=str, default=str(ROOT))
     args = parser.parse_args()
 
+    workspace = Path(args.root).resolve()
     backend = ConfiguredToolBackend(
-        root=Path(args.root).resolve(),
-        config=load_yaml(CONFIG_PATH),
-        saved_env=_read_env_file(),
+        root=workspace,
+        config=load_yaml(workspace / "configs" / "agent.yaml"),
+        saved_env=read_env_file(workspace / ".env"),
     )
     server_id = str(args.server_id).strip()
 

@@ -558,7 +558,7 @@ class ConfiguredLLMClient:
                 "type": "json_schema",
                 "name": "route_plan",
                 "schema": response_schema,
-                "strict": True,
+                "strict": False,
             }
 
         payload: dict[str, Any] = {
@@ -571,6 +571,11 @@ class ConfiguredLLMClient:
             "instructions": "\n\n".join(part for part in instructions if part).strip() or default_instructions,
             "max_output_tokens": max_tokens,
         }
+        effort = get_by_dotted(self._config, "llm.openai_codex.reasoning_effort")
+        if effort is not None:
+            if effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+                raise ValueError("invalid openai_codex reasoning_effort")
+            payload["reasoning"] = {"effort": effort}
         return payload
 
     def _openai_codex_transport(self) -> str:

@@ -1,3 +1,1 @@
-Draft the final `ResearchReport` from existing artifacts.
-
-This skill uses `ctx.tools.llm_chat()`.
+Draft the final ResearchReport from evidence. Honor ClarifiedIntent.inferred_fields.output_format: markdown (default), latex, or pdf. Persist output_format in the report. Markdown must not become a LaTeX document. PDF compilation occurs only for a requested PDF after report acceptance.

@@ -81,7 +81,8 @@ CLARIFY_INTENT_SCHEMA: dict = {
         },
         "inferred_fields": {
             "type": "object",
-            "description": "从原始请求中直接提取的结构化字段（数据集、指标等），tier=ambiguous 时可为空对象。",
+            "description": "从原始请求提取结构化字段。Include output_format: markdown (default), latex, or pdf, honoring the requested deliverable. tier=ambiguous 时可为空对象。",
+            "properties": {"output_format": {"type": "string", "enum": ["markdown", "latex", "pdf"]}},
         },
         "assumptions": {
             "type": "array",

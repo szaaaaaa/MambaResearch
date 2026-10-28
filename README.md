@@ -388,3 +388,6 @@ MIT License
 <div align="center">
 <sub>Built with Claude Code · Dynamic DAG Planning · Self-Evolving Skills</sub>
 </div>
+
+
+原生研究流程的评测问题修复与验证边界见 [修复说明](docs/research-evaluation-repairs.md)。

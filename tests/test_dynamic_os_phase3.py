@@ -439,7 +439,7 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
                 ),
                 "",
             )
-            if "rigorous academic reviewer" in system_message:
+            if "Review the target" in system_message:
                 return json.dumps(
                     {
                         "novelty": 7,
@@ -447,12 +447,17 @@ def _phase5_gateway(*, event_sink=None, policy: PolicyEngine | None = None) -> T
                         "clarity": 8,
                         "significance": 7,
                         "completeness": 7,
+                        "task_completed": True, "claims_supported": True,
                         "review_text": "Solid work with clear methodology.",
                         "issues": [],
                         "strengths": ["Clear structure", "Good coverage"],
                         "modification_suggestions": "",
                     }
                 )
+            if "Extract question-relevant paper notes" in system_message:
+                documents = json.loads(user_message)["documents"]
+                return json.dumps({"notes": [{"source_id": d["id"], "summary": d["text"],
+                                              "evidence": [d["text"]]} for d in documents]})
             if "You are modifying experiment files" in system_message:
                 return json.dumps(
                     {
@@ -1446,7 +1451,7 @@ def test_build_evidence_map_derives_grounded_gaps() -> None:
     assert any("semantic_scholar timeout" in gap for gap in gap_payload["gaps"])
 
 
-def test_review_artifact_verdict_uses_artifact_checks() -> None:
+def test_review_artifact_rejects_invalid_assessment() -> None:
     registry = SkillRegistry.discover([BUILTINS_DIR])
     loaded = registry.get("review_artifact")
 
@@ -1482,11 +1487,9 @@ def test_review_artifact_verdict_uses_artifact_checks() -> None:
     )
 
     output = asyncio.run(loaded.runner(ctx))
-    payload = output.output_artifacts[0].payload
-
-    assert output.success is True
-    assert payload["verdict"] == "needs_revision"
-    assert "missing report text" in payload["issues"]
+    assert output.success is False
+    assert "invalid review assessment" in output.error
+    assert not output.output_artifacts
 
 
 def test_analyze_metrics_computes_metric_stats() -> None:
@@ -1803,7 +1806,8 @@ def test_extract_notes_continues_when_index_backend_is_unavailable() -> None:
 
         async def llm_chat(self, messages, **kwargs):
             del messages, kwargs
-            return "Condensed paper notes"
+            return json.dumps({"notes": [{"source_id": "paper_a", "summary": "Condensed paper notes",
+                                          "evidence": ["Full text for Paper A about dynamic research agents."]}]})
 
     ctx = SkillContext(
         skill_id="extract_notes",
@@ -1839,7 +1843,8 @@ def test_extract_notes_continues_when_index_backend_is_unavailable() -> None:
 
     assert output.success is True
     payload = output.output_artifacts[0].payload
-    assert payload["notes"][0]["summary"].startswith("Full text for Paper A")
+    assert payload["notes"][0]["summary"] == "Condensed paper notes"
+    assert payload["notes"][0]["evidence"] == ["Full text for Paper A about dynamic research agents."]
     assert "chromadb" in payload["warnings"][0]
     assert "chromadb" in output.metadata["warnings"][0]
 
@@ -1948,19 +1953,8 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
                     {
                         "run_id": "run_phase5",
                         "planning_iteration": 1,
-                        "horizon": 1,
-                        "nodes": [
-                            {
-                                "node_id": "node_stop_1",
-                                "role": "writer",
-                                "goal": "Stop after the report loop is complete",
-                                "inputs": [],
-                                "allowed_skills": ["draft_report"],
-                                "success_criteria": [],
-                                "failure_policy": "replan",
-                                "expected_outputs": ["ResearchReport"],
-                            }
-                        ],
+                        "horizon": 0,
+                        "nodes": [],
                         "edges": [],
                         "planner_notes": ["terminate after built-in loop completion"],
                         "terminate": True,
@@ -2017,7 +2011,7 @@ def test_phase5_end_to_end_research_loop_uses_builtin_skills() -> None:
     assert any(event.type == "tool_invoke" for event in events)
 
 
-def test_executor_short_circuits_when_final_artifact_is_produced_without_review_request() -> None:
+def test_executor_does_not_complete_an_unreviewed_final_report() -> None:
     role_registry = RoleRegistry.from_file()
     artifact_store = InMemoryArtifactStore()
     observation_store = InMemoryObservationStore()
@@ -2109,7 +2103,7 @@ def test_executor_short_circuits_when_final_artifact_is_produced_without_review_
         )
     )
 
-    assert result.termination_reason == "planner_terminated"
+    assert result.termination_reason == "report_review_missing"
     assert planner.calls == 1
     assert "artifact:ResearchReport:report_budget_1" in result.final_artifacts
     assert events[-1].type == "run_terminate"
@@ -2359,9 +2353,13 @@ def test_phase6_api_rejects_output_dir_outside_workspace() -> None:
 
 
 def test_phase6_api_rejects_run_when_openai_codex_is_not_logged_in(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from src.server.routes import runs as runs_route
+
+    config_path = tmp_path / "agent.yaml"
+    config_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runs_route, "CONFIG_PATH", config_path)
 
     monkeypatch.setattr(
         runs_route,
@@ -2861,6 +2859,8 @@ def test_artifact_browser_get_single_from_disk() -> None:
         data = response.json()
         assert data["artifact_id"] == "art_002"
         assert data["payload"]["nodes"] == ["A", "B"]
+        from src.dynamic_os.report_review import payload_digest
+        assert data["payload_sha256"] == payload_digest(data["payload"])
 
         missing = client.get(f"/api/runs/{run_id}/artifacts/does_not_exist")
         assert missing.status_code == 404
@@ -2941,6 +2941,8 @@ def test_artifact_browser_get_single_from_active_runtime(monkeypatch: pytest.Mon
     data = response.json()
     assert data["artifact_id"] == "art_active_002"
     assert data["payload"]["brief"] == "topic overview"
+    from src.dynamic_os.report_review import payload_digest
+    assert data["payload_sha256"] == payload_digest(data["payload"])
 
     missing = client.get("/api/runs/run_active_single/artifacts/no_such_artifact")
     assert missing.status_code == 404

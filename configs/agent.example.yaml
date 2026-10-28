@@ -72,6 +72,7 @@ llm:
   model: google/gemini-2.0-flash-001
   temperature: 0.2
   openai_codex:
+    reasoning_effort: high
     transport: auto
     model_discovery: account_plus_cached
   role_models:
